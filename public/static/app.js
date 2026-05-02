@@ -1015,80 +1015,133 @@ async function toggleEditPermission(userId, newValue) {
 // USERS VIEW
 // ============================================
 function renderUsersView() {
-  const isAdminOrSuper = state.user.role === 'admin' || state.user.role === 'super_admin';
+  const isSuperAdmin = state.user.role === 'super_admin';
+  const isAdmin = state.user.role === 'admin';
+
+  // Filtre hôtel (super_admin uniquement) — stocké dans state
+  const filterHotelId = state.usersFilterHotel || '';
+  const filteredUsers = isSuperAdmin && filterHotelId
+    ? state.users.filter(u => String(u.hotel_id) === String(filterHotelId))
+    : state.users;
+
+  // Super admin : filtre pour ne montrer que les admins des hôtels par défaut (mais peut voir tous)
+  const roleLabels = { super_admin: 'Super Admin', admin: 'Admin', employee: 'Employé' };
+  const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', employee: 'bg-green-100 text-green-700' };
+
   return `
   <div class="fade-in">
     <div class="flex items-center justify-between mb-6">
       <div>
         <h2 class="text-2xl font-bold text-navy-900"><i class="fas fa-users mr-2 text-brand-400"></i>Utilisateurs</h2>
-        <p class="text-navy-500 text-sm mt-1">${state.users.length} membre(s)</p>
+        <p class="text-navy-500 text-sm mt-1">${filteredUsers.length} compte(s)${filterHotelId ? ' — filtré' : ''}</p>
       </div>
       <button onclick="showUserForm()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
         <i class="fas fa-user-plus mr-1.5"></i>Ajouter
       </button>
     </div>
 
+    ${isSuperAdmin ? `
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4 flex items-center gap-4 flex-wrap">
+      <div class="flex items-center gap-2">
+        <i class="fas fa-filter text-navy-400 text-sm"></i>
+        <span class="text-sm font-medium text-navy-600">Filtrer par hôtel :</span>
+      </div>
+      <div class="flex gap-2 flex-wrap">
+        <button onclick="state.usersFilterHotel=''; render()" 
+          class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${!filterHotelId ? 'bg-navy-800 text-white' : 'bg-navy-50 text-navy-500 hover:bg-navy-100'}">
+          Tous
+        </button>
+        ${state.hotels.map(h => `
+          <button onclick="state.usersFilterHotel='${h.id}'; render()" 
+            class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${filterHotelId === String(h.id) ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}">
+            <i class="fas fa-hotel mr-1"></i>${h.name}
+          </button>
+        `).join('')}
+      </div>
+    </div>` : ''}
+
     <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
       <table class="w-full">
         <thead>
           <tr class="bg-navy-50 text-xs text-navy-500 uppercase tracking-wider">
             <th class="text-left py-3 px-5">Utilisateur</th>
-            <th class="text-left py-3 px-5">Hôtel</th>
+            ${isSuperAdmin ? '<th class="text-left py-3 px-5">Hôtel</th>' : ''}
             <th class="text-left py-3 px-5">Rôle</th>
             <th class="text-left py-3 px-5">Dernière connexion</th>
             <th class="text-left py-3 px-5">Statut</th>
-            ${isAdminOrSuper ? '<th class="text-left py-3 px-5">Droits procédures</th>' : ''}
+            ${isAdmin ? '<th class="text-left py-3 px-5">Droits procédures</th>' : ''}
+            <th class="text-left py-3 px-5">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-50">
-          ${state.users.map(u => {
-            const roleLabels = { super_admin: 'Super Admin', admin: 'Admin', employee: 'Employé' };
-            const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', employee: 'bg-green-100 text-green-700' };
+          ${filteredUsers.length === 0 ? `
+            <tr><td colspan="6" class="py-10 text-center text-navy-400 text-sm">Aucun utilisateur</td></tr>
+          ` : filteredUsers.map(u => {
             const hasEditRight = u.can_edit_procedures === 1;
             const isEmployee = u.role === 'employee';
+            const isSelf = u.id === state.user.id;
             return `
             <tr class="hover:bg-gray-50">
               <td class="py-3 px-5">
                 <div class="flex items-center gap-3">
                   <div class="w-8 h-8 bg-navy-100 rounded-full flex items-center justify-center text-sm font-semibold text-navy-600">${u.name.charAt(0)}</div>
                   <div>
-                    <p class="text-sm font-medium text-navy-800">${u.name}</p>
+                    <p class="text-sm font-medium text-navy-800">${u.name}${isSelf ? ' <span class="text-[10px] bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded ml-1">vous</span>' : ''}</p>
                     <p class="text-xs text-navy-400">${u.email}</p>
                   </div>
                 </div>
               </td>
-              <td class="py-3 px-5 text-sm text-navy-600">${u.hotel_name || '—'}</td>
+              ${isSuperAdmin ? `<td class="py-3 px-5 text-sm text-navy-600">${u.hotel_name || '<span class="text-navy-300 italic">—</span>'}</td>` : ''}
               <td class="py-3 px-5"><span class="text-[10px] px-2 py-0.5 rounded-full font-medium ${roleColors[u.role]}">${roleLabels[u.role]}</span></td>
               <td class="py-3 px-5 text-xs text-navy-400">${u.last_login ? formatDate(u.last_login) : 'Jamais'}</td>
               <td class="py-3 px-5">
                 <span class="w-2 h-2 rounded-full inline-block ${u.is_active ? 'bg-green-500' : 'bg-red-500'}"></span>
                 <span class="text-xs text-navy-400 ml-1">${u.is_active ? 'Actif' : 'Inactif'}</span>
               </td>
-              ${isAdminOrSuper ? `
+              ${isAdmin ? `
               <td class="py-3 px-5">
                 ${isEmployee ? `
                   <button onclick="toggleEditPermission(${u.id}, ${hasEditRight ? 0 : 1})" 
-                    class="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${hasEditRight ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}" 
-                    title="${hasEditRight ? 'Retirer le droit de modifier les procédures' : 'Accorder le droit de modifier les procédures'}">
+                    class="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${hasEditRight ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}">
                     <i class="fas ${hasEditRight ? 'fa-shield-halved' : 'fa-shield'}"></i>
-                    ${hasEditRight ? 'Éditeur actif' : 'Lecture seule'}
+                    ${hasEditRight ? 'Éditeur' : 'Lecture seule'}
                   </button>
                 ` : `<span class="text-xs text-navy-300 italic">${u.role === 'admin' ? 'Droits admin' : '—'}</span>`}
               </td>` : ''}
+              <td class="py-3 px-5">
+                ${isSelf ? '<span class="text-xs text-navy-300 italic">—</span>' : `
+                  <button onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')" 
+                    class="w-8 h-8 rounded-lg bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-400 hover:text-red-600 transition-colors" 
+                    title="Supprimer ${u.name.replace(/'/g, "\\'")}">
+                    <i class="fas fa-trash text-xs"></i>
+                  </button>
+                `}
+              </td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>
     </div>
 
+    ${isAdmin ? `
     <div class="mt-4 bg-orange-50 border border-orange-100 rounded-xl p-4 flex items-start gap-3">
       <i class="fas fa-circle-info text-orange-400 mt-0.5"></i>
       <div class="text-xs text-orange-700">
         <p class="font-semibold mb-1">Droits de modification des procédures</p>
         <p>Les <strong>admins</strong> ont toujours accès complet. Les <strong>employés éditeurs</strong> peuvent créer, modifier et supprimer des procédures, ainsi que soumettre des suggestions. Les <strong>employés en lecture seule</strong> consultent uniquement.</p>
       </div>
-    </div>
+    </div>` : ''}
   </div>`;
+}
+
+async function deleteUser(id, name) {
+  if (!confirm(`Supprimer le compte de "${name}" ? Cette action est irréversible.`)) return;
+  const result = await api(`/users/${id}`, { method: 'DELETE' });
+  if (result) {
+    await loadData();
+    render();
+    showToast(`Compte de ${name} supprimé`, 'success');
+  }
 }
 
 // ============================================
@@ -1108,25 +1161,97 @@ function renderHotelsView() {
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-      ${state.hotels.map(h => `
+      ${state.hotels.length === 0 ? `
+        <div class="col-span-2 bg-white rounded-xl p-12 text-center border border-gray-100">
+          <i class="fas fa-hotel text-4xl text-navy-200 mb-4"></i>
+          <p class="text-navy-400 font-medium">Aucun hôtel enregistré</p>
+        </div>
+      ` : state.hotels.map(h => `
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow">
           <div class="flex items-start gap-4">
-            <div class="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center">
+            <div class="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
               <i class="fas fa-hotel text-blue-500 text-xl"></i>
             </div>
-            <div class="flex-1">
-              <h3 class="font-semibold text-navy-800 text-lg">${h.name}</h3>
-              ${h.address ? `<p class="text-sm text-navy-400 mt-0.5"><i class="fas fa-map-marker-alt mr-1"></i>${h.address}</p>` : ''}
-              <p class="text-xs text-navy-300 mt-2">Créé le ${formatDate(h.created_at)}</p>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-navy-800 text-lg truncate">${h.name}</h3>
+              ${h.address ? `<p class="text-sm text-navy-400 mt-0.5"><i class="fas fa-map-marker-alt mr-1"></i>${h.address}</p>` : '<p class="text-sm text-navy-300 italic mt-0.5">Adresse non renseignée</p>'}
+              <p class="text-xs text-navy-300 mt-2"><i class="fas fa-calendar mr-1"></i>Créé le ${formatDate(h.created_at)}</p>
             </div>
-            <button onclick="switchHotel(${h.id}); navigate('procedures')" class="bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-2 rounded-lg text-sm transition-colors">
-              <i class="fas fa-arrow-right"></i>
+          </div>
+          <div class="flex items-center gap-2 mt-4 pt-4 border-t border-gray-50">
+            <button onclick="showHotelEditForm(${h.id}, '${h.name.replace(/'/g, "\\'")}', '${(h.address || '').replace(/'/g, "\\'")}')" 
+              class="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-navy-50 hover:bg-navy-100 text-navy-600 transition-colors">
+              <i class="fas fa-pen"></i>Modifier
+            </button>
+            <button onclick="showHotelUsers(${h.id})"
+              class="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors">
+              <i class="fas fa-users"></i>Voir les admins
+            </button>
+            <button onclick="deleteHotel(${h.id}, '${h.name.replace(/'/g, "\\'")}')" 
+              class="w-9 h-9 flex items-center justify-center rounded-lg bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 transition-colors" 
+              title="Supprimer cet hôtel">
+              <i class="fas fa-trash text-xs"></i>
             </button>
           </div>
         </div>
       `).join('')}
     </div>
   </div>`;
+}
+
+async function deleteHotel(id, name) {
+  if (!confirm(`Supprimer l'hôtel "${name}" ?\n\n⚠️ Cette action supprimera TOUTES les données associées (utilisateurs, procédures, catégories, suggestions, historique). Elle est irréversible.`)) return;
+  const result = await api(`/hotels/${id}`, { method: 'DELETE' });
+  if (result) {
+    await loadData();
+    render();
+    showToast(`Hôtel "${name}" supprimé`, 'success');
+  }
+}
+
+function showHotelEditForm(id, name, address) {
+  const content = `
+  <form onsubmit="event.preventDefault(); updateHotel(${id})">
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-navy-600 mb-1">Nom de l'hôtel *</label>
+        <input id="hotel-edit-name" type="text" required value="${name}"
+          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-navy-600 mb-1">Adresse</label>
+        <input id="hotel-edit-address" type="text" value="${address}" placeholder="Adresse complète"
+          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+      </div>
+      <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
+        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
+          <i class="fas fa-save mr-1.5"></i>Enregistrer
+        </button>
+      </div>
+    </div>
+  </form>`;
+  showModal(`Modifier — ${name}`, content);
+}
+
+async function updateHotel(id) {
+  const data = {
+    name: document.getElementById('hotel-edit-name').value.trim(),
+    address: document.getElementById('hotel-edit-address').value.trim()
+  };
+  const result = await api(`/hotels/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  if (result) {
+    closeModal();
+    await loadData();
+    render();
+    showToast('Hôtel mis à jour', 'success');
+  }
+}
+
+function showHotelUsers(hotelId) {
+  // Filtre les users de cet hôtel et navigue vers la vue users
+  state.usersFilterHotel = String(hotelId);
+  navigate('users');
 }
 
 // ============================================
@@ -1495,45 +1620,56 @@ async function submitSuggestion(procedureId) {
 // User Form
 function showUserForm() {
   const isSuperAdmin = state.user.role === 'super_admin';
+
+  // Super admin : sélection hôtel obligatoire, rôle forcé à "admin"
+  // Admin hôtel : crée des employés (ou admins) pour son hôtel
   const content = `
   <form onsubmit="event.preventDefault(); createUser()">
     <div class="space-y-4">
       ${isSuperAdmin ? `
+      <div class="bg-blue-50 rounded-lg px-4 py-3 text-xs text-blue-700 flex items-center gap-2 mb-2">
+        <i class="fas fa-circle-info"></i>
+        En tant que Super Admin, vous créez uniquement des comptes administrateurs d'hôtel.
+      </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Hôtel *</label>
         <select id="user-hotel" required class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          <option value="">— Sélectionner un hôtel —</option>
           ${state.hotels.map(h => `<option value="${h.id}">${h.name}</option>`).join('')}
         </select>
       </div>` : ''}
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Nom complet *</label>
-        <input id="user-name" type="text" required class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        <input id="user-name" type="text" required placeholder="Prénom Nom"
+          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Email *</label>
-        <input id="user-email" type="email" required class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        <input id="user-email" type="email" required placeholder="email@hotel.com"
+          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Mot de passe *</label>
-        <input id="user-password" type="password" required class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        <input id="user-password" type="password" required placeholder="••••••••"
+          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
+      ${!isSuperAdmin ? `
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Rôle *</label>
         <select id="user-role" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
           <option value="employee">Employé</option>
           <option value="admin">Administrateur</option>
-          ${isSuperAdmin ? '<option value="super_admin">Super Admin</option>' : ''}
         </select>
-      </div>
+      </div>` : '<input type="hidden" id="user-role" value="admin">'}
       <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
         <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
         <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
-          <i class="fas fa-user-plus mr-1.5"></i>Créer l'utilisateur
+          <i class="fas fa-user-plus mr-1.5"></i>Créer le compte
         </button>
       </div>
     </div>
   </form>`;
-  showModal('Nouvel utilisateur', content);
+  showModal(isSuperAdmin ? 'Nouvel administrateur d\'hôtel' : 'Nouvel utilisateur', content);
 }
 
 async function createUser() {

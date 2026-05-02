@@ -91,6 +91,46 @@ app.post('/api/hotels', authMiddleware, async (c) => {
   return c.json({ id: result.meta.last_row_id, name, slug })
 })
 
+app.put('/api/hotels/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const { name, address } = await c.req.json()
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+  await c.env.DB.prepare('UPDATE hotels SET name = ?, slug = ?, address = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(name, slug, address || null, id).run()
+  return c.json({ success: true })
+})
+
+app.delete('/api/hotels/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  // Vérifier que l'hôtel existe
+  const hotel = await c.env.DB.prepare('SELECT id, name FROM hotels WHERE id = ?').bind(id).first() as any
+  if (!hotel) return c.json({ error: 'Hôtel non trouvé' }, 404)
+  // Supprimer dans l'ordre : les données liées d'abord
+  const users = await c.env.DB.prepare('SELECT id FROM users WHERE hotel_id = ?').bind(id).all()
+  for (const u of users.results as any[]) {
+    await c.env.DB.prepare('DELETE FROM changelog_reads WHERE user_id = ?').bind(u.id).run()
+  }
+  await c.env.DB.prepare('DELETE FROM changelog WHERE hotel_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM suggestions WHERE hotel_id = ?').bind(id).run()
+  const procedures = await c.env.DB.prepare('SELECT id FROM procedures WHERE hotel_id = ?').bind(id).all()
+  for (const p of procedures.results as any[]) {
+    const conditions = await c.env.DB.prepare('SELECT id FROM conditions WHERE procedure_id = ?').bind(p.id).all()
+    for (const cond of conditions.results as any[]) {
+      await c.env.DB.prepare('DELETE FROM condition_steps WHERE condition_id = ?').bind(cond.id).run()
+    }
+    await c.env.DB.prepare('DELETE FROM conditions WHERE procedure_id = ?').bind(p.id).run()
+    await c.env.DB.prepare('DELETE FROM steps WHERE procedure_id = ?').bind(p.id).run()
+  }
+  await c.env.DB.prepare('DELETE FROM procedures WHERE hotel_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM categories WHERE hotel_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM users WHERE hotel_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM hotels WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
 // ============================================
 // USERS ROUTES
 // ============================================
@@ -136,6 +176,36 @@ app.post('/api/users', authMiddleware, async (c) => {
     return c.json({ id: result.meta.last_row_id, email, name, role })
   } catch (e: any) {
     return c.json({ error: 'Cet email est déjà utilisé' }, 400)
+  }
+})
+
+app.delete('/api/users/:id', authMiddleware, async (c) => {
+  const currentUser = c.get('user')
+  if (currentUser.role !== 'super_admin' && currentUser.role !== 'admin') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  // Impossible de se supprimer soi-même
+  if (String(id) === String(currentUser.id)) return c.json({ error: 'Impossible de supprimer votre propre compte' }, 400)
+  try {
+    const targetUser = await c.env.DB.prepare('SELECT id, hotel_id, role FROM users WHERE id = ?').bind(id).first() as any
+    if (!targetUser) return c.json({ error: 'Utilisateur non trouvé' }, 404)
+    // Un admin ne peut supprimer que les users de son hôtel (pas les super_admins)
+    if (currentUser.role === 'admin') {
+      if (String(targetUser.hotel_id) !== String(currentUser.hotel_id)) return c.json({ error: 'Non autorisé' }, 403)
+      if (targetUser.role === 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+    }
+    // Supprimer les suggestions soumises par cet user (son contenu propre)
+    await c.env.DB.prepare('DELETE FROM suggestions WHERE user_id = ?').bind(id).run()
+    // Nullifier les autres références (on conserve l'historique collectif)
+    await c.env.DB.prepare('DELETE FROM changelog_reads WHERE user_id = ?').bind(id).run()
+    await c.env.DB.prepare('UPDATE suggestions SET reviewed_by = NULL WHERE reviewed_by = ?').bind(id).run()
+    await c.env.DB.prepare('UPDATE changelog SET user_id = NULL WHERE user_id = ?').bind(id).run()
+    await c.env.DB.prepare('UPDATE procedures SET created_by = NULL WHERE created_by = ?').bind(id).run()
+    await c.env.DB.prepare('UPDATE procedures SET approved_by = NULL WHERE approved_by = ?').bind(id).run()
+    await c.env.DB.prepare('UPDATE templates SET created_by = NULL WHERE created_by = ?').bind(id).run()
+    await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run()
+    return c.json({ success: true })
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Erreur serveur' }, 500)
   }
 })
 

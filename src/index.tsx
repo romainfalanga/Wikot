@@ -6,7 +6,7 @@ type Bindings = {
 }
 
 type Variables = {
-  user: { id: number; hotel_id: number | null; email: string; name: string; role: string }
+  user: { id: number; hotel_id: number | null; email: string; name: string; role: string; can_edit_procedures: number }
 }
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
@@ -24,7 +24,7 @@ const authMiddleware = async (c: any, next: any) => {
   try {
     const decoded = atob(sessionToken)
     const [userId] = decoded.split(':')
-    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
+    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
     if (!user) return c.json({ error: 'Utilisateur non trouvé' }, 401)
     c.set('user', user)
     await next()
@@ -38,7 +38,7 @@ const authMiddleware = async (c: any, next: any) => {
 // ============================================
 app.post('/api/auth/login', async (c) => {
   const { email, password } = await c.req.json()
-  const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, password_hash FROM users WHERE email = ? AND is_active = 1').bind(email).first() as any
+  const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, password_hash FROM users WHERE email = ? AND is_active = 1').bind(email).first() as any
   if (!user || user.password_hash !== password) {
     return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
   }
@@ -46,13 +46,20 @@ app.post('/api/auth/login', async (c) => {
   const token = btoa(`${user.id}:${user.email}`)
   return c.json({
     token,
-    user: { id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role }
+    user: { id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role, can_edit_procedures: user.can_edit_procedures }
   })
 })
 
 app.get('/api/auth/me', authMiddleware, async (c) => {
   return c.json({ user: c.get('user') })
 })
+
+// ============================================
+// HELPER: Can user edit procedures?
+// ============================================
+function canEditProcedures(user: { role: string; can_edit_procedures: number }) {
+  return user.role === 'super_admin' || user.role === 'admin' || user.can_edit_procedures === 1
+}
 
 // ============================================
 // HOTELS ROUTES
@@ -84,13 +91,31 @@ app.get('/api/users', authMiddleware, async (c) => {
   const user = c.get('user')
   let users
   if (user.role === 'super_admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name').all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name').all()
   } else if (user.role === 'admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name').bind(user.hotel_id).all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name').bind(user.hotel_id).all()
   } else {
     return c.json({ error: 'Non autorisé' }, 403)
   }
   return c.json({ users: users.results })
+})
+
+// Toggle can_edit_procedures permission (admin only)
+app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
+  const currentUser = c.get('user')
+  if (currentUser.role !== 'super_admin' && currentUser.role !== 'admin') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const { can_edit_procedures } = await c.req.json()
+
+  // Check the target user belongs to same hotel (for admin)
+  const targetUser = await c.env.DB.prepare('SELECT id, hotel_id, role FROM users WHERE id = ?').bind(id).first() as any
+  if (!targetUser) return c.json({ error: 'Utilisateur non trouvé' }, 404)
+  if (currentUser.role === 'admin' && targetUser.hotel_id !== currentUser.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+  // Can only grant to employees
+  if (targetUser.role !== 'employee') return c.json({ error: 'Cette permission ne s\'applique qu\'aux employés' }, 400)
+
+  await c.env.DB.prepare('UPDATE users SET can_edit_procedures = ? WHERE id = ?').bind(can_edit_procedures ? 1 : 0, id).run()
+  return c.json({ success: true })
 })
 
 app.post('/api/users', authMiddleware, async (c) => {
@@ -119,7 +144,7 @@ app.get('/api/categories', authMiddleware, async (c) => {
 
 app.post('/api/categories', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const { name, icon, color, parent_id } = await c.req.json()
   const hotelId = user.role === 'super_admin' ? (await c.req.json()).hotel_id || user.hotel_id : user.hotel_id
   const result = await c.env.DB.prepare('INSERT INTO categories (hotel_id, name, icon, color, parent_id) VALUES (?, ?, ?, ?, ?)').bind(hotelId, name, icon || 'fa-folder', color || '#3B82F6', parent_id || null).run()
@@ -128,7 +153,7 @@ app.post('/api/categories', authMiddleware, async (c) => {
 
 app.put('/api/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
   const { name, icon, color } = await c.req.json()
   await c.env.DB.prepare('UPDATE categories SET name = ?, icon = ?, color = ? WHERE id = ?').bind(name, icon, color, id).run()
@@ -137,7 +162,7 @@ app.put('/api/categories/:id', authMiddleware, async (c) => {
 
 app.delete('/api/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
   await c.env.DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run()
   return c.json({ success: true })
@@ -200,7 +225,7 @@ app.get('/api/procedures/:id', authMiddleware, async (c) => {
 
 app.post('/api/procedures', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const body = await c.req.json()
   const hotelId = user.role === 'super_admin' ? (body.hotel_id || user.hotel_id) : user.hotel_id
 
@@ -249,7 +274,7 @@ app.post('/api/procedures', authMiddleware, async (c) => {
 
 app.put('/api/procedures/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
   const body = await c.req.json()
 
@@ -303,7 +328,7 @@ app.put('/api/procedures/:id', authMiddleware, async (c) => {
 
 app.put('/api/procedures/:id/status', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
   const { status } = await c.req.json()
 
@@ -329,7 +354,7 @@ app.put('/api/procedures/:id/status', authMiddleware, async (c) => {
 
 app.delete('/api/procedures/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
 
   const proc = await c.env.DB.prepare('SELECT hotel_id, title FROM procedures WHERE id = ?').bind(id).first() as any
@@ -377,6 +402,9 @@ app.get('/api/suggestions', authMiddleware, async (c) => {
 
 app.post('/api/suggestions', authMiddleware, async (c) => {
   const user = c.get('user')
+  // Only users who can edit procedures (admin, super_admin, or employee with permission) can submit suggestions
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé — seuls les utilisateurs avec droits de modification peuvent soumettre des suggestions' }, 403)
+
   const { procedure_id, type, title, description } = await c.req.json()
   const hotelId = user.hotel_id
 
@@ -389,7 +417,7 @@ app.post('/api/suggestions', authMiddleware, async (c) => {
 
 app.put('/api/suggestions/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
   const { status, admin_response } = await c.req.json()
 
@@ -464,7 +492,7 @@ app.delete('/api/templates/:id', authMiddleware, async (c) => {
 
 app.post('/api/templates/:id/import', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const template = await c.env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(c.req.param('id')).first() as any
   if (!template) return c.json({ error: 'Template non trouvé' }, 404)
 

@@ -8,13 +8,15 @@ INSERT OR IGNORE INTO hotels (id, name, slug, address) VALUES
   (2, 'Hôtel Côte d''Azur', 'cote-azur', '22 Promenade des Anglais, 06000 Nice');
 
 -- Users (password: "demo123" - hashed with simple hash for demo)
-INSERT OR IGNORE INTO users (id, hotel_id, email, password_hash, name, role) VALUES
-  (1, NULL, 'romain@wikot.app', 'demo123', 'Romain', 'super_admin'),
-  (2, 1, 'marie@grandparis.com', 'demo123', 'Marie Dupont', 'admin'),
-  (3, 1, 'jean@grandparis.com', 'demo123', 'Jean Martin', 'employee'),
-  (4, 1, 'sophie@grandparis.com', 'demo123', 'Sophie Leroux', 'employee'),
-  (5, 2, 'luc@coteazur.com', 'demo123', 'Luc Bernard', 'admin'),
-  (6, 2, 'emma@coteazur.com', 'demo123', 'Emma Petit', 'employee');
+-- can_edit_procedures: 1 = peut créer/modifier/supprimer des procédures et suggérer
+INSERT OR IGNORE INTO users (id, hotel_id, email, password_hash, name, role, can_edit_procedures) VALUES
+  (1, NULL, 'romain@wikot.app', 'demo123', 'Romain', 'super_admin', 0),
+  (2, 1, 'marie@grandparis.com', 'demo123', 'Marie Dupont', 'admin', 0),
+  (3, 1, 'jean@grandparis.com', 'demo123', 'Jean Martin', 'employee', 0),
+  (4, 1, 'sophie@grandparis.com', 'demo123', 'Sophie Leroux', 'employee', 1),
+  (5, 2, 'luc@coteazur.com', 'demo123', 'Luc Bernard', 'admin', 0),
+  (6, 2, 'emma@coteazur.com', 'demo123', 'Emma Petit', 'employee', 0);
+-- Note: Sophie a le droit can_edit_procedures pour démo
 
 -- Categories for Hotel 1
 INSERT OR IGNORE INTO categories (id, hotel_id, name, icon, color, sort_order) VALUES

@@ -55,6 +55,12 @@ function showToast(message, type = 'info') {
   setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
 }
 
+// Helper: can current user edit/create procedures?
+function userCanEditProcedures() {
+  if (!state.user) return false;
+  return state.user.role === 'super_admin' || state.user.role === 'admin' || state.user.can_edit_procedures === 1;
+}
+
 // ============================================
 // AUTH
 // ============================================
@@ -110,10 +116,12 @@ async function loadData() {
     ]);
     if (suggestionsData) state.suggestions = suggestionsData.suggestions || [];
     if (usersData) state.users = usersData.users || [];
-  } else {
+  } else if (userCanEditProcedures()) {
+    // Employee with edit rights can see suggestions
     const suggestionsData = await api(`/suggestions${hotelParam}`);
     if (suggestionsData) state.suggestions = suggestionsData.suggestions || [];
   }
+  // Employees without edit rights: no suggestions loaded
 
   if (state.user.role === 'super_admin') {
     const [hotelsData, templatesData] = await Promise.all([
@@ -179,7 +187,8 @@ function renderLoginPage() {
           <div class="space-y-1 text-xs text-navy-400">
             <p><span class="font-mono bg-white px-1.5 py-0.5 rounded">romain@wikot.app</span> — Super Admin</p>
             <p><span class="font-mono bg-white px-1.5 py-0.5 rounded">marie@grandparis.com</span> — Admin Hôtel</p>
-            <p><span class="font-mono bg-white px-1.5 py-0.5 rounded">jean@grandparis.com</span> — Employé</p>
+            <p><span class="font-mono bg-white px-1.5 py-0.5 rounded">sophie@grandparis.com</span> — Employé éditeur</p>
+            <p><span class="font-mono bg-white px-1.5 py-0.5 rounded">jean@grandparis.com</span> — Employé lecture seule</p>
             <p class="text-navy-300 mt-1">Mot de passe : <span class="font-mono bg-white px-1.5 py-0.5 rounded">demo123</span></p>
           </div>
         </div>
@@ -196,13 +205,18 @@ function renderMainLayout() {
   const isAdmin = state.user.role === 'admin';
   const isEmployee = state.user.role === 'employee';
 
+  const canEdit = userCanEditProcedures();
+
   const menuItems = [
     { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
     { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
     { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
     { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
-    { id: 'suggestions', icon: 'fa-lightbulb', label: 'Suggestions' },
   ];
+  // Suggestions : uniquement pour ceux qui peuvent modifier les procédures
+  if (canEdit) {
+    menuItems.push({ id: 'suggestions', icon: 'fa-lightbulb', label: 'Suggestions' });
+  }
   if (isAdmin || isSuperAdmin) {
     menuItems.push({ id: 'users', icon: 'fa-users', label: 'Utilisateurs' });
   }
@@ -211,8 +225,8 @@ function renderMainLayout() {
     menuItems.push({ id: 'templates', icon: 'fa-copy', label: 'Templates' });
   }
 
-  const roleLabels = { super_admin: 'Super Admin', admin: 'Administrateur', employee: 'Employé' };
-  const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', employee: 'bg-green-100 text-green-700' };
+  const roleLabels = { super_admin: 'Super Admin', admin: 'Administrateur', employee: canEdit ? 'Employé (éditeur)' : 'Employé' };
+  const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', employee: canEdit ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700' };
 
   return `
   <div class="flex h-screen overflow-hidden">
@@ -662,8 +676,8 @@ function renderProcedureDetail() {
       </div>
     </div>` : ''}
 
-    <!-- Quick suggestion for employees -->
-    ${state.user.role === 'employee' ? `
+    <!-- Quick suggestion : uniquement pour les utilisateurs avec droits d'édition -->
+    ${userCanEditProcedures() ? `
     <div class="bg-navy-50 rounded-xl p-5 border border-navy-100">
       <div class="flex items-center gap-3">
         <div class="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
@@ -893,7 +907,7 @@ async function markChangelogRead(id) {
 // SUGGESTIONS VIEW
 // ============================================
 function renderSuggestionsView() {
-  const isAdmin = state.user.role !== 'employee';
+  const isAdmin = state.user.role === 'super_admin' || state.user.role === 'admin';
 
   return `
   <div class="fade-in">
@@ -977,10 +991,22 @@ async function reviewSuggestion(id, status) {
   showToast(`Suggestion ${status === 'approved' ? 'approuvée' : 'rejetée'}`, 'success');
 }
 
+async function toggleEditPermission(userId, newValue) {
+  const action = newValue === 1 ? 'accorder' : 'retirer';
+  if (!confirm(`Voulez-vous ${action} le droit de modifier les procédures à cet employé ?`)) return;
+  const result = await api(`/users/${userId}/permissions`, { method: 'PUT', body: JSON.stringify({ can_edit_procedures: newValue }) });
+  if (result) {
+    await loadData();
+    render();
+    showToast(newValue === 1 ? 'Droits d\'édition accordés' : 'Droits d\'édition retirés', 'success');
+  }
+}
+
 // ============================================
 // USERS VIEW
 // ============================================
 function renderUsersView() {
+  const isAdminOrSuper = state.user.role === 'admin' || state.user.role === 'super_admin';
   return `
   <div class="fade-in">
     <div class="flex items-center justify-between mb-6">
@@ -1002,12 +1028,15 @@ function renderUsersView() {
             <th class="text-left py-3 px-5">Rôle</th>
             <th class="text-left py-3 px-5">Dernière connexion</th>
             <th class="text-left py-3 px-5">Statut</th>
+            ${isAdminOrSuper ? '<th class="text-left py-3 px-5">Droits procédures</th>' : ''}
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-50">
           ${state.users.map(u => {
             const roleLabels = { super_admin: 'Super Admin', admin: 'Admin', employee: 'Employé' };
             const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', employee: 'bg-green-100 text-green-700' };
+            const hasEditRight = u.can_edit_procedures === 1;
+            const isEmployee = u.role === 'employee';
             return `
             <tr class="hover:bg-gray-50">
               <td class="py-3 px-5">
@@ -1026,10 +1055,29 @@ function renderUsersView() {
                 <span class="w-2 h-2 rounded-full inline-block ${u.is_active ? 'bg-green-500' : 'bg-red-500'}"></span>
                 <span class="text-xs text-navy-400 ml-1">${u.is_active ? 'Actif' : 'Inactif'}</span>
               </td>
+              ${isAdminOrSuper ? `
+              <td class="py-3 px-5">
+                ${isEmployee ? `
+                  <button onclick="toggleEditPermission(${u.id}, ${hasEditRight ? 0 : 1})" 
+                    class="flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${hasEditRight ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}" 
+                    title="${hasEditRight ? 'Retirer le droit de modifier les procédures' : 'Accorder le droit de modifier les procédures'}">
+                    <i class="fas ${hasEditRight ? 'fa-shield-halved' : 'fa-shield'}"></i>
+                    ${hasEditRight ? 'Éditeur actif' : 'Lecture seule'}
+                  </button>
+                ` : `<span class="text-xs text-navy-300 italic">${u.role === 'admin' ? 'Droits admin' : '—'}</span>`}
+              </td>` : ''}
             </tr>`;
           }).join('')}
         </tbody>
       </table>
+    </div>
+
+    <div class="mt-4 bg-orange-50 border border-orange-100 rounded-xl p-4 flex items-start gap-3">
+      <i class="fas fa-circle-info text-orange-400 mt-0.5"></i>
+      <div class="text-xs text-orange-700">
+        <p class="font-semibold mb-1">Droits de modification des procédures</p>
+        <p>Les <strong>admins</strong> ont toujours accès complet. Les <strong>employés éditeurs</strong> peuvent créer, modifier et supprimer des procédures, ainsi que soumettre des suggestions. Les <strong>employés en lecture seule</strong> consultent uniquement.</p>
+      </div>
     </div>
   </div>`;
 }

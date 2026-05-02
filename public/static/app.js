@@ -70,6 +70,8 @@ async function login(email, password) {
     state.token = data.token;
     state.user = data.user;
     state.currentHotelId = data.user.hotel_id;
+    // Les employés n'ont pas de dashboard → démarrer sur procédures
+    state.currentView = data.user.role === 'employee' ? 'procedures' : 'dashboard';
     localStorage.setItem('wikot_token', data.token);
     localStorage.setItem('wikot_user', JSON.stringify(data.user));
     showToast(`Bienvenue ${data.user.name} !`, 'success');
@@ -83,7 +85,7 @@ function logout() {
   state.user = null;
   localStorage.removeItem('wikot_token');
   localStorage.removeItem('wikot_user');
-  state.currentView = 'dashboard';
+  state.currentView = 'dashboard'; // reset propre pour la prochaine connexion
   render();
 }
 
@@ -124,18 +126,10 @@ async function loadData() {
   }
 
   if (state.user.role === 'admin') {
-    const [suggestionsData, usersData] = await Promise.all([
-      api(`/suggestions${hotelParam}`),
-      api('/users')
-    ]);
-    if (suggestionsData) state.suggestions = suggestionsData.suggestions || [];
+    const usersData = await api('/users');
     if (usersData) state.users = usersData.users || [];
-  } else if (userCanEditProcedures()) {
-    // Employé éditeur : peut voir les suggestions
-    const suggestionsData = await api(`/suggestions${hotelParam}`);
-    if (suggestionsData) state.suggestions = suggestionsData.suggestions || [];
   }
-  // Employés lecture seule : pas de suggestions
+  // Plus de chargement des suggestions (feature supprimée)
 }
 
 // ============================================
@@ -212,28 +206,31 @@ function renderMainLayout() {
 
   const canEdit = userCanEditProcedures();
 
-  // Menu super_admin : dashboard + hôtels + users uniquement
+  // Construction du menu selon le rôle
   let menuItems;
   if (isSuperAdmin) {
+    // Super admin : infrastructure uniquement
     menuItems = [
       { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
       { id: 'hotels', icon: 'fa-hotel', label: 'Hôtels' },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
-  } else {
+  } else if (isAdmin) {
+    // Admin hôtel : tout sauf suggestions
     menuItems = [
       { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
       { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
+      { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
-    // Suggestions : uniquement pour ceux qui peuvent modifier les procédures
-    if (canEdit) {
-      menuItems.push({ id: 'suggestions', icon: 'fa-lightbulb', label: 'Suggestions' });
-    }
-    if (isAdmin) {
-      menuItems.push({ id: 'users', icon: 'fa-users', label: 'Utilisateurs' });
-    }
+  } else {
+    // Employé (éditeur ou lecture seule) : pas de dashboard, pas de suggestions
+    menuItems = [
+      { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
+      { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
+      { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
+    ];
   }
 
   const roleLabels = { super_admin: 'Super Admin', admin: 'Administrateur', employee: canEdit ? 'Employé (éditeur)' : 'Employé' };
@@ -276,6 +273,9 @@ function renderMainLayout() {
             <span class="text-[10px] px-1.5 py-0.5 rounded ${roleColors[state.user.role]}">${roleLabels[state.user.role]}</span>
           </div>
         </div>
+        <button onclick="showChangePasswordModal()" class="w-full text-left text-xs text-navy-400 hover:text-brand-400 transition-colors flex items-center gap-2 px-1 mb-2">
+          <i class="fas fa-key"></i> Changer de mot de passe
+        </button>
         <button onclick="logout()" class="w-full text-left text-xs text-navy-400 hover:text-red-400 transition-colors flex items-center gap-2 px-1">
           <i class="fas fa-sign-out-alt"></i> Déconnexion
         </button>
@@ -309,7 +309,6 @@ function renderCurrentView() {
     case 'procedures': return state.selectedProcedure ? renderProcedureDetail() : renderProceduresList();
     case 'search': return renderSearchView();
     case 'changelog': return renderChangelogView();
-    case 'suggestions': return renderSuggestionsView();
     case 'users': return renderUsersView();
     case 'hotels': return renderHotelsView();
     case 'templates': return renderTemplatesView();
@@ -392,7 +391,6 @@ function renderDashboard() {
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
       ${statCard('fa-sitemap', 'Procédures actives', s.active_procedures || 0, 'bg-green-500')}
       ${statCard('fa-file-pen', 'Brouillons', s.draft_procedures || 0, 'bg-yellow-500')}
-      ${statCard('fa-lightbulb', 'Suggestions en attente', s.pending_suggestions || 0, 'bg-purple-500')}
       ${statCard('fa-users', 'Membres de l\'équipe', s.total_users || 0, 'bg-blue-500')}
     </div>
 
@@ -685,22 +683,7 @@ function renderProcedureDetail() {
       </div>
     </div>` : ''}
 
-    <!-- Quick suggestion : uniquement pour les utilisateurs avec droits d'édition -->
-    ${userCanEditProcedures() ? `
-    <div class="bg-navy-50 rounded-xl p-5 border border-navy-100">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center">
-          <i class="fas fa-lightbulb text-purple-500"></i>
-        </div>
-        <div class="flex-1">
-          <p class="font-medium text-navy-700">Une suggestion d'amélioration ?</p>
-          <p class="text-xs text-navy-400">Proposez une modification ou une amélioration de cette procédure</p>
-        </div>
-        <button onclick="showSuggestionForm(${proc.id})" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-          <i class="fas fa-lightbulb mr-1.5"></i>Suggérer
-        </button>
-      </div>
-    </div>` : ''}
+
   </div>`;
 }
 
@@ -1128,7 +1111,7 @@ function renderUsersView() {
       <i class="fas fa-circle-info text-orange-400 mt-0.5"></i>
       <div class="text-xs text-orange-700">
         <p class="font-semibold mb-1">Droits de modification des procédures</p>
-        <p>Les <strong>admins</strong> ont toujours accès complet. Les <strong>employés éditeurs</strong> peuvent créer, modifier et supprimer des procédures, ainsi que soumettre des suggestions. Les <strong>employés en lecture seule</strong> consultent uniquement.</p>
+        <p>Les <strong>admins</strong> ont toujours accès complet. Les <strong>employés éditeurs</strong> peuvent créer, modifier et supprimer des procédures. Les <strong>employés en lecture seule</strong> consultent uniquement.</p>
       </div>
     </div>` : ''}
   </div>`;
@@ -1844,6 +1827,63 @@ async function importTemplate(templateId) {
 }
 
 // ============================================
+// CHANGE PASSWORD MODAL
+// ============================================
+function showChangePasswordModal() {
+  const content = `
+  <form onsubmit="event.preventDefault(); submitChangePassword()">
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-navy-600 mb-1">Mot de passe actuel *</label>
+        <input id="cp-current" type="password" required placeholder="••••••••"
+          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-navy-600 mb-1">Nouveau mot de passe *</label>
+        <input id="cp-new" type="password" required placeholder="••••••••" minlength="6"
+          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-navy-600 mb-1">Confirmer le nouveau mot de passe *</label>
+        <input id="cp-confirm" type="password" required placeholder="••••••••" minlength="6"
+          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+      </div>
+      <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
+        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
+          <i class="fas fa-key mr-1.5"></i>Changer le mot de passe
+        </button>
+      </div>
+    </div>
+  </form>`;
+  showModal('Changer de mot de passe', content);
+}
+
+async function submitChangePassword() {
+  const current = document.getElementById('cp-current').value;
+  const newPwd = document.getElementById('cp-new').value;
+  const confirm = document.getElementById('cp-confirm').value;
+
+  if (newPwd !== confirm) {
+    showToast('Les mots de passe ne correspondent pas', 'error');
+    return;
+  }
+  if (newPwd.length < 6) {
+    showToast('Le mot de passe doit faire au moins 6 caractères', 'error');
+    return;
+  }
+
+  const result = await api('/auth/change-password', {
+    method: 'PUT',
+    body: JSON.stringify({ current_password: current, new_password: newPwd })
+  });
+  if (result) {
+    closeModal();
+    showToast('Mot de passe modifié avec succès', 'success');
+  }
+}
+
+// ============================================
 // HELPERS
 // ============================================
 function getActionColor(action) {
@@ -1892,6 +1932,10 @@ function formatDate(dateStr) {
 async function init() {
   if (state.token && state.user) {
     state.currentHotelId = state.user.hotel_id;
+    // Les employés n'ont pas de dashboard → vue initiale = procédures
+    if (state.user.role === 'employee') {
+      state.currentView = 'procedures';
+    }
     await loadData();
   }
   render();

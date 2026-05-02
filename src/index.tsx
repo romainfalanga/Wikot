@@ -54,6 +54,22 @@ app.get('/api/auth/me', authMiddleware, async (c) => {
   return c.json({ user: c.get('user') })
 })
 
+app.put('/api/auth/change-password', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const { current_password, new_password } = await c.req.json()
+  if (!current_password || !new_password) return c.json({ error: 'Champs manquants' }, 400)
+  if (new_password.length < 6) return c.json({ error: 'Le nouveau mot de passe doit faire au moins 6 caractères' }, 400)
+
+  // Vérifier l'ancien mot de passe
+  const dbUser = await c.env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(user.id).first() as any
+  if (!dbUser || dbUser.password_hash !== current_password) {
+    return c.json({ error: 'Mot de passe actuel incorrect' }, 401)
+  }
+
+  await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(new_password, user.id).run()
+  return c.json({ success: true })
+})
+
 // ============================================
 // HELPERS
 // ============================================

@@ -454,7 +454,7 @@ async function switchHotel(hotelId) {
 // PROCEDURES LIST (Tree View)
 // ============================================
 function renderProceduresList() {
-  const isAdmin = state.user.role !== 'employee';
+  const canEdit = userCanEditProcedures();
   let filtered = state.procedures;
   if (state.filterCategory) filtered = filtered.filter(p => p.category_id == state.filterCategory);
   if (state.filterStatus) filtered = filtered.filter(p => p.status === state.filterStatus);
@@ -475,10 +475,7 @@ function renderProceduresList() {
         <p class="text-navy-500 text-sm mt-1">${filtered.length} procédure(s) · Vue arborescence</p>
       </div>
       <div class="flex gap-2">
-        ${isAdmin ? `
-        <button onclick="showImportTemplateModal()" class="bg-purple-50 hover:bg-purple-100 text-purple-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
-          <i class="fas fa-download mr-1.5"></i>Importer template
-        </button>
+        ${canEdit ? `
         <button onclick="showProcedureForm()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
           <i class="fas fa-plus mr-1.5"></i>Nouvelle procédure
         </button>` : ''}
@@ -509,7 +506,7 @@ function renderProceduresList() {
         <div class="bg-white rounded-xl p-12 text-center border border-gray-100">
           <i class="fas fa-sitemap text-4xl text-navy-200 mb-4"></i>
           <p class="text-navy-400 font-medium">Aucune procédure trouvée</p>
-          ${isAdmin ? '<p class="text-sm text-navy-300 mt-1">Créez votre première procédure ou importez un template</p>' : ''}
+          ${canEdit ? '<p class="text-sm text-navy-300 mt-1">Créez votre première procédure</p>' : ''}
         </div>
       ` : Object.entries(grouped).map(([catName, catData]) => `
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -521,7 +518,7 @@ function renderProceduresList() {
             <span class="text-xs bg-navy-100 text-navy-500 px-2 py-0.5 rounded-full">${catData.procedures.length}</span>
           </div>
           <div class="divide-y divide-gray-50">
-            ${catData.procedures.map(proc => renderProcedureCard(proc, isAdmin)).join('')}
+            ${catData.procedures.map(proc => renderProcedureCard(proc, canEdit)).join('')}
           </div>
         </div>
       `).join('')}
@@ -529,7 +526,7 @@ function renderProceduresList() {
   </div>`;
 }
 
-function renderProcedureCard(proc, isAdmin) {
+function renderProcedureCard(proc, canEdit) {
   const statusConfig = {
     active: { label: 'Active', class: 'bg-green-100 text-green-700', icon: 'fa-check-circle' },
     draft: { label: 'Brouillon', class: 'bg-yellow-100 text-yellow-700', icon: 'fa-pen' },
@@ -570,7 +567,7 @@ function renderProcedureCard(proc, isAdmin) {
         </div>
       </div>
       <div class="flex items-center gap-1.5 shrink-0">
-        ${isAdmin ? `
+        ${canEdit ? `
           <button onclick="event.stopPropagation(); showProcedureForm(${proc.id})" class="w-8 h-8 rounded-lg bg-navy-50 hover:bg-navy-100 flex items-center justify-center text-navy-400 hover:text-navy-600 transition-colors" title="Modifier">
             <i class="fas fa-pen text-xs"></i>
           </button>
@@ -600,7 +597,7 @@ async function viewProcedure(id) {
 function renderProcedureDetail() {
   if (!state.selectedProcedure) return '<p>Chargement...</p>';
   const { procedure: proc, steps, conditions } = state.selectedProcedure;
-  const isAdmin = state.user.role !== 'employee';
+  const canEdit = userCanEditProcedures();
 
   const priorityBorder = { critical: 'border-red-500', high: 'border-orange-400', normal: 'border-blue-400', low: 'border-gray-300' };
 
@@ -628,7 +625,7 @@ function renderProcedureDetail() {
               </div>
             </div>
           </div>
-          ${isAdmin ? `
+          ${canEdit ? `
           <div class="flex gap-2">
             <button onclick="showProcedureForm(${proc.id})" class="bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-2 rounded-lg text-sm transition-colors">
               <i class="fas fa-pen mr-1"></i>Modifier

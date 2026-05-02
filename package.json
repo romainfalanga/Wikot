@@ -1,12 +1,14 @@
 {
-  "name": "webapp",
+  "name": "wikot",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "wrangler pages dev",
-    "deploy": "npm run build && wrangler pages deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "preview": "wrangler pages dev dist --d1=wikot-production --local",
+    "deploy": "npm run build && wrangler pages deploy dist",
+    "db:migrate:local": "wrangler d1 migrations apply wikot-production --local",
+    "db:seed": "wrangler d1 execute wikot-production --local --file=./seed.sql",
+    "db:reset": "rm -rf .wrangler/state/v3/d1 && npm run db:migrate:local && npm run db:seed"
   },
   "dependencies": {
     "hono": "^4.12.12"

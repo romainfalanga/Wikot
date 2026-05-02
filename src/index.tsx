@@ -1,12 +1,601 @@
 import { Hono } from 'hono'
-import { renderer } from './renderer'
+import { cors } from 'hono/cors'
 
-const app = new Hono()
+type Bindings = {
+  DB: D1Database
+}
 
-app.use(renderer)
+type Variables = {
+  user: { id: number; hotel_id: number | null; email: string; name: string; role: string }
+}
 
-app.get('/', (c) => {
-  return c.render(<h1>Hello!</h1>)
+const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
+
+app.use('/api/*', cors())
+
+// ============================================
+// AUTH MIDDLEWARE
+// ============================================
+const authMiddleware = async (c: any, next: any) => {
+  const sessionToken = c.req.header('Authorization')?.replace('Bearer ', '')
+  if (!sessionToken) return c.json({ error: 'Non authentifié' }, 401)
+
+  // Simple token = base64(userId:email)
+  try {
+    const decoded = atob(sessionToken)
+    const [userId] = decoded.split(':')
+    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
+    if (!user) return c.json({ error: 'Utilisateur non trouvé' }, 401)
+    c.set('user', user)
+    await next()
+  } catch {
+    return c.json({ error: 'Token invalide' }, 401)
+  }
+}
+
+// ============================================
+// AUTH ROUTES
+// ============================================
+app.post('/api/auth/login', async (c) => {
+  const { email, password } = await c.req.json()
+  const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, password_hash FROM users WHERE email = ? AND is_active = 1').bind(email).first() as any
+  if (!user || user.password_hash !== password) {
+    return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
+  }
+  await c.env.DB.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').bind(user.id).run()
+  const token = btoa(`${user.id}:${user.email}`)
+  return c.json({
+    token,
+    user: { id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role }
+  })
+})
+
+app.get('/api/auth/me', authMiddleware, async (c) => {
+  return c.json({ user: c.get('user') })
+})
+
+// ============================================
+// HOTELS ROUTES
+// ============================================
+app.get('/api/hotels', authMiddleware, async (c) => {
+  const user = c.get('user')
+  let hotels
+  if (user.role === 'super_admin') {
+    hotels = await c.env.DB.prepare('SELECT * FROM hotels ORDER BY name').all()
+  } else {
+    hotels = await c.env.DB.prepare('SELECT * FROM hotels WHERE id = ?').bind(user.hotel_id).all()
+  }
+  return c.json({ hotels: hotels.results })
+})
+
+app.post('/api/hotels', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  const { name, address, logo_url } = await c.req.json()
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+  const result = await c.env.DB.prepare('INSERT INTO hotels (name, slug, address, logo_url) VALUES (?, ?, ?, ?)').bind(name, slug, address || null, logo_url || null).run()
+  return c.json({ id: result.meta.last_row_id, name, slug })
+})
+
+// ============================================
+// USERS ROUTES
+// ============================================
+app.get('/api/users', authMiddleware, async (c) => {
+  const user = c.get('user')
+  let users
+  if (user.role === 'super_admin') {
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name').all()
+  } else if (user.role === 'admin') {
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name').bind(user.hotel_id).all()
+  } else {
+    return c.json({ error: 'Non autorisé' }, 403)
+  }
+  return c.json({ users: users.results })
+})
+
+app.post('/api/users', authMiddleware, async (c) => {
+  const currentUser = c.get('user')
+  if (currentUser.role !== 'super_admin' && currentUser.role !== 'admin') return c.json({ error: 'Non autorisé' }, 403)
+  const { hotel_id, email, password, name, role } = await c.req.json()
+  const targetHotel = currentUser.role === 'admin' ? currentUser.hotel_id : hotel_id
+  if (currentUser.role === 'admin' && role === 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  try {
+    const result = await c.env.DB.prepare('INSERT INTO users (hotel_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)').bind(targetHotel, email, password, name, role || 'employee').run()
+    return c.json({ id: result.meta.last_row_id, email, name, role })
+  } catch (e: any) {
+    return c.json({ error: 'Cet email est déjà utilisé' }, 400)
+  }
+})
+
+// ============================================
+// CATEGORIES ROUTES
+// ============================================
+app.get('/api/categories', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const hotelId = c.req.query('hotel_id') || user.hotel_id
+  const categories = await c.env.DB.prepare('SELECT * FROM categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all()
+  return c.json({ categories: categories.results })
+})
+
+app.post('/api/categories', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  const { name, icon, color, parent_id } = await c.req.json()
+  const hotelId = user.role === 'super_admin' ? (await c.req.json()).hotel_id || user.hotel_id : user.hotel_id
+  const result = await c.env.DB.prepare('INSERT INTO categories (hotel_id, name, icon, color, parent_id) VALUES (?, ?, ?, ?, ?)').bind(hotelId, name, icon || 'fa-folder', color || '#3B82F6', parent_id || null).run()
+  return c.json({ id: result.meta.last_row_id, name })
+})
+
+app.put('/api/categories/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const { name, icon, color } = await c.req.json()
+  await c.env.DB.prepare('UPDATE categories SET name = ?, icon = ?, color = ? WHERE id = ?').bind(name, icon, color, id).run()
+  return c.json({ success: true })
+})
+
+app.delete('/api/categories/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  await c.env.DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// ============================================
+// PROCEDURES ROUTES
+// ============================================
+app.get('/api/procedures', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const hotelId = c.req.query('hotel_id') || user.hotel_id
+  const categoryId = c.req.query('category_id')
+  const status = c.req.query('status')
+  const search = c.req.query('search')
+
+  let query = `SELECT p.*, c.name as category_name, c.icon as category_icon, c.color as category_color, 
+    u1.name as created_by_name, u2.name as approved_by_name,
+    (SELECT COUNT(*) FROM steps WHERE procedure_id = p.id) as step_count,
+    (SELECT COUNT(*) FROM conditions WHERE procedure_id = p.id) as condition_count
+    FROM procedures p 
+    LEFT JOIN categories c ON p.category_id = c.id 
+    LEFT JOIN users u1 ON p.created_by = u1.id
+    LEFT JOIN users u2 ON p.approved_by = u2.id
+    WHERE p.hotel_id = ?`
+  const params: any[] = [hotelId]
+
+  if (categoryId) { query += ' AND p.category_id = ?'; params.push(categoryId) }
+  if (status) { query += ' AND p.status = ?'; params.push(status) }
+  if (search) { query += ' AND (p.title LIKE ? OR p.trigger_event LIKE ? OR p.description LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`) }
+
+  query += ' ORDER BY p.priority DESC, c.sort_order, p.title'
+
+  const stmt = c.env.DB.prepare(query)
+  const procedures = await stmt.bind(...params).all()
+  return c.json({ procedures: procedures.results })
+})
+
+app.get('/api/procedures/:id', authMiddleware, async (c) => {
+  const id = c.req.param('id')
+  const procedure = await c.env.DB.prepare(`SELECT p.*, c.name as category_name, c.icon as category_icon, c.color as category_color,
+    u1.name as created_by_name, u2.name as approved_by_name
+    FROM procedures p 
+    LEFT JOIN categories c ON p.category_id = c.id 
+    LEFT JOIN users u1 ON p.created_by = u1.id
+    LEFT JOIN users u2 ON p.approved_by = u2.id
+    WHERE p.id = ?`).bind(id).first()
+
+  if (!procedure) return c.json({ error: 'Procédure non trouvée' }, 404)
+
+  const steps = await c.env.DB.prepare('SELECT * FROM steps WHERE procedure_id = ? ORDER BY step_number').bind(id).all()
+  const conditions = await c.env.DB.prepare('SELECT * FROM conditions WHERE procedure_id = ? ORDER BY sort_order').bind(id).all()
+
+  const conditionsWithSteps = await Promise.all((conditions.results as any[]).map(async (cond: any) => {
+    const condSteps = await c.env.DB.prepare('SELECT * FROM condition_steps WHERE condition_id = ? ORDER BY step_number').bind(cond.id).all()
+    return { ...cond, steps: condSteps.results }
+  }))
+
+  return c.json({ procedure, steps: steps.results, conditions: conditionsWithSteps })
+})
+
+app.post('/api/procedures', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  const body = await c.req.json()
+  const hotelId = user.role === 'super_admin' ? (body.hotel_id || user.hotel_id) : user.hotel_id
+
+  const result = await c.env.DB.prepare(
+    `INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, trigger_icon, trigger_conditions, priority, status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(hotelId, body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_icon || 'fa-bolt', body.trigger_conditions || null, body.priority || 'normal', body.status || 'draft', user.id).run()
+
+  const procId = result.meta.last_row_id
+
+  // Insert steps
+  if (body.steps && Array.isArray(body.steps)) {
+    for (const step of body.steps) {
+      await c.env.DB.prepare(
+        `INSERT INTO steps (procedure_id, step_number, title, description, step_type, details, warning, tip, duration_minutes, is_optional, condition_text)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(procId, step.step_number, step.title, step.description || null, step.step_type || 'action', step.details || null, step.warning || null, step.tip || null, step.duration_minutes || null, step.is_optional ? 1 : 0, step.condition_text || null).run()
+    }
+  }
+
+  // Insert conditions
+  if (body.conditions && Array.isArray(body.conditions)) {
+    for (const cond of body.conditions) {
+      const condResult = await c.env.DB.prepare(
+        `INSERT INTO conditions (procedure_id, condition_text, description, sort_order) VALUES (?, ?, ?, ?)`
+      ).bind(procId, cond.condition_text, cond.description || null, cond.sort_order || 0).run()
+
+      if (cond.steps && Array.isArray(cond.steps)) {
+        for (const step of cond.steps) {
+          await c.env.DB.prepare(
+            `INSERT INTO condition_steps (condition_id, step_number, title, description, step_type, details, warning, tip, duration_minutes, is_optional)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(condResult.meta.last_row_id, step.step_number, step.title, step.description || null, step.step_type || 'action', step.details || null, step.warning || null, step.tip || null, step.duration_minutes || null, step.is_optional ? 1 : 0).run()
+        }
+      }
+    }
+  }
+
+  // Changelog
+  await c.env.DB.prepare(
+    `INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary, is_read_required) VALUES (?, ?, ?, 'created', ?, 0)`
+  ).bind(hotelId, procId, user.id, `Procédure "${body.title}" créée`).run()
+
+  return c.json({ id: procId })
+})
+
+app.put('/api/procedures/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const body = await c.req.json()
+
+  await c.env.DB.prepare(
+    `UPDATE procedures SET category_id = ?, title = ?, description = ?, trigger_event = ?, trigger_icon = ?, trigger_conditions = ?, priority = ?, status = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_icon || 'fa-bolt', body.trigger_conditions || null, body.priority || 'normal', body.status || 'draft', id).run()
+
+  // Re-create steps
+  if (body.steps) {
+    await c.env.DB.prepare('DELETE FROM steps WHERE procedure_id = ?').bind(id).run()
+    for (const step of body.steps) {
+      await c.env.DB.prepare(
+        `INSERT INTO steps (procedure_id, step_number, title, description, step_type, details, warning, tip, duration_minutes, is_optional, condition_text)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(id, step.step_number, step.title, step.description || null, step.step_type || 'action', step.details || null, step.warning || null, step.tip || null, step.duration_minutes || null, step.is_optional ? 1 : 0, step.condition_text || null).run()
+    }
+  }
+
+  // Re-create conditions
+  if (body.conditions) {
+    // Delete old condition steps first
+    const oldConditions = await c.env.DB.prepare('SELECT id FROM conditions WHERE procedure_id = ?').bind(id).all()
+    for (const cond of oldConditions.results as any[]) {
+      await c.env.DB.prepare('DELETE FROM condition_steps WHERE condition_id = ?').bind(cond.id).run()
+    }
+    await c.env.DB.prepare('DELETE FROM conditions WHERE procedure_id = ?').bind(id).run()
+
+    for (const cond of body.conditions) {
+      const condResult = await c.env.DB.prepare(
+        `INSERT INTO conditions (procedure_id, condition_text, description, sort_order) VALUES (?, ?, ?, ?)`
+      ).bind(id, cond.condition_text, cond.description || null, cond.sort_order || 0).run()
+      if (cond.steps && Array.isArray(cond.steps)) {
+        for (const step of cond.steps) {
+          await c.env.DB.prepare(
+            `INSERT INTO condition_steps (condition_id, step_number, title, description, step_type, details, warning, tip, duration_minutes, is_optional)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).bind(condResult.meta.last_row_id, step.step_number, step.title, step.description || null, step.step_type || 'action', step.details || null, step.warning || null, step.tip || null, step.duration_minutes || null, step.is_optional ? 1 : 0).run()
+        }
+      }
+    }
+  }
+
+  // Changelog
+  const proc = await c.env.DB.prepare('SELECT hotel_id, title FROM procedures WHERE id = ?').bind(id).first() as any
+  await c.env.DB.prepare(
+    `INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary, is_read_required) VALUES (?, ?, ?, 'updated', ?, ?)`
+  ).bind(proc.hotel_id, id, user.id, `Procédure "${proc.title}" mise à jour`, body.is_read_required ? 1 : 0).run()
+
+  return c.json({ success: true })
+})
+
+app.put('/api/procedures/:id/status', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const { status } = await c.req.json()
+
+  let approvedBy = null
+  let approvedAt = null
+  if (status === 'active') {
+    approvedBy = user.id
+    approvedAt = new Date().toISOString()
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE procedures SET status = ?, approved_by = COALESCE(?, approved_by), approved_at = COALESCE(?, approved_at), updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(status, approvedBy, approvedAt, id).run()
+
+  const proc = await c.env.DB.prepare('SELECT hotel_id, title FROM procedures WHERE id = ?').bind(id).first() as any
+  const actionMap: Record<string, string> = { active: 'activated', archived: 'archived', draft: 'updated' }
+  await c.env.DB.prepare(
+    `INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary, is_read_required) VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(proc.hotel_id, id, user.id, actionMap[status] || 'updated', `Procédure "${proc.title}" : statut changé en ${status}`, status === 'active' ? 1 : 0).run()
+
+  return c.json({ success: true })
+})
+
+app.delete('/api/procedures/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+
+  const proc = await c.env.DB.prepare('SELECT hotel_id, title FROM procedures WHERE id = ?').bind(id).first() as any
+  
+  // Delete condition steps first
+  const conditions = await c.env.DB.prepare('SELECT id FROM conditions WHERE procedure_id = ?').bind(id).all()
+  for (const cond of conditions.results as any[]) {
+    await c.env.DB.prepare('DELETE FROM condition_steps WHERE condition_id = ?').bind(cond.id).run()
+  }
+  await c.env.DB.prepare('DELETE FROM conditions WHERE procedure_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM steps WHERE procedure_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM procedures WHERE id = ?').bind(id).run()
+
+  if (proc) {
+    await c.env.DB.prepare(
+      `INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary) VALUES (?, NULL, ?, 'archived', ?)`
+    ).bind(proc.hotel_id, user.id, `Procédure "${proc.title}" supprimée`).run()
+  }
+  return c.json({ success: true })
+})
+
+// ============================================
+// SUGGESTIONS ROUTES
+// ============================================
+app.get('/api/suggestions', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const hotelId = c.req.query('hotel_id') || user.hotel_id
+  const status = c.req.query('status')
+
+  let query = `SELECT s.*, u.name as user_name, p.title as procedure_title, u2.name as reviewed_by_name
+    FROM suggestions s
+    LEFT JOIN users u ON s.user_id = u.id
+    LEFT JOIN procedures p ON s.procedure_id = p.id
+    LEFT JOIN users u2 ON s.reviewed_by = u2.id
+    WHERE s.hotel_id = ?`
+  const params: any[] = [hotelId]
+
+  if (status) { query += ' AND s.status = ?'; params.push(status) }
+  if (user.role === 'employee') { query += ' AND s.user_id = ?'; params.push(user.id) }
+
+  query += ' ORDER BY s.created_at DESC'
+  const suggestions = await c.env.DB.prepare(query).bind(...params).all()
+  return c.json({ suggestions: suggestions.results })
+})
+
+app.post('/api/suggestions', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const { procedure_id, type, title, description } = await c.req.json()
+  const hotelId = user.hotel_id
+
+  const result = await c.env.DB.prepare(
+    `INSERT INTO suggestions (hotel_id, procedure_id, user_id, type, title, description) VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(hotelId, procedure_id || null, user.id, type, title, description).run()
+
+  return c.json({ id: result.meta.last_row_id })
+})
+
+app.put('/api/suggestions/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const { status, admin_response } = await c.req.json()
+
+  await c.env.DB.prepare(
+    `UPDATE suggestions SET status = ?, admin_response = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(status, admin_response || null, user.id, id).run()
+
+  return c.json({ success: true })
+})
+
+// ============================================
+// CHANGELOG ROUTES
+// ============================================
+app.get('/api/changelog', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const hotelId = c.req.query('hotel_id') || user.hotel_id
+
+  const changelog = await c.env.DB.prepare(
+    `SELECT cl.*, u.name as user_name, p.title as procedure_title,
+      (SELECT COUNT(*) FROM changelog_reads cr WHERE cr.changelog_id = cl.id AND cr.user_id = ?) as is_read
+    FROM changelog cl
+    LEFT JOIN users u ON cl.user_id = u.id
+    LEFT JOIN procedures p ON cl.procedure_id = p.id
+    WHERE cl.hotel_id = ?
+    ORDER BY cl.created_at DESC
+    LIMIT 50`
+  ).bind(user.id, hotelId).all()
+
+  const unreadRequired = await c.env.DB.prepare(
+    `SELECT COUNT(*) as count FROM changelog cl
+     WHERE cl.hotel_id = ? AND cl.is_read_required = 1
+     AND cl.id NOT IN (SELECT changelog_id FROM changelog_reads WHERE user_id = ?)`
+  ).bind(hotelId, user.id).first() as any
+
+  return c.json({ changelog: changelog.results, unread_required: unreadRequired?.count || 0 })
+})
+
+app.post('/api/changelog/:id/read', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = c.req.param('id')
+  try {
+    await c.env.DB.prepare('INSERT OR IGNORE INTO changelog_reads (changelog_id, user_id) VALUES (?, ?)').bind(id, user.id).run()
+  } catch {}
+  return c.json({ success: true })
+})
+
+// ============================================
+// TEMPLATES ROUTES (Super Admin)
+// ============================================
+app.get('/api/templates', authMiddleware, async (c) => {
+  const templates = await c.env.DB.prepare('SELECT t.*, u.name as created_by_name FROM templates t LEFT JOIN users u ON t.created_by = u.id ORDER BY t.name').all()
+  return c.json({ templates: templates.results })
+})
+
+app.post('/api/templates', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  const body = await c.req.json()
+  const result = await c.env.DB.prepare(
+    `INSERT INTO templates (name, description, category_name, trigger_event, trigger_conditions, steps_json, conditions_json, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(body.name, body.description || null, body.category_name || null, body.trigger_event, body.trigger_conditions || null, JSON.stringify(body.steps || []), JSON.stringify(body.conditions || []), user.id).run()
+  return c.json({ id: result.meta.last_row_id })
+})
+
+app.delete('/api/templates/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  await c.env.DB.prepare('DELETE FROM templates WHERE id = ?').bind(c.req.param('id')).run()
+  return c.json({ success: true })
+})
+
+app.post('/api/templates/:id/import', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
+  const template = await c.env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(c.req.param('id')).first() as any
+  if (!template) return c.json({ error: 'Template non trouvé' }, 404)
+
+  const hotelId = user.hotel_id
+  let categoryId = null
+
+  // Find or create category
+  if (template.category_name) {
+    const existingCat = await c.env.DB.prepare('SELECT id FROM categories WHERE hotel_id = ? AND name = ?').bind(hotelId, template.category_name).first() as any
+    if (existingCat) {
+      categoryId = existingCat.id
+    } else {
+      const catResult = await c.env.DB.prepare('INSERT INTO categories (hotel_id, name) VALUES (?, ?)').bind(hotelId, template.category_name).run()
+      categoryId = catResult.meta.last_row_id
+    }
+  }
+
+  const result = await c.env.DB.prepare(
+    `INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, trigger_conditions, status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'draft', ?)`
+  ).bind(hotelId, categoryId, template.name, template.description, template.trigger_event, template.trigger_conditions, user.id).run()
+
+  const procId = result.meta.last_row_id
+  const steps = JSON.parse(template.steps_json || '[]')
+  for (const step of steps) {
+    await c.env.DB.prepare(
+      `INSERT INTO steps (procedure_id, step_number, title, description, step_type) VALUES (?, ?, ?, ?, ?)`
+    ).bind(procId, step.step_number, step.title, step.description || null, step.step_type || 'action').run()
+  }
+
+  return c.json({ id: procId, message: 'Template importé avec succès' })
+})
+
+// ============================================
+// DASHBOARD STATS
+// ============================================
+app.get('/api/stats', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const hotelId = c.req.query('hotel_id') || user.hotel_id
+
+  if (user.role === 'super_admin') {
+    const hotels = await c.env.DB.prepare('SELECT COUNT(*) as count FROM hotels').first() as any
+    const users = await c.env.DB.prepare('SELECT COUNT(*) as count FROM users').first() as any
+    const templates = await c.env.DB.prepare('SELECT COUNT(*) as count FROM templates').first() as any
+    const procedures = await c.env.DB.prepare('SELECT COUNT(*) as count FROM procedures').first() as any
+    return c.json({ hotels: hotels.count, users: users.count, templates: templates.count, procedures: procedures.count })
+  }
+
+  const totalProc = await c.env.DB.prepare('SELECT COUNT(*) as count FROM procedures WHERE hotel_id = ?').bind(hotelId).first() as any
+  const activeProc = await c.env.DB.prepare("SELECT COUNT(*) as count FROM procedures WHERE hotel_id = ? AND status = 'active'").bind(hotelId).first() as any
+  const draftProc = await c.env.DB.prepare("SELECT COUNT(*) as count FROM procedures WHERE hotel_id = ? AND status = 'draft'").bind(hotelId).first() as any
+  const pendingSugg = await c.env.DB.prepare("SELECT COUNT(*) as count FROM suggestions WHERE hotel_id = ? AND status = 'pending'").bind(hotelId).first() as any
+  const totalUsers = await c.env.DB.prepare('SELECT COUNT(*) as count FROM users WHERE hotel_id = ?').bind(hotelId).first() as any
+
+  const unreadRequired = await c.env.DB.prepare(
+    `SELECT COUNT(*) as count FROM changelog cl
+     WHERE cl.hotel_id = ? AND cl.is_read_required = 1
+     AND cl.id NOT IN (SELECT changelog_id FROM changelog_reads WHERE user_id = ?)`
+  ).bind(hotelId, user.id).first() as any
+
+  const recentChanges = await c.env.DB.prepare(
+    `SELECT cl.*, u.name as user_name, p.title as procedure_title
+     FROM changelog cl LEFT JOIN users u ON cl.user_id = u.id LEFT JOIN procedures p ON cl.procedure_id = p.id
+     WHERE cl.hotel_id = ? ORDER BY cl.created_at DESC LIMIT 5`
+  ).bind(hotelId).all()
+
+  return c.json({
+    total_procedures: totalProc.count,
+    active_procedures: activeProc.count,
+    draft_procedures: draftProc.count,
+    pending_suggestions: pendingSugg.count,
+    total_users: totalUsers.count,
+    unread_required: unreadRequired?.count || 0,
+    recent_changes: recentChanges.results
+  })
+})
+
+// ============================================
+// MAIN HTML PAGE
+// ============================================
+app.get('*', (c) => {
+  return c.html(`<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wikot - Gestion des procédures hôtelières</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50:'#fef3e2',100:'#fde4b9',200:'#fbc970',300:'#f9ae28',400:'#f59e0b',500:'#d97706',600:'#b45309',700:'#92400e',800:'#78350f',900:'#451a03' },
+            navy: { 50:'#f0f4f8',100:'#d9e2ec',200:'#bcccdc',300:'#9fb3c8',400:'#829ab1',500:'#627d98',600:'#486581',700:'#334e68',800:'#243b53',900:'#102a43' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    * { font-family: 'Inter', sans-serif; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .slide-in { animation: slideIn 0.3s ease-out; }
+    @keyframes slideIn { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    .pulse-dot { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .step-connector { position: relative; }
+    .step-connector::before { content: ''; position: absolute; left: 19px; top: 40px; bottom: -8px; width: 2px; background: #e5e7eb; }
+    .step-connector:last-child::before { display: none; }
+    .priority-critical { border-left: 4px solid #DC2626; }
+    .priority-high { border-left: 4px solid #F59E0B; }
+    .priority-normal { border-left: 4px solid #3B82F6; }
+    .priority-low { border-left: 4px solid #9CA3AF; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .sidebar-item { transition: all 0.15s ease; }
+    .sidebar-item:hover { background: rgba(255,255,255,0.1); }
+    .sidebar-item.active { background: rgba(255,255,255,0.15); border-right: 3px solid #f59e0b; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div id="app"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>`)
 })
 
 export default app

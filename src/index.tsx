@@ -55,10 +55,17 @@ app.get('/api/auth/me', authMiddleware, async (c) => {
 })
 
 // ============================================
-// HELPER: Can user edit procedures?
+// HELPERS
 // ============================================
+// Le super_admin est purement gestionnaire d'infrastructure (hôtels + admins)
+// Il ne touche PAS aux procédures, templates, suggestions, changelog
+function isSuperAdmin(user: { role: string }) {
+  return user.role === 'super_admin'
+}
+
 function canEditProcedures(user: { role: string; can_edit_procedures: number }) {
-  return user.role === 'super_admin' || user.role === 'admin' || user.can_edit_procedures === 1
+  // super_admin exclu : il ne gère pas les procédures des hôtels
+  return user.role === 'admin' || user.can_edit_procedures === 1
 }
 
 // ============================================
@@ -137,6 +144,7 @@ app.post('/api/users', authMiddleware, async (c) => {
 // ============================================
 app.get('/api/categories', authMiddleware, async (c) => {
   const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
   const hotelId = c.req.query('hotel_id') || user.hotel_id
   const categories = await c.env.DB.prepare('SELECT * FROM categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all()
   return c.json({ categories: categories.results })
@@ -173,6 +181,7 @@ app.delete('/api/categories/:id', authMiddleware, async (c) => {
 // ============================================
 app.get('/api/procedures', authMiddleware, async (c) => {
   const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
   const hotelId = c.req.query('hotel_id') || user.hotel_id
   const categoryId = c.req.query('category_id')
   const status = c.req.query('status')
@@ -201,6 +210,8 @@ app.get('/api/procedures', authMiddleware, async (c) => {
 })
 
 app.get('/api/procedures/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
   const procedure = await c.env.DB.prepare(`SELECT p.*, c.name as category_name, c.icon as category_icon, c.color as category_color,
     u1.name as created_by_name, u2.name as approved_by_name
@@ -381,6 +392,7 @@ app.delete('/api/procedures/:id', authMiddleware, async (c) => {
 // ============================================
 app.get('/api/suggestions', authMiddleware, async (c) => {
   const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
   const hotelId = c.req.query('hotel_id') || user.hotel_id
   const status = c.req.query('status')
 
@@ -402,7 +414,6 @@ app.get('/api/suggestions', authMiddleware, async (c) => {
 
 app.post('/api/suggestions', authMiddleware, async (c) => {
   const user = c.get('user')
-  // Only users who can edit procedures (admin, super_admin, or employee with permission) can submit suggestions
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé — seuls les utilisateurs avec droits de modification peuvent soumettre des suggestions' }, 403)
 
   const { procedure_id, type, title, description } = await c.req.json()
@@ -433,6 +444,7 @@ app.put('/api/suggestions/:id', authMiddleware, async (c) => {
 // ============================================
 app.get('/api/changelog', authMiddleware, async (c) => {
   const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
   const hotelId = c.req.query('hotel_id') || user.hotel_id
 
   const changelog = await c.env.DB.prepare(
@@ -465,16 +477,18 @@ app.post('/api/changelog/:id/read', authMiddleware, async (c) => {
 })
 
 // ============================================
-// TEMPLATES ROUTES (Super Admin)
+// TEMPLATES ROUTES (admin hôtel uniquement — super_admin exclu)
 // ============================================
 app.get('/api/templates', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
   const templates = await c.env.DB.prepare('SELECT t.*, u.name as created_by_name FROM templates t LEFT JOIN users u ON t.created_by = u.id ORDER BY t.name').all()
   return c.json({ templates: templates.results })
 })
 
 app.post('/api/templates', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  if (isSuperAdmin(user) || user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
   const body = await c.req.json()
   const result = await c.env.DB.prepare(
     `INSERT INTO templates (name, description, category_name, trigger_event, trigger_conditions, steps_json, conditions_json, created_by)
@@ -485,7 +499,7 @@ app.post('/api/templates', authMiddleware, async (c) => {
 
 app.delete('/api/templates/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  if (isSuperAdmin(user) || user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
   await c.env.DB.prepare('DELETE FROM templates WHERE id = ?').bind(c.req.param('id')).run()
   return c.json({ success: true })
 })
@@ -534,11 +548,10 @@ app.get('/api/stats', authMiddleware, async (c) => {
   const hotelId = c.req.query('hotel_id') || user.hotel_id
 
   if (user.role === 'super_admin') {
+    // Super admin : stats infrastructure uniquement (hôtels + users)
     const hotels = await c.env.DB.prepare('SELECT COUNT(*) as count FROM hotels').first() as any
     const users = await c.env.DB.prepare('SELECT COUNT(*) as count FROM users').first() as any
-    const templates = await c.env.DB.prepare('SELECT COUNT(*) as count FROM templates').first() as any
-    const procedures = await c.env.DB.prepare('SELECT COUNT(*) as count FROM procedures').first() as any
-    return c.json({ hotels: hotels.count, users: users.count, templates: templates.count, procedures: procedures.count })
+    return c.json({ hotels: hotels.count, users: users.count })
   }
 
   const totalProc = await c.env.DB.prepare('SELECT COUNT(*) as count FROM procedures WHERE hotel_id = ?').bind(hotelId).first() as any

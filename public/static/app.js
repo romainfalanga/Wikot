@@ -94,6 +94,20 @@ async function loadData() {
   if (!state.token) return;
   const hotelParam = state.currentHotelId ? `?hotel_id=${state.currentHotelId}` : '';
   
+  // Super admin : uniquement stats + hôtels + users (pas de procédures/templates/historique)
+  if (state.user.role === 'super_admin') {
+    const [statsData, hotelsData, usersData] = await Promise.all([
+      api('/stats'),
+      api('/hotels'),
+      api('/users')
+    ]);
+    if (statsData) state.stats = statsData;
+    if (hotelsData) state.hotels = hotelsData.hotels || [];
+    if (usersData) state.users = usersData.users || [];
+    return;
+  }
+
+  // Admin / Employee : chargement complet
   const [statsData, categoriesData, proceduresData, changelogData] = await Promise.all([
     api(`/stats${hotelParam}`),
     api(`/categories${hotelParam}`),
@@ -109,7 +123,7 @@ async function loadData() {
     state.unreadRequired = changelogData.unread_required || 0;
   }
 
-  if (state.user.role === 'super_admin' || state.user.role === 'admin') {
+  if (state.user.role === 'admin') {
     const [suggestionsData, usersData] = await Promise.all([
       api(`/suggestions${hotelParam}`),
       api('/users')
@@ -117,20 +131,11 @@ async function loadData() {
     if (suggestionsData) state.suggestions = suggestionsData.suggestions || [];
     if (usersData) state.users = usersData.users || [];
   } else if (userCanEditProcedures()) {
-    // Employee with edit rights can see suggestions
+    // Employé éditeur : peut voir les suggestions
     const suggestionsData = await api(`/suggestions${hotelParam}`);
     if (suggestionsData) state.suggestions = suggestionsData.suggestions || [];
   }
-  // Employees without edit rights: no suggestions loaded
-
-  if (state.user.role === 'super_admin') {
-    const [hotelsData, templatesData] = await Promise.all([
-      api('/hotels'),
-      api('/templates')
-    ]);
-    if (hotelsData) state.hotels = hotelsData.hotels || [];
-    if (templatesData) state.templates = templatesData.templates || [];
-  }
+  // Employés lecture seule : pas de suggestions
 }
 
 // ============================================
@@ -207,22 +212,28 @@ function renderMainLayout() {
 
   const canEdit = userCanEditProcedures();
 
-  const menuItems = [
-    { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
-    { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
-    { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
-    { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
-  ];
-  // Suggestions : uniquement pour ceux qui peuvent modifier les procédures
-  if (canEdit) {
-    menuItems.push({ id: 'suggestions', icon: 'fa-lightbulb', label: 'Suggestions' });
-  }
-  if (isAdmin || isSuperAdmin) {
-    menuItems.push({ id: 'users', icon: 'fa-users', label: 'Utilisateurs' });
-  }
+  // Menu super_admin : dashboard + hôtels + users uniquement
+  let menuItems;
   if (isSuperAdmin) {
-    menuItems.push({ id: 'hotels', icon: 'fa-hotel', label: 'Hôtels' });
-    menuItems.push({ id: 'templates', icon: 'fa-copy', label: 'Templates' });
+    menuItems = [
+      { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
+      { id: 'hotels', icon: 'fa-hotel', label: 'Hôtels' },
+      { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
+    ];
+  } else {
+    menuItems = [
+      { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
+      { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
+      { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
+      { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
+    ];
+    // Suggestions : uniquement pour ceux qui peuvent modifier les procédures
+    if (canEdit) {
+      menuItems.push({ id: 'suggestions', icon: 'fa-lightbulb', label: 'Suggestions' });
+    }
+    if (isAdmin) {
+      menuItems.push({ id: 'users', icon: 'fa-users', label: 'Utilisateurs' });
+    }
   }
 
   const roleLabels = { super_admin: 'Super Admin', admin: 'Administrateur', employee: canEdit ? 'Employé (éditeur)' : 'Employé' };
@@ -319,43 +330,41 @@ function renderDashboard() {
     <div class="fade-in">
       <div class="mb-8">
         <h2 class="text-2xl font-bold text-navy-900">Tableau de bord <span class="text-brand-400">Super Admin</span></h2>
-        <p class="text-navy-500 mt-1">Vue d'ensemble de la plateforme Wikot</p>
+        <p class="text-navy-500 mt-1">Gestion de la plateforme — hôtels &amp; administrateurs</p>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-        ${statCard('fa-hotel', 'Hôtels', s.hotels || 0, 'bg-blue-500')}
-        ${statCard('fa-users', 'Utilisateurs', s.users || 0, 'bg-green-500')}
-        ${statCard('fa-copy', 'Templates', s.templates || 0, 'bg-purple-500')}
-        ${statCard('fa-sitemap', 'Procédures', s.procedures || 0, 'bg-brand-400')}
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+        ${statCard('fa-hotel', 'Hôtels actifs', s.hotels || 0, 'bg-blue-500')}
+        ${statCard('fa-users', 'Utilisateurs total', s.users || 0, 'bg-green-500')}
       </div>
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <h3 class="text-lg font-semibold text-navy-800 mb-4"><i class="fas fa-hotel mr-2 text-blue-500"></i>Hôtels</h3>
-          ${state.hotels.length === 0 ? '<p class="text-navy-400 text-sm">Aucun hôtel enregistré</p>' :
-            state.hotels.map(h => `
-              <div class="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
-                <div>
-                  <p class="font-medium text-navy-800">${h.name}</p>
-                  <p class="text-xs text-navy-400">${h.address || 'Pas d\'adresse'}</p>
-                </div>
-                <button onclick="switchHotel(${h.id})" class="text-xs bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-1.5 rounded-lg transition-colors">
-                  <i class="fas fa-eye mr-1"></i>Voir
-                </button>
-              </div>
-            `).join('')}
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+        <div class="flex items-center justify-between mb-5">
+          <h3 class="text-lg font-semibold text-navy-800"><i class="fas fa-hotel mr-2 text-blue-500"></i>Hôtels enregistrés</h3>
+          <button onclick="navigate('hotels')" class="text-sm bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm">
+            <i class="fas fa-plus mr-1.5"></i>Nouvel hôtel
+          </button>
         </div>
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <h3 class="text-lg font-semibold text-navy-800 mb-4"><i class="fas fa-copy mr-2 text-purple-500"></i>Templates disponibles</h3>
-          ${state.templates.length === 0 ? '<p class="text-navy-400 text-sm">Aucun template</p>' :
-            state.templates.map(t => `
-              <div class="flex items-center justify-between py-3 border-b border-gray-50 last:border-0">
-                <div>
-                  <p class="font-medium text-navy-800">${t.name}</p>
-                  <p class="text-xs text-navy-400">${t.category_name || 'Sans catégorie'}</p>
-                </div>
-                <span class="text-xs text-navy-300"><i class="fas fa-bolt mr-1"></i>${t.trigger_event?.substring(0, 40)}...</span>
+        ${state.hotels.length === 0 ? `
+          <div class="text-center py-10">
+            <i class="fas fa-hotel text-4xl text-navy-200 mb-3"></i>
+            <p class="text-navy-400 font-medium">Aucun hôtel enregistré</p>
+            <p class="text-navy-300 text-sm mt-1">Commencez par créer votre premier hôtel</p>
+          </div>
+        ` : state.hotels.map(h => `
+          <div class="flex items-center justify-between py-3.5 border-b border-gray-50 last:border-0">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center">
+                <i class="fas fa-hotel text-blue-400 text-sm"></i>
               </div>
-            `).join('')}
-        </div>
+              <div>
+                <p class="font-medium text-navy-800">${h.name}</p>
+                <p class="text-xs text-navy-400"><i class="fas fa-map-marker-alt mr-1"></i>${h.address || 'Adresse non renseignée'}</p>
+              </div>
+            </div>
+            <button onclick="navigate('users')" class="text-xs bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-1.5 rounded-lg transition-colors">
+              <i class="fas fa-users mr-1"></i>Gérer les admins
+            </button>
+          </div>
+        `).join('')}
       </div>
     </div>`;
   }

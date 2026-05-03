@@ -170,15 +170,18 @@ async function loadChatData() {
       }
     }
     state.unreadChatTotal = overview.total_unread || 0;
+    state.chatLastLoadedAt = Date.now();
   }
 }
 
 // Refresh léger du compteur global non-lus (pour la sidebar + listes)
+// Mise à jour ciblée du DOM — PAS de full re-render pour éviter les flashs visibles
 async function refreshChatBadges() {
   if (!state.token || !state.user || state.user.role === 'super_admin') return;
   const overview = await api('/chat/overview');
   if (!overview) return;
 
+  const prevTotal = state.unreadChatTotal;
   state.chatGroups = overview.groups || [];
   state.chatChannels = [];
   for (const g of state.chatGroups) {
@@ -187,12 +190,52 @@ async function refreshChatBadges() {
     }
   }
   state.unreadChatTotal = overview.total_unread || 0;
+  state.chatLastLoadedAt = Date.now();
 
-  // Si on est sur la vue conversations (mais pas dans un salon ouvert) → re-render
-  if (state.currentView === 'conversations' && !state.selectedChannelId) {
-    render();
-  } else {
-    updateSidebarBadges();
+  // Mise à jour ciblée des badges (sidebar, header mobile, bottom nav) — sans flash
+  updateSidebarBadges();
+
+  // Si on est sur la liste des salons et que le total a changé, mettre à jour les compteurs in-place
+  if (state.currentView === 'conversations' && !state.selectedChannelId && prevTotal !== state.unreadChatTotal) {
+    updateChannelListBadges();
+  }
+}
+
+// Met à jour les pastilles de compteur par salon directement dans le DOM
+function updateChannelListBadges() {
+  for (const g of (state.chatGroups || [])) {
+    for (const ch of (g.channels || [])) {
+      const row = document.querySelector(`[data-channel-row="${ch.id}"]`);
+      if (!row) continue;
+      const badge = row.querySelector('[data-channel-unread]');
+      const name = row.querySelector('[data-channel-name]');
+      const unread = ch.unread_count || 0;
+      if (badge) {
+        if (unread > 0) {
+          badge.textContent = `${unread > 99 ? '99+' : unread} non lu${unread > 1 ? 's' : ''}`;
+          badge.classList.remove('hidden');
+        } else {
+          badge.classList.add('hidden');
+        }
+      }
+      if (name) {
+        if (unread > 0) name.classList.add('font-bold');
+        else name.classList.remove('font-bold');
+      }
+    }
+    // Compteur du groupe
+    const groupCard = document.querySelector(`[data-group-card="${g.id}"]`);
+    if (groupCard) {
+      const groupBadge = groupCard.querySelector('[data-group-unread]');
+      const groupUnread = (g.channels || []).reduce((s, c) => s + (c.unread_count || 0), 0);
+      if (groupBadge) {
+        if (groupUnread > 0) {
+          groupBadge.innerHTML = ` · <span class="text-red-500 font-semibold">${groupUnread} non lu${groupUnread > 1 ? 's' : ''}</span>`;
+        } else {
+          groupBadge.innerHTML = '';
+        }
+      }
+    }
   }
 }
 
@@ -371,7 +414,7 @@ function renderMainLayout() {
             class="sidebar-item ${state.currentView === item.id ? 'active' : ''} w-full text-left px-5 py-3 flex items-center gap-3 text-sm text-navy-200 hover:text-white">
             <i class="fas ${item.icon} w-5 text-center text-xs ${state.currentView === item.id ? 'text-brand-400' : ''}"></i>
             <span>${item.label}</span>
-            ${item.badge ? `<span class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">${item.badge}</span>` : ''}
+            <span ${item.id === 'conversations' ? 'data-badge-conversations' : ''} class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ${item.badge ? '' : 'hidden'}">${item.badge ? (item.badge > 99 ? '99+' : item.badge) : ''}</span>
           </button>
         `).join('')}
       </nav>
@@ -409,10 +452,10 @@ function renderMainLayout() {
           <span class="font-bold text-navy-800 truncate">${currentTitle}</span>
         </div>
         <div class="ml-auto flex items-center gap-2 shrink-0">
-          ${state.unreadChatTotal > 0 ? `<button onclick="navigate('conversations')" class="relative w-9 h-9 flex items-center justify-center rounded-lg bg-navy-50 text-navy-600" title="Messages non lus">
+          <button onclick="navigate('conversations')" class="relative w-9 h-9 flex items-center justify-center rounded-lg bg-navy-50 text-navy-600 ${state.unreadChatTotal > 0 ? '' : 'hidden'}" title="Messages non lus" data-mobile-chat-btn>
             <i class="fas fa-comments"></i>
-            <span class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[16px] text-center">${state.unreadChatTotal > 99 ? '99+' : state.unreadChatTotal}</span>
-          </button>` : ''}
+            <span data-badge-conversations class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[16px] text-center">${state.unreadChatTotal > 0 ? (state.unreadChatTotal > 99 ? '99+' : state.unreadChatTotal) : ''}</span>
+          </button>
           ${state.unreadRequired > 0 ? `<button onclick="navigate('changelog')" class="relative w-9 h-9 flex items-center justify-center rounded-lg bg-red-50 text-red-500" title="Changements à lire">
             <i class="fas fa-bell"></i>
             <span class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[16px] text-center">${state.unreadRequired}</span>
@@ -433,7 +476,7 @@ function renderMainLayout() {
       <button onclick="navigate('${item.id}')" class="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 relative ${state.currentView === item.id ? 'text-brand-400' : 'text-navy-400'} hover:text-white transition-colors">
         <i class="fas ${item.icon} text-base"></i>
         <span class="text-[10px] font-medium leading-none mt-0.5">${item.label.split(' ')[0]}</span>
-        ${item.badge ? `<span class="absolute top-1 right-1/4 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none">${item.badge > 99 ? '99+' : item.badge}</span>` : ''}
+        <span ${item.id === 'conversations' ? 'data-badge-conversations' : ''} class="absolute top-1 right-1/4 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none ${item.badge ? '' : 'hidden'}">${item.badge ? (item.badge > 99 ? '99+' : item.badge) : ''}</span>
       </button>
     `).join('')}
   </nav>
@@ -463,13 +506,47 @@ function navigate(view) {
   }
   state.currentView = view;
   state.selectedProcedure = null;
-  render();
-  // Refresh data quand on entre dans conversations
+
+  // Pour la vue conversations : si on a déjà les données récentes (< 30s), on render direct.
+  // Sinon, on charge AVANT de render pour éviter le double flash.
   if (view === 'conversations') {
-    loadChatData().then(() => render());
+    const fresh = state.chatGroups && state.chatGroups.length > 0
+      && state.chatLastLoadedAt && (Date.now() - state.chatLastLoadedAt) < 30000;
+    if (fresh) {
+      render();
+    } else {
+      // Affiche un état chargement très léger, puis charge, puis render avec les vraies données
+      showChatLoadingPlaceholder();
+      loadChatData().then(() => render());
+    }
+  } else {
+    render();
   }
   // Lancer le polling léger global pour les badges si on est connecté (chat actif)
   ensureChatGlobalPolling();
+}
+
+// Placeholder de chargement minimal pour la vue conversations (évite le flash visible)
+function showChatLoadingPlaceholder() {
+  // Render normal du layout, mais avec un état de chargement discret dans le contenu
+  render();
+  const container = document.getElementById('main-content-container');
+  if (container && state.currentView === 'conversations' && (!state.chatGroups || state.chatGroups.length === 0)) {
+    // Le render a déjà affiché "Aucun salon" — on remplace par un loader subtil
+    const target = container.querySelector('.fade-in') || container;
+    if (target) {
+      const existingList = target.querySelector('.flex-1.overflow-y-auto');
+      if (existingList) {
+        existingList.innerHTML = `
+          <div class="flex items-center justify-center py-10">
+            <div class="text-navy-300 text-sm flex items-center gap-2">
+              <i class="fas fa-circle-notch fa-spin"></i>
+              <span>Chargement des conversations...</span>
+            </div>
+          </div>`;
+      }
+    }
+  }
 }
 
 
@@ -1610,7 +1687,7 @@ function renderGroupCard(group, canManage) {
   const groupUnread = channels.reduce((s, c) => s + (c.unread_count || 0), 0);
 
   return `
-  <div class="mb-5 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+  <div class="mb-5 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden" data-group-card="${group.id}">
     <div class="px-4 sm:px-5 py-3 bg-navy-50 border-b border-gray-200 flex items-center gap-3">
       <div class="w-9 h-9 rounded-lg flex items-center justify-center text-white shrink-0" style="background:${group.color || '#3B82F6'}">
         <i class="fas ${group.icon || 'fa-folder'}"></i>
@@ -1620,7 +1697,7 @@ function renderGroupCard(group, canManage) {
           ${escapeHtml(group.name)}
           ${group.is_system ? '<span class="ml-2 text-[9px] uppercase font-bold text-navy-400 tracking-wider">par défaut</span>' : ''}
         </h3>
-        <p class="text-xs text-navy-500">${channels.length} salon${channels.length > 1 ? 's' : ''}${groupUnread > 0 ? ` · <span class="text-red-500 font-semibold">${groupUnread} non lu${groupUnread > 1 ? 's' : ''}</span>` : ''}</p>
+        <p class="text-xs text-navy-500">${channels.length} salon${channels.length > 1 ? 's' : ''}<span data-group-unread>${groupUnread > 0 ? ` · <span class="text-red-500 font-semibold">${groupUnread} non lu${groupUnread > 1 ? 's' : ''}</span>` : ''}</span></p>
       </div>
       ${canManage ? `
         <div class="flex items-center gap-1">
@@ -1653,14 +1730,14 @@ function renderChannelRow(ch, canManage) {
   const unread = ch.unread_count || 0;
   return `
   <div class="px-4 sm:px-5 py-3 hover:bg-navy-50 transition-colors flex items-center gap-3 cursor-pointer group"
-       onclick="openChannel(${ch.id})">
+       onclick="openChannel(${ch.id})" data-channel-row="${ch.id}">
     <div class="w-8 h-8 rounded-lg bg-navy-100 text-navy-600 flex items-center justify-center shrink-0">
-      <i class="fas ${ch.icon || 'fa-hashtag'} text-xs"></i>
+      <i class="fas ${ch.icon || 'fa-comment'} text-xs"></i>
     </div>
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2">
-        <span class="text-navy-700 font-medium text-sm truncate ${unread > 0 ? 'font-bold' : ''}">${escapeHtml(ch.name)}</span>
-        ${unread > 0 ? `<span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">${unread > 99 ? '99+' : unread} non lu${unread > 1 ? 's' : ''}</span>` : ''}
+        <span data-channel-name class="text-navy-700 font-medium text-sm truncate ${unread > 0 ? 'font-bold' : ''}">${escapeHtml(ch.name)}</span>
+        <span data-channel-unread class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ${unread > 0 ? '' : 'hidden'}">${unread > 0 ? `${unread > 99 ? '99+' : unread} non lu${unread > 1 ? 's' : ''}` : ''}</span>
       </div>
       ${ch.description ? `<p class="text-xs text-navy-400 truncate">${escapeHtml(ch.description)}</p>` : ''}
     </div>

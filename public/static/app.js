@@ -315,11 +315,37 @@ function renderMainLayout() {
   const roleLabels = { super_admin: 'Super Admin', admin: 'Administrateur', employee: canEdit ? 'Employé (éditeur)' : 'Employé' };
   const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', employee: canEdit ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700' };
 
+  // Titre de la vue active pour le header mobile
+  const viewTitles = {
+    dashboard: 'Tableau de bord',
+    procedures: 'Procédures',
+    search: 'Rechercher',
+    conversations: 'Conversations',
+    changelog: 'Historique',
+    users: 'Utilisateurs',
+    hotels: 'Hôtels',
+    templates: 'Modèles',
+  };
+  const currentTitle = viewTitles[state.currentView] || 'Wikot';
+
+  // Bottom nav mobile : prioriser les items selon l'usage. Conversations DOIT y être pour les employés.
+  // On limite à 5 max, en gardant les plus utilisés.
+  let bottomNavItems;
+  if (isSuperAdmin) {
+    bottomNavItems = menuItems; // 3 items, tous tiennent
+  } else if (isAdmin) {
+    // Admin : Dashboard, Procédures, Conversations, Recherche, Historique (Users dispo via burger)
+    bottomNavItems = menuItems.filter(i => ['dashboard','procedures','conversations','search','changelog'].includes(i.id));
+  } else {
+    // Employé : 4 items, tous tiennent
+    bottomNavItems = menuItems;
+  }
+
   return `
   <!-- Overlay mobile sidebar -->
   <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden" onclick="closeSidebar()"></div>
 
-  <div class="flex h-screen overflow-hidden">
+  <div class="flex app-shell overflow-hidden">
     <!-- Sidebar -->
     <aside id="main-sidebar" class="fixed lg:relative z-40 lg:z-auto -translate-x-full lg:translate-x-0 transition-transform duration-300 w-72 lg:w-64 bg-navy-900 text-white flex flex-col shrink-0 h-full">
       <div class="p-5 border-b border-navy-700">
@@ -370,37 +396,44 @@ function renderMainLayout() {
     </aside>
 
     <!-- Main Content -->
-    <main class="flex-1 overflow-y-auto bg-gray-50">
-      <!-- Header mobile avec burger -->
-      <div class="lg:hidden sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm">
-        <button onclick="openSidebar()" class="w-9 h-9 flex items-center justify-center rounded-lg bg-navy-50 hover:bg-navy-100 text-navy-600 transition-colors">
+    <main class="flex-1 overflow-y-auto bg-gray-50 flex flex-col">
+      <!-- Header mobile avec burger + titre vue active + badges -->
+      <div class="lg:hidden sticky top-0 z-20 bg-white border-b border-gray-200 px-3 sm:px-4 h-14 flex items-center gap-3 shadow-sm shrink-0">
+        <button onclick="openSidebar()" class="w-9 h-9 flex items-center justify-center rounded-lg bg-navy-50 hover:bg-navy-100 text-navy-600 transition-colors shrink-0">
           <i class="fas fa-bars"></i>
         </button>
-        <div class="flex items-center gap-2">
-          <div class="w-7 h-7 bg-brand-400 rounded-lg flex items-center justify-center">
+        <div class="flex items-center gap-2 min-w-0 flex-1">
+          <div class="w-7 h-7 bg-brand-400 rounded-lg flex items-center justify-center shrink-0">
             <i class="fas fa-concierge-bell text-white text-xs"></i>
           </div>
-          <span class="font-bold text-navy-800">Wik<span class="text-brand-400">ot</span></span>
+          <span class="font-bold text-navy-800 truncate">${currentTitle}</span>
         </div>
-        <div class="ml-auto flex items-center gap-2">
-          ${state.unreadRequired > 0 ? `<span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">${state.unreadRequired}</span>` : ''}
+        <div class="ml-auto flex items-center gap-2 shrink-0">
+          ${state.unreadChatTotal > 0 ? `<button onclick="navigate('conversations')" class="relative w-9 h-9 flex items-center justify-center rounded-lg bg-navy-50 text-navy-600" title="Messages non lus">
+            <i class="fas fa-comments"></i>
+            <span class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[16px] text-center">${state.unreadChatTotal > 99 ? '99+' : state.unreadChatTotal}</span>
+          </button>` : ''}
+          ${state.unreadRequired > 0 ? `<button onclick="navigate('changelog')" class="relative w-9 h-9 flex items-center justify-center rounded-lg bg-red-50 text-red-500" title="Changements à lire">
+            <i class="fas fa-bell"></i>
+            <span class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[16px] text-center">${state.unreadRequired}</span>
+          </button>` : ''}
           <div class="w-8 h-8 bg-navy-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">${state.user.name.charAt(0)}</div>
         </div>
       </div>
 
-      <div class="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto pb-24 lg:pb-8">
+      <div id="main-content-container" class="flex-1 ${state.currentView === 'conversations' && state.selectedChannelId ? 'overflow-hidden' : 'p-4 md:p-6 lg:p-8 max-w-7xl mx-auto w-full mobile-content-padding'}">
         ${renderCurrentView()}
       </div>
     </main>
   </div>
 
   <!-- Bottom navigation (mobile uniquement) -->
-  <nav class="lg:hidden fixed bottom-0 left-0 right-0 z-20 bg-navy-900 border-t border-navy-700 flex">
-    ${menuItems.slice(0, 5).map(item => `
+  <nav class="mobile-bottomnav lg:hidden fixed bottom-0 left-0 right-0 z-20 bg-navy-900 border-t border-navy-700 flex">
+    ${bottomNavItems.slice(0, 5).map(item => `
       <button onclick="navigate('${item.id}')" class="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 relative ${state.currentView === item.id ? 'text-brand-400' : 'text-navy-400'} hover:text-white transition-colors">
         <i class="fas ${item.icon} text-base"></i>
-        <span class="text-[10px] font-medium">${item.label.split(' ')[0]}</span>
-        ${item.badge ? `<span class="absolute top-1 right-1/4 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[14px] text-center">${item.badge}</span>` : ''}
+        <span class="text-[10px] font-medium leading-none mt-0.5">${item.label.split(' ')[0]}</span>
+        ${item.badge ? `<span class="absolute top-1 right-1/4 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none">${item.badge > 99 ? '99+' : item.badge}</span>` : ''}
       </button>
     `).join('')}
   </nav>
@@ -412,11 +445,13 @@ function renderMainLayout() {
 function openSidebar() {
   document.getElementById('main-sidebar')?.classList.remove('-translate-x-full');
   document.getElementById('sidebar-overlay')?.classList.remove('hidden');
+  document.body.classList.add('sidebar-open');
 }
 
 function closeSidebar() {
   document.getElementById('main-sidebar')?.classList.add('-translate-x-full');
   document.getElementById('sidebar-overlay')?.classList.add('hidden');
+  document.body.classList.remove('sidebar-open');
 }
 
 function navigate(view) {
@@ -527,7 +562,7 @@ function renderDashboard() {
       <i class="fas fa-chevron-right text-red-300 mt-1 shrink-0"></i>
     </div>` : ''}
 
-    <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-5 mb-6 sm:mb-8">
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-5 mb-6 sm:mb-8">
       ${statCard('fa-sitemap', 'Procédures actives', s.active_procedures || 0, 'bg-green-500')}
       ${statCard('fa-file-pen', 'Brouillons', s.draft_procedures || 0, 'bg-yellow-500')}
       ${statCard('fa-users', 'Membres de l\'équipe', s.total_users || 0, 'bg-blue-500')}
@@ -536,7 +571,7 @@ function renderDashboard() {
     <!-- Quick access to categories -->
     <div class="mb-6 sm:mb-8">
       <h3 class="text-base sm:text-lg font-semibold text-navy-800 mb-3 sm:mb-4"><i class="fas fa-th-large mr-2 text-brand-400"></i>Accès rapide par catégorie</h3>
-      <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3">
+      <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 sm:gap-3">
         ${state.categories.map(cat => `
           <button onclick="state.filterCategory='${cat.id}'; navigate('procedures')" 
             class="bg-white rounded-xl p-3 sm:p-4 border border-gray-100 shadow-sm hover:shadow-md transition-all text-center group active:scale-95">
@@ -1181,7 +1216,8 @@ function renderUsersView() {
 
     <!-- Desktop table (md+) -->
     <div class="hidden md:block bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-      <table class="w-full">
+     <div class="table-scroll-wrapper">
+      <table class="w-full min-w-[640px]">
         <thead>
           <tr class="bg-navy-50 text-xs text-navy-500 uppercase tracking-wider">
             <th class="text-left py-3 px-5">Utilisateur</th>
@@ -1241,6 +1277,7 @@ function renderUsersView() {
           }).join('')}
         </tbody>
       </table>
+     </div>
     </div>
 
     <!-- Mobile cards (< md) -->
@@ -1327,9 +1364,9 @@ function renderHotelsView() {
       </button>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       ${state.hotels.length === 0 ? `
-        <div class="col-span-2 bg-white rounded-xl p-12 text-center border border-gray-100">
+        <div class="md:col-span-2 xl:col-span-3 bg-white rounded-xl p-12 text-center border border-gray-100">
           <i class="fas fa-hotel text-4xl text-navy-200 mb-4"></i>
           <p class="text-navy-400 font-medium">Aucun hôtel enregistré</p>
         </div>
@@ -1518,37 +1555,53 @@ const CHANNEL_SUGGESTIONS = {
 
 function renderConversationsView() {
   const canManage = userCanManageChannels();
-
-  // Si un salon est sélectionné → vue salon
-  if (state.selectedChannelId) {
-    return renderChannelView();
-  }
-
-  // Sinon → liste des groupes/salons
   const groups = state.chatGroups || [];
+  const hasSelected = !!state.selectedChannelId;
 
+  // Mobile : si un salon est sélectionné → vue salon plein écran (pas de liste visible)
+  // Desktop/tablette (lg+) : liste à gauche + chat à droite en permanence
   return `
-  <div class="fade-in">
-    <div class="mb-6 flex items-start justify-between gap-3 flex-wrap">
-      <div>
-        <h2 class="text-xl sm:text-2xl font-bold text-navy-900">
-          <i class="fas fa-comments text-brand-400 mr-2"></i>Conversations
-        </h2>
-        <p class="text-navy-500 mt-1 text-sm">Communiquez avec votre équipe par salons thématiques</p>
+  <div class="fade-in flex chat-view-shell w-full">
+    <!-- Colonne liste des salons -->
+    <div class="${hasSelected ? 'hidden lg:flex' : 'flex'} flex-col w-full lg:w-80 xl:w-96 lg:border-r lg:border-gray-200 bg-white lg:bg-gray-50 overflow-hidden shrink-0">
+      <div class="px-4 sm:px-5 py-3 border-b border-gray-200 bg-white shrink-0 flex items-center justify-between gap-2">
+        <div class="min-w-0">
+          <h2 class="text-base sm:text-lg font-bold text-navy-900 truncate">
+            <i class="fas fa-comments text-brand-400 mr-2"></i>Conversations
+          </h2>
+          <p class="text-[11px] text-navy-500 hidden sm:block">Salons de l'équipe</p>
+        </div>
+        ${canManage ? `
+          <button onclick="showCreateChannelModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-2 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5 shrink-0">
+            <i class="fas fa-plus"></i><span class="hidden sm:inline">Nouveau salon</span><span class="sm:hidden">Salon</span>
+          </button>
+        ` : ''}
       </div>
-      ${canManage ? `
-        <button onclick="showCreateChannelModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow flex items-center gap-2">
-          <i class="fas fa-plus"></i><span>Nouveau salon</span>
-        </button>
-      ` : ''}
+
+      <div class="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
+        ${groups.length === 0 ? `
+          <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 text-center">
+            <i class="fas fa-comments text-3xl text-navy-200 mb-2"></i>
+            <p class="text-navy-500 text-sm">Aucun salon pour le moment.</p>
+          </div>
+        ` : groups.map(g => renderGroupCard(g, canManage)).join('')}
+      </div>
     </div>
 
-    ${groups.length === 0 ? `
-      <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
-        <i class="fas fa-comments text-4xl text-navy-200 mb-3"></i>
-        <p class="text-navy-500">Aucun salon de discussion pour le moment.</p>
-      </div>
-    ` : groups.map(g => renderGroupCard(g, canManage)).join('')}
+    <!-- Colonne salon ouvert -->
+    <div class="${hasSelected ? 'flex' : 'hidden lg:flex'} flex-col flex-1 min-w-0 bg-white">
+      ${hasSelected ? renderChannelView() : `
+        <div class="flex-1 flex items-center justify-center p-6 text-center bg-gray-50">
+          <div>
+            <div class="w-16 h-16 mx-auto bg-brand-50 rounded-2xl flex items-center justify-center mb-3">
+              <i class="fas fa-comment-dots text-brand-400 text-2xl"></i>
+            </div>
+            <p class="text-navy-700 font-semibold">Sélectionnez un salon</p>
+            <p class="text-navy-400 text-sm mt-1">Choisissez un salon dans la liste pour commencer à discuter.</p>
+          </div>
+        </div>
+      `}
+    </div>
   </div>`;
 }
 
@@ -1639,7 +1692,7 @@ function renderChannelView() {
   const messages = state.chatMessages || [];
 
   return `
-  <div class="flex flex-col h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-4 -my-4 sm:-mx-6 sm:-my-6 lg:-mx-8 lg:-my-8 bg-white">
+  <div class="flex flex-col h-full w-full bg-white min-h-0">
     <!-- Header salon -->
     <div class="px-4 sm:px-5 py-3 border-b border-gray-200 flex items-center gap-3 shrink-0 bg-white">
       <button onclick="closeChannel()" class="w-9 h-9 rounded-lg hover:bg-navy-50 text-navy-600 flex items-center justify-center shrink-0">

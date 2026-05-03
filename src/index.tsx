@@ -1011,6 +1011,49 @@ app.get('*', (c) => {
     .sidebar-item { transition: all 0.15s ease; }
     .sidebar-item:hover { background: rgba(255,255,255,0.1); }
     .sidebar-item.active { background: rgba(255,255,255,0.15); border-right: 3px solid #f59e0b; }
+
+    /* === RESPONSIVE — variables globales === */
+    :root {
+      --mobile-header-h: 56px;
+      --mobile-bottomnav-h: 64px;
+      --desktop-header-h: 0px;
+    }
+    /* Hauteur fiable cross-device : utilise 100dvh quand supporté (iOS/Android), fallback sur 100vh */
+    .app-shell { height: 100vh; height: 100dvh; }
+    /* Vue chat — full height moins header mobile et bottom nav */
+    .chat-view-shell {
+      height: calc(100vh - var(--mobile-header-h) - var(--mobile-bottomnav-h));
+      height: calc(100dvh - var(--mobile-header-h) - var(--mobile-bottomnav-h));
+    }
+    @media (min-width: 1024px) {
+      .chat-view-shell { height: calc(100vh - 4rem); height: calc(100dvh - 4rem); }
+    }
+    /* Tables avec scroll horizontal + indicateur visuel d'ombre */
+    .table-scroll-wrapper {
+      position: relative;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      background:
+        linear-gradient(to right, white 30%, rgba(255,255,255,0)),
+        linear-gradient(to right, rgba(255,255,255,0), white 70%) 100% 0,
+        radial-gradient(farthest-side at 0 50%, rgba(0,0,0,0.12), rgba(0,0,0,0)),
+        radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,0.12), rgba(0,0,0,0)) 100% 0;
+      background-repeat: no-repeat;
+      background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+      background-attachment: local, local, scroll, scroll;
+    }
+    /* Empêche le contenu d'être collé sous la bottom nav mobile */
+    .mobile-content-padding { padding-bottom: calc(var(--mobile-bottomnav-h) + 16px); }
+    @media (min-width: 1024px) { .mobile-content-padding { padding-bottom: 2rem; } }
+    /* Évite le scroll de fond quand le sidebar mobile est ouvert */
+    body.sidebar-open { overflow: hidden; }
+    /* Bottom nav — un peu plus généreux et safe-area iOS */
+    .mobile-bottomnav {
+      padding-bottom: env(safe-area-inset-bottom);
+      min-height: var(--mobile-bottomnav-h);
+    }
+    /* Texte tronqué multi-lignes utilitaire */
+    .truncate-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">

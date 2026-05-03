@@ -21,7 +21,15 @@ let state = {
   searchQuery: '',
   filterCategory: '',
   filterStatus: '',
-  unreadRequired: 0
+  unreadRequired: 0,
+  // Chat
+  chatGroups: [],
+  chatChannels: [],
+  unreadChatTotal: 0,
+  selectedChannelId: null,
+  chatMessages: [],
+  chatPollingTimer: null,
+  chatLastMessageId: null
 };
 
 // ============================================
@@ -77,6 +85,7 @@ async function login(email, password) {
     showToast(`Bienvenue ${data.user.name} !`, 'success');
     await loadData();
     render();
+    ensureChatGlobalPolling();
   }
 }
 
@@ -86,6 +95,14 @@ function logout() {
   localStorage.removeItem('wikot_token');
   localStorage.removeItem('wikot_user');
   state.currentView = 'dashboard'; // reset propre pour la prochaine connexion
+  // Stopper tous les pollings chat
+  stopChatPolling();
+  if (_chatGlobalTimer) { clearInterval(_chatGlobalTimer); _chatGlobalTimer = null; }
+  state.selectedChannelId = null;
+  state.chatMessages = [];
+  state.chatChannels = [];
+  state.chatGroups = [];
+  state.unreadChatTotal = 0;
   render();
 }
 
@@ -130,6 +147,66 @@ async function loadData() {
     if (usersData) state.users = usersData.users || [];
   }
   // Plus de chargement des suggestions (feature supprimée)
+
+  // Chat — charger groupes, salons et compteur global non-lus
+  await loadChatData();
+}
+
+// ============================================
+// CHAT — Data loading
+// ============================================
+async function loadChatData() {
+  if (!state.token || !state.user) return;
+  if (state.user.role === 'super_admin') return; // Pas de chat pour super_admin
+
+  const overview = await api('/chat/overview');
+  if (overview) {
+    state.chatGroups = overview.groups || [];
+    // Aplatir tous les channels pour accès facile
+    state.chatChannels = [];
+    for (const g of state.chatGroups) {
+      for (const ch of (g.channels || [])) {
+        state.chatChannels.push({ ...ch, group_name: g.name });
+      }
+    }
+    state.unreadChatTotal = overview.total_unread || 0;
+  }
+}
+
+// Refresh léger du compteur global non-lus (pour la sidebar + listes)
+async function refreshChatBadges() {
+  if (!state.token || !state.user || state.user.role === 'super_admin') return;
+  const overview = await api('/chat/overview');
+  if (!overview) return;
+
+  state.chatGroups = overview.groups || [];
+  state.chatChannels = [];
+  for (const g of state.chatGroups) {
+    for (const ch of (g.channels || [])) {
+      state.chatChannels.push({ ...ch, group_name: g.name });
+    }
+  }
+  state.unreadChatTotal = overview.total_unread || 0;
+
+  // Si on est sur la vue conversations (mais pas dans un salon ouvert) → re-render
+  if (state.currentView === 'conversations' && !state.selectedChannelId) {
+    render();
+  } else {
+    updateSidebarBadges();
+  }
+}
+
+function updateSidebarBadges() {
+  // Mise à jour ciblée des pastilles "Conversations" sans full re-render
+  document.querySelectorAll('[data-badge-conversations]').forEach(el => {
+    const count = state.unreadChatTotal;
+    if (count > 0) {
+      el.textContent = count > 99 ? '99+' : count;
+      el.classList.remove('hidden');
+    } else {
+      el.classList.add('hidden');
+    }
+  });
 }
 
 // ============================================
@@ -221,6 +298,7 @@ function renderMainLayout() {
       { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
+      { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
@@ -229,6 +307,7 @@ function renderMainLayout() {
     menuItems = [
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
+      { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
     ];
   }
@@ -341,10 +420,23 @@ function closeSidebar() {
 }
 
 function navigate(view) {
+  // Si on quitte la vue conversations, stopper le polling messages
+  if (state.currentView === 'conversations' && view !== 'conversations') {
+    stopChatPolling();
+    state.selectedChannelId = null;
+    state.chatMessages = [];
+  }
   state.currentView = view;
   state.selectedProcedure = null;
   render();
+  // Refresh data quand on entre dans conversations
+  if (view === 'conversations') {
+    loadChatData().then(() => render());
+  }
+  // Lancer le polling léger global pour les badges si on est connecté (chat actif)
+  ensureChatGlobalPolling();
 }
+
 
 // ============================================
 // VIEW ROUTER
@@ -355,6 +447,7 @@ function renderCurrentView() {
     case 'procedures': return state.selectedProcedure ? renderProcedureDetail() : renderProceduresList();
     case 'search': return renderSearchView();
     case 'changelog': return renderChangelogView();
+    case 'conversations': return renderConversationsView();
     case 'users': return renderUsersView();
     case 'hotels': return renderHotelsView();
     case 'templates': return renderTemplatesView();
@@ -1384,6 +1477,605 @@ async function deleteTemplate(id) {
 }
 
 // ============================================
+// CONVERSATIONS — Vue principale
+// ============================================
+
+// Suggestions de salons par groupe (cliquables à la création)
+const CHANNEL_SUGGESTIONS = {
+  'Espaces communs': [
+    { name: 'réception', icon: 'fa-bell-concierge' },
+    { name: 'restaurant', icon: 'fa-utensils' },
+    { name: 'bar', icon: 'fa-martini-glass' },
+    { name: 'piscine', icon: 'fa-water-ladder' },
+    { name: 'parking', icon: 'fa-square-parking' },
+    { name: 'spa', icon: 'fa-spa' },
+    { name: 'salle-de-sport', icon: 'fa-dumbbell' },
+    { name: 'lobby', icon: 'fa-couch' },
+    { name: 'terrasse', icon: 'fa-umbrella-beach' },
+    { name: 'jardin', icon: 'fa-tree' }
+  ],
+  'Chambres': [
+    { name: 'chambre-101', icon: 'fa-bed' },
+    { name: 'chambre-102', icon: 'fa-bed' },
+    { name: 'chambre-103', icon: 'fa-bed' },
+    { name: 'chambre-201', icon: 'fa-bed' },
+    { name: 'chambre-202', icon: 'fa-bed' },
+    { name: 'suite-301', icon: 'fa-bed' },
+    { name: 'suite-junior', icon: 'fa-bed' }
+  ],
+  'Opérationnel': [
+    { name: 'ménage', icon: 'fa-broom' },
+    { name: 'technique', icon: 'fa-screwdriver-wrench' },
+    { name: 'cuisine', icon: 'fa-kitchen-set' },
+    { name: 'urgence', icon: 'fa-triangle-exclamation' },
+    { name: 'objets-trouvés', icon: 'fa-magnifying-glass' },
+    { name: 'linge', icon: 'fa-shirt' },
+    { name: 'sécurité', icon: 'fa-shield-halved' },
+    { name: 'maintenance', icon: 'fa-wrench' },
+    { name: 'planning', icon: 'fa-calendar-days' }
+  ]
+};
+
+function renderConversationsView() {
+  const canManage = userCanManageChannels();
+
+  // Si un salon est sélectionné → vue salon
+  if (state.selectedChannelId) {
+    return renderChannelView();
+  }
+
+  // Sinon → liste des groupes/salons
+  const groups = state.chatGroups || [];
+
+  return `
+  <div class="fade-in">
+    <div class="mb-6 flex items-start justify-between gap-3 flex-wrap">
+      <div>
+        <h2 class="text-xl sm:text-2xl font-bold text-navy-900">
+          <i class="fas fa-comments text-brand-400 mr-2"></i>Conversations
+        </h2>
+        <p class="text-navy-500 mt-1 text-sm">Communiquez avec votre équipe par salons thématiques</p>
+      </div>
+      ${canManage ? `
+        <button onclick="showCreateChannelModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow flex items-center gap-2">
+          <i class="fas fa-plus"></i><span>Nouveau salon</span>
+        </button>
+      ` : ''}
+    </div>
+
+    ${groups.length === 0 ? `
+      <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
+        <i class="fas fa-comments text-4xl text-navy-200 mb-3"></i>
+        <p class="text-navy-500">Aucun salon de discussion pour le moment.</p>
+      </div>
+    ` : groups.map(g => renderGroupCard(g, canManage)).join('')}
+  </div>`;
+}
+
+function renderGroupCard(group, canManage) {
+  const channels = group.channels || [];
+  const groupUnread = channels.reduce((s, c) => s + (c.unread_count || 0), 0);
+
+  return `
+  <div class="mb-5 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+    <div class="px-4 sm:px-5 py-3 bg-navy-50 border-b border-gray-200 flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg flex items-center justify-center text-white shrink-0" style="background:${group.color || '#3B82F6'}">
+        <i class="fas ${group.icon || 'fa-folder'}"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <h3 class="font-semibold text-navy-800 text-sm sm:text-base truncate">
+          ${escapeHtml(group.name)}
+          ${group.is_system ? '<span class="ml-2 text-[9px] uppercase font-bold text-navy-400 tracking-wider">par défaut</span>' : ''}
+        </h3>
+        <p class="text-xs text-navy-500">${channels.length} salon${channels.length > 1 ? 's' : ''}${groupUnread > 0 ? ` · <span class="text-red-500 font-semibold">${groupUnread} non lu${groupUnread > 1 ? 's' : ''}</span>` : ''}</p>
+      </div>
+      ${canManage ? `
+        <div class="flex items-center gap-1">
+          <button onclick="showCreateChannelModal(${group.id})" title="Ajouter un salon dans ce groupe"
+            class="w-8 h-8 rounded-lg bg-white hover:bg-brand-50 text-brand-500 transition-colors flex items-center justify-center">
+            <i class="fas fa-plus text-xs"></i>
+          </button>
+          <button onclick="showEditGroupModal(${group.id})" title="Renommer le groupe"
+            class="w-8 h-8 rounded-lg bg-white hover:bg-navy-100 text-navy-500 transition-colors flex items-center justify-center">
+            <i class="fas fa-pen text-xs"></i>
+          </button>
+          ${!group.is_system ? `
+            <button onclick="deleteGroup(${group.id})" title="Supprimer le groupe"
+              class="w-8 h-8 rounded-lg bg-white hover:bg-red-50 text-red-500 transition-colors flex items-center justify-center">
+              <i class="fas fa-trash text-xs"></i>
+            </button>
+          ` : ''}
+        </div>
+      ` : ''}
+    </div>
+    <div class="divide-y divide-gray-100">
+      ${channels.length === 0 ? `
+        <div class="px-5 py-4 text-sm text-navy-400 italic">Aucun salon dans ce groupe</div>
+      ` : channels.map(ch => renderChannelRow(ch, canManage)).join('')}
+    </div>
+  </div>`;
+}
+
+function renderChannelRow(ch, canManage) {
+  const unread = ch.unread_count || 0;
+  return `
+  <div class="px-4 sm:px-5 py-3 hover:bg-navy-50 transition-colors flex items-center gap-3 cursor-pointer group"
+       onclick="openChannel(${ch.id})">
+    <div class="w-8 h-8 rounded-lg bg-navy-100 text-navy-600 flex items-center justify-center shrink-0">
+      <i class="fas ${ch.icon || 'fa-hashtag'} text-xs"></i>
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="flex items-center gap-2">
+        <span class="text-navy-700 font-medium text-sm truncate ${unread > 0 ? 'font-bold' : ''}">#${escapeHtml(ch.name)}</span>
+        ${unread > 0 ? `<span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">${unread > 99 ? '99+' : unread} non lu${unread > 1 ? 's' : ''}</span>` : ''}
+      </div>
+      ${ch.description ? `<p class="text-xs text-navy-400 truncate">${escapeHtml(ch.description)}</p>` : ''}
+    </div>
+    ${canManage ? `
+      <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button onclick="event.stopPropagation(); showEditChannelModal(${ch.id})" title="Modifier"
+          class="w-7 h-7 rounded bg-white border border-gray-200 hover:bg-navy-50 text-navy-500 flex items-center justify-center">
+          <i class="fas fa-pen text-[10px]"></i>
+        </button>
+        <button onclick="event.stopPropagation(); deleteChannel(${ch.id})" title="Supprimer"
+          class="w-7 h-7 rounded bg-white border border-gray-200 hover:bg-red-50 text-red-500 flex items-center justify-center">
+          <i class="fas fa-trash text-[10px]"></i>
+        </button>
+      </div>
+    ` : ''}
+    <i class="fas fa-chevron-right text-navy-300 text-xs ml-1"></i>
+  </div>`;
+}
+
+// ============================================
+// CONVERSATIONS — Vue d'un salon ouvert
+// ============================================
+function renderChannelView() {
+  const ch = state.chatChannels.find(c => c.id === state.selectedChannelId);
+  if (!ch) {
+    state.selectedChannelId = null;
+    return renderConversationsView();
+  }
+  const messages = state.chatMessages || [];
+
+  return `
+  <div class="flex flex-col h-[calc(100vh-8rem)] lg:h-[calc(100vh-4rem)] -mx-4 -my-4 sm:-mx-6 sm:-my-6 lg:-mx-8 lg:-my-8 bg-white">
+    <!-- Header salon -->
+    <div class="px-4 sm:px-5 py-3 border-b border-gray-200 flex items-center gap-3 shrink-0 bg-white">
+      <button onclick="closeChannel()" class="w-9 h-9 rounded-lg hover:bg-navy-50 text-navy-600 flex items-center justify-center shrink-0">
+        <i class="fas fa-arrow-left"></i>
+      </button>
+      <div class="w-9 h-9 rounded-lg bg-navy-100 text-navy-600 flex items-center justify-center shrink-0">
+        <i class="fas ${ch.icon || 'fa-hashtag'}"></i>
+      </div>
+      <div class="flex-1 min-w-0">
+        <h3 class="font-semibold text-navy-800 truncate">#${escapeHtml(ch.name)}</h3>
+        ${ch.description ? `<p class="text-xs text-navy-500 truncate">${escapeHtml(ch.description)}</p>` : `<p class="text-xs text-navy-400 italic">${escapeHtml(ch.group_name || '')}</p>`}
+      </div>
+    </div>
+
+    <!-- Zone messages -->
+    <div id="chat-messages-zone" class="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-3 bg-gray-50">
+      ${messages.length === 0 ? `
+        <div class="text-center py-12">
+          <i class="fas fa-comment-dots text-4xl text-navy-200 mb-2"></i>
+          <p class="text-sm text-navy-400">Aucun message pour le moment.</p>
+          <p class="text-xs text-navy-300 mt-1">Soyez le premier à écrire dans ce salon !</p>
+        </div>
+      ` : messages.map((m, i) => renderMessage(m, messages[i - 1])).join('')}
+    </div>
+
+    <!-- Champ d'envoi -->
+    <div class="border-t border-gray-200 p-3 sm:p-4 bg-white shrink-0">
+      <form onsubmit="event.preventDefault(); sendMessage()" class="flex items-end gap-2">
+        <textarea id="chat-input" rows="1" placeholder="Écrivez votre message... (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)"
+          class="flex-1 resize-none px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm max-h-32"
+          onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); sendMessage();}"
+          oninput="autoResizeTextarea(this)"></textarea>
+        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow">
+          <i class="fas fa-paper-plane text-sm"></i>
+        </button>
+      </form>
+    </div>
+  </div>`;
+}
+
+function renderMessage(m, prevMsg) {
+  // Regrouper les messages consécutifs du même auteur en moins de 5 minutes
+  const sameAuthor = prevMsg && prevMsg.user_id === m.user_id 
+    && (new Date(m.created_at) - new Date(prevMsg.created_at)) < 5 * 60 * 1000;
+  const isMe = state.user && m.user_id === state.user.id;
+  const initials = (m.user_name || '?').charAt(0).toUpperCase();
+  const time = formatChatTime(m.created_at);
+  const roleBadge = m.user_role === 'admin' ? '<span class="text-[9px] uppercase font-bold text-blue-600 ml-1">admin</span>'
+    : (m.user_role === 'employee' && m.user_can_edit ? '<span class="text-[9px] uppercase font-bold text-orange-500 ml-1">éditeur</span>' : '');
+
+  if (sameAuthor) {
+    return `
+    <div class="flex gap-3 pl-12 hover:bg-white/50 -mx-3 px-3 py-0.5 rounded">
+      <div class="flex-1 min-w-0">
+        <p class="text-sm text-navy-700 whitespace-pre-wrap break-words">${escapeHtml(m.content)}${m.edited_at ? '<span class="text-[10px] text-navy-300 ml-1">(modifié)</span>' : ''}</p>
+      </div>
+    </div>`;
+  }
+
+  return `
+  <div class="flex gap-3 hover:bg-white/50 -mx-3 px-3 py-1.5 rounded">
+    <div class="w-9 h-9 rounded-full ${isMe ? 'bg-brand-400' : 'bg-navy-600'} text-white flex items-center justify-center font-semibold text-sm shrink-0">
+      ${initials}
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="flex items-baseline gap-2 flex-wrap">
+        <span class="font-semibold text-navy-800 text-sm">${escapeHtml(m.user_name || 'Inconnu')}</span>
+        ${roleBadge}
+        <span class="text-[11px] text-navy-400">${time}</span>
+      </div>
+      <p class="text-sm text-navy-700 whitespace-pre-wrap break-words mt-0.5">${escapeHtml(m.content)}${m.edited_at ? '<span class="text-[10px] text-navy-300 ml-1">(modifié)</span>' : ''}</p>
+    </div>
+  </div>`;
+}
+
+// ============================================
+// CONVERSATIONS — Actions
+// ============================================
+function userCanManageChannels() {
+  if (!state.user) return false;
+  return state.user.role === 'admin' || (state.user.role === 'employee' && state.user.can_edit_procedures === 1);
+}
+
+async function openChannel(channelId) {
+  state.selectedChannelId = channelId;
+  state.chatMessages = [];
+  state.chatLastMessageId = null;
+  render();
+  // Charger les messages
+  await loadChannelMessages();
+  scrollChatToBottom();
+  // Marquer comme lu
+  await api(`/chat/channels/${channelId}/read`, { method: 'POST' });
+  // Rafraîchir les badges en arrière-plan
+  refreshChatBadges();
+  // Lancer le polling des nouveaux messages
+  startChannelPolling();
+}
+
+function closeChannel() {
+  stopChannelPolling();
+  state.selectedChannelId = null;
+  state.chatMessages = [];
+  // Recharger l'overview pour avoir les compteurs à jour
+  refreshChatBadges();
+  render();
+}
+
+async function loadChannelMessages() {
+  if (!state.selectedChannelId) return;
+  const data = await api(`/chat/channels/${state.selectedChannelId}/messages`);
+  if (data) {
+    state.chatMessages = data.messages || [];
+    if (state.chatMessages.length > 0) {
+      state.chatLastMessageId = state.chatMessages[state.chatMessages.length - 1].id;
+    }
+  }
+}
+
+async function pollNewMessages() {
+  if (!state.selectedChannelId) return;
+  const after = state.chatLastMessageId || 0;
+  const data = await api(`/chat/channels/${state.selectedChannelId}/messages?after=${after}`);
+  if (!data || !data.messages || data.messages.length === 0) return;
+
+  // Nouveaux messages reçus
+  state.chatMessages = [...(state.chatMessages || []), ...data.messages];
+  state.chatLastMessageId = data.messages[data.messages.length - 1].id;
+  // Re-render uniquement la zone messages
+  const zone = document.getElementById('chat-messages-zone');
+  if (zone) {
+    const wasNearBottom = (zone.scrollHeight - zone.scrollTop - zone.clientHeight) < 100;
+    // Re-render complet de la zone
+    zone.innerHTML = state.chatMessages.map((m, i) => renderMessage(m, state.chatMessages[i - 1])).join('');
+    if (wasNearBottom) scrollChatToBottom();
+  }
+  // Marquer comme lu (on est dans le salon ouvert)
+  await api(`/chat/channels/${state.selectedChannelId}/read`, { method: 'POST' });
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  if (!input) return;
+  const content = input.value.trim();
+  if (!content || !state.selectedChannelId) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+
+  const data = await api(`/chat/channels/${state.selectedChannelId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content })
+  });
+  if (data && data.message) {
+    state.chatMessages = [...(state.chatMessages || []), data.message];
+    state.chatLastMessageId = data.message.id;
+    const zone = document.getElementById('chat-messages-zone');
+    if (zone) {
+      zone.innerHTML = state.chatMessages.map((m, i) => renderMessage(m, state.chatMessages[i - 1])).join('');
+      scrollChatToBottom();
+    }
+  }
+}
+
+function scrollChatToBottom() {
+  setTimeout(() => {
+    const zone = document.getElementById('chat-messages-zone');
+    if (zone) zone.scrollTop = zone.scrollHeight;
+  }, 50);
+}
+
+function autoResizeTextarea(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 128) + 'px';
+}
+
+// ============================================
+// CONVERSATIONS — Polling
+// ============================================
+let chatGlobalPollingTimer = null;
+let chatChannelPollingTimer = null;
+
+function ensureChatGlobalPolling() {
+  if (chatGlobalPollingTimer) return;
+  if (!state.user || state.user.role === 'super_admin') return;
+  // Toutes les 15s, refresh des compteurs globaux (sauf si on est dans un salon où le polling salon prend le relais)
+  chatGlobalPollingTimer = setInterval(() => {
+    if (!state.selectedChannelId) {
+      refreshChatBadges();
+    }
+  }, 15000);
+}
+
+function stopChatPolling() {
+  // Pas utilisé ici en pratique, mais kill le polling salon
+  stopChannelPolling();
+}
+
+function startChannelPolling() {
+  stopChannelPolling();
+  // Toutes les 4s, check les nouveaux messages
+  chatChannelPollingTimer = setInterval(pollNewMessages, 4000);
+}
+
+function stopChannelPolling() {
+  if (chatChannelPollingTimer) {
+    clearInterval(chatChannelPollingTimer);
+    chatChannelPollingTimer = null;
+  }
+}
+
+// ============================================
+// CONVERSATIONS — Modals création/édition
+// ============================================
+function showCreateChannelModal(presetGroupId = null) {
+  const groups = state.chatGroups || [];
+  if (groups.length === 0) {
+    showToast('Aucun groupe disponible', 'error');
+    return;
+  }
+  const selectedGroupId = presetGroupId || groups[0].id;
+  const selectedGroup = groups.find(g => g.id === selectedGroupId) || groups[0];
+  const suggestions = CHANNEL_SUGGESTIONS[selectedGroup.name] || [];
+
+  showModal('Créer un salon', `
+    <form onsubmit="event.preventDefault(); submitCreateChannel()">
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Groupe</label>
+        <select id="ch-group" onchange="refreshChannelSuggestions()" class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+          ${groups.map(g => `<option value="${g.id}" ${g.id === selectedGroupId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Suggestions <span class="text-navy-400 font-normal text-xs">(cliquez pour pré-remplir)</span></label>
+        <div id="ch-suggestions" class="flex flex-wrap gap-2">
+          ${suggestions.map(s => `
+            <button type="button" onclick="applyChannelSuggestion('${escapeHtml(s.name)}', '${s.icon}')"
+              class="px-3 py-1.5 bg-navy-50 hover:bg-brand-50 hover:text-brand-600 border border-navy-200 hover:border-brand-300 rounded-full text-xs text-navy-600 transition-colors flex items-center gap-1.5">
+              <i class="fas ${s.icon} text-[10px]"></i>${escapeHtml(s.name)}
+            </button>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom du salon <span class="text-red-500">*</span></label>
+        <input id="ch-name" type="text" required maxlength="60" placeholder="ex: chambre-301"
+          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+      </div>
+
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Description <span class="text-navy-400 font-normal text-xs">(facultatif)</span></label>
+        <textarea id="ch-description" rows="2" maxlength="200" placeholder="ex: Discussions liées à cette chambre"
+          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none resize-none"></textarea>
+      </div>
+
+      <input type="hidden" id="ch-icon" value="fa-hashtag">
+
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
+        <button type="submit" class="px-4 py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">
+          <i class="fas fa-check mr-1"></i>Créer
+        </button>
+      </div>
+    </form>
+  `);
+}
+
+function refreshChannelSuggestions() {
+  const groupId = parseInt(document.getElementById('ch-group').value);
+  const group = (state.chatGroups || []).find(g => g.id === groupId);
+  if (!group) return;
+  const suggestions = CHANNEL_SUGGESTIONS[group.name] || [];
+  const container = document.getElementById('ch-suggestions');
+  if (container) {
+    container.innerHTML = suggestions.map(s => `
+      <button type="button" onclick="applyChannelSuggestion('${escapeHtml(s.name)}', '${s.icon}')"
+        class="px-3 py-1.5 bg-navy-50 hover:bg-brand-50 hover:text-brand-600 border border-navy-200 hover:border-brand-300 rounded-full text-xs text-navy-600 transition-colors flex items-center gap-1.5">
+        <i class="fas ${s.icon} text-[10px]"></i>${escapeHtml(s.name)}
+      </button>
+    `).join('') || '<span class="text-xs text-navy-400 italic">Aucune suggestion pour ce groupe</span>';
+  }
+}
+
+function applyChannelSuggestion(name, icon) {
+  const nameInput = document.getElementById('ch-name');
+  const iconInput = document.getElementById('ch-icon');
+  if (nameInput) nameInput.value = name;
+  if (iconInput) iconInput.value = icon;
+}
+
+async function submitCreateChannel() {
+  const group_id = parseInt(document.getElementById('ch-group').value);
+  const name = document.getElementById('ch-name').value.trim();
+  const description = document.getElementById('ch-description').value.trim();
+  const icon = document.getElementById('ch-icon').value || 'fa-hashtag';
+  if (!name) return;
+
+  const data = await api('/chat/channels', {
+    method: 'POST',
+    body: JSON.stringify({ group_id, name, description, icon })
+  });
+  if (data && data.id) {
+    closeModal();
+    showToast('Salon créé', 'success');
+    await loadChatData();
+    render();
+  }
+}
+
+function showEditChannelModal(channelId) {
+  const ch = state.chatChannels.find(c => c.id === channelId);
+  if (!ch) return;
+  const groups = state.chatGroups || [];
+
+  showModal('Modifier le salon', `
+    <form onsubmit="event.preventDefault(); submitEditChannel(${channelId})">
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Groupe</label>
+        <select id="ch-group" class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+          ${groups.map(g => `<option value="${g.id}" ${g.id === ch.group_id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom du salon</label>
+        <input id="ch-name" type="text" required maxlength="60" value="${escapeHtml(ch.name)}"
+          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+      </div>
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Description</label>
+        <textarea id="ch-description" rows="2" maxlength="200"
+          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none resize-none">${escapeHtml(ch.description || '')}</textarea>
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
+        <button type="submit" class="px-4 py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
+      </div>
+    </form>
+  `);
+}
+
+async function submitEditChannel(channelId) {
+  const group_id = parseInt(document.getElementById('ch-group').value);
+  const name = document.getElementById('ch-name').value.trim();
+  const description = document.getElementById('ch-description').value.trim();
+  if (!name) return;
+  const data = await api(`/chat/channels/${channelId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name, description, group_id })
+  });
+  if (data) {
+    closeModal();
+    showToast('Salon modifié', 'success');
+    await loadChatData();
+    render();
+  }
+}
+
+async function deleteChannel(channelId) {
+  const ch = state.chatChannels.find(c => c.id === channelId);
+  if (!ch) return;
+  if (!confirm(`Supprimer le salon "#${ch.name}" et tous ses messages ? Cette action est irréversible.`)) return;
+  await api(`/chat/channels/${channelId}`, { method: 'DELETE' });
+  showToast('Salon supprimé', 'success');
+  await loadChatData();
+  render();
+}
+
+function showEditGroupModal(groupId) {
+  const g = (state.chatGroups || []).find(gr => gr.id === groupId);
+  if (!g) return;
+  showModal('Renommer le groupe', `
+    <form onsubmit="event.preventDefault(); submitEditGroup(${groupId})">
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom du groupe</label>
+        <input id="grp-name" type="text" required maxlength="60" value="${escapeHtml(g.name)}"
+          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+      </div>
+      <div class="flex gap-2 justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
+        <button type="submit" class="px-4 py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
+      </div>
+    </form>
+  `);
+}
+
+async function submitEditGroup(groupId) {
+  const name = document.getElementById('grp-name').value.trim();
+  if (!name) return;
+  await api(`/chat/groups/${groupId}`, { method: 'PUT', body: JSON.stringify({ name }) });
+  closeModal();
+  showToast('Groupe renommé', 'success');
+  await loadChatData();
+  render();
+}
+
+async function deleteGroup(groupId) {
+  const g = (state.chatGroups || []).find(gr => gr.id === groupId);
+  if (!g) return;
+  if (!confirm(`Supprimer le groupe "${g.name}" et tous ses salons ? Cette action est irréversible.`)) return;
+  await api(`/chat/groups/${groupId}`, { method: 'DELETE' });
+  showToast('Groupe supprimé', 'success');
+  await loadChatData();
+  render();
+}
+
+// ============================================
+// CHAT — Helpers
+// ============================================
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatChatTime(iso) {
+  if (!iso) return '';
+  // SQLite renvoie "YYYY-MM-DD HH:MM:SS" en UTC → on parse explicitement
+  const d = new Date(iso.replace(' ', 'T') + (iso.includes('Z') ? '' : 'Z'));
+  if (isNaN(d.getTime())) return '';
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+  const time = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  if (isToday) return `aujourd'hui à ${time}`;
+  if (isYesterday) return `hier à ${time}`;
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ' à ' + time;
+}
+
+// ============================================
 // MODALS
 // ============================================
 function showModal(title, content) {
@@ -2030,6 +2722,7 @@ async function init() {
       state.currentView = 'procedures';
     }
     await loadData();
+    ensureChatGlobalPolling();
   }
   render();
 }

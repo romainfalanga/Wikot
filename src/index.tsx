@@ -626,6 +626,7 @@ app.post('/api/templates/:id/import', authMiddleware, async (c) => {
   return c.json({ id: procId, message: 'Template importé avec succès' })
 })
 
+
 // ============================================
 // DASHBOARD STATS
 // ============================================
@@ -667,6 +668,300 @@ app.get('/api/stats', authMiddleware, async (c) => {
     unread_required: unreadRequired?.count || 0,
     recent_changes: recentChanges.results
   })
+})
+
+// ============================================
+// CHAT / CONVERSATIONS ROUTES
+// ============================================
+
+// Helper : peut gérer les salons (créer/modifier/supprimer)
+function canManageChannels(user: { role: string; can_edit_procedures: number }) {
+  return user.role === 'admin' || (user.role === 'employee' && user.can_edit_procedures === 1)
+}
+
+// Helper : a accès au chat (admin + tous employees)
+function canAccessChat(user: { role: string }) {
+  return user.role === 'admin' || user.role === 'employee'
+}
+
+// GET /api/chat/overview — Tous les groupes + salons + compteurs non-lus pour mon hôtel
+app.get('/api/chat/overview', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canAccessChat(user)) return c.json({ error: 'Non autorisé' }, 403)
+  if (!user.hotel_id) return c.json({ groups: [], total_unread: 0 })
+
+  const groups = await c.env.DB.prepare(
+    'SELECT * FROM chat_groups WHERE hotel_id = ? ORDER BY sort_order, name'
+  ).bind(user.hotel_id).all()
+
+  const channels = await c.env.DB.prepare(`
+    SELECT c.*, 
+      (SELECT COUNT(*) FROM chat_messages m 
+        WHERE m.channel_id = c.id 
+        AND m.id > COALESCE((SELECT last_read_message_id FROM chat_reads WHERE user_id = ? AND channel_id = c.id), 0)
+      ) as unread_count,
+      (SELECT MAX(created_at) FROM chat_messages WHERE channel_id = c.id) as last_message_at
+    FROM chat_channels c
+    WHERE c.hotel_id = ? AND c.is_archived = 0
+    ORDER BY c.sort_order, c.name
+  `).bind(user.id, user.hotel_id).all()
+
+  // Group channels by group_id
+  const groupsWithChannels = (groups.results as any[]).map((g: any) => ({
+    ...g,
+    channels: (channels.results as any[]).filter((c: any) => c.group_id === g.id)
+  }))
+
+  const totalUnread = (channels.results as any[]).reduce((sum, c: any) => sum + (c.unread_count || 0), 0)
+
+  return c.json({ groups: groupsWithChannels, total_unread: totalUnread })
+})
+
+// GET /api/chat/unread-total — Juste le compteur global (pour rafraîchir la sidebar)
+app.get('/api/chat/unread-total', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canAccessChat(user) || !user.hotel_id) return c.json({ total: 0 })
+
+  const result = await c.env.DB.prepare(`
+    SELECT COALESCE(SUM(unread), 0) as total FROM (
+      SELECT (
+        (SELECT COUNT(*) FROM chat_messages m WHERE m.channel_id = c.id) -
+        COALESCE((SELECT last_read_message_id FROM chat_reads WHERE user_id = ? AND channel_id = c.id), 0)
+      ) as unread
+      FROM chat_channels c
+      WHERE c.hotel_id = ? AND c.is_archived = 0
+    )
+  `).bind(user.id, user.hotel_id).first() as any
+
+  // Note : cette formule simplifiée fonctionne car on suppose que les IDs sont monotones et qu'on n'a pas de skip
+  // On la corrige pour être 100% fiable :
+  const fix = await c.env.DB.prepare(`
+    SELECT COUNT(*) as total
+    FROM chat_messages m
+    JOIN chat_channels c ON m.channel_id = c.id
+    WHERE c.hotel_id = ? AND c.is_archived = 0
+    AND m.id > COALESCE((SELECT last_read_message_id FROM chat_reads WHERE user_id = ? AND channel_id = m.channel_id), 0)
+  `).bind(user.hotel_id, user.id).first() as any
+
+  return c.json({ total: fix?.total || 0 })
+})
+
+// POST /api/chat/groups — Créer un groupe (admin/éditeur)
+app.post('/api/chat/groups', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canManageChannels(user) || !user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+  const { name, icon, color } = await c.req.json()
+  if (!name) return c.json({ error: 'Nom requis' }, 400)
+
+  const maxOrder = await c.env.DB.prepare('SELECT MAX(sort_order) as m FROM chat_groups WHERE hotel_id = ?').bind(user.hotel_id).first() as any
+  const result = await c.env.DB.prepare(
+    'INSERT INTO chat_groups (hotel_id, name, icon, color, sort_order, is_system) VALUES (?, ?, ?, ?, ?, 0)'
+  ).bind(user.hotel_id, name, icon || 'fa-folder', color || '#3B82F6', (maxOrder?.m || 0) + 1).run()
+
+  return c.json({ id: result.meta.last_row_id, name })
+})
+
+// PUT /api/chat/groups/:id — Renommer un groupe
+app.put('/api/chat/groups/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canManageChannels(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const { name, icon, color } = await c.req.json()
+
+  const group = await c.env.DB.prepare('SELECT hotel_id FROM chat_groups WHERE id = ?').bind(id).first() as any
+  if (!group || group.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+
+  await c.env.DB.prepare(
+    'UPDATE chat_groups SET name = ?, icon = COALESCE(?, icon), color = COALESCE(?, color) WHERE id = ?'
+  ).bind(name, icon || null, color || null, id).run()
+
+  return c.json({ success: true })
+})
+
+// DELETE /api/chat/groups/:id — Supprimer un groupe (sauf système)
+app.delete('/api/chat/groups/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canManageChannels(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+
+  const group = await c.env.DB.prepare('SELECT hotel_id, is_system FROM chat_groups WHERE id = ?').bind(id).first() as any
+  if (!group || group.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+  if (group.is_system) return c.json({ error: 'Impossible de supprimer un groupe par défaut' }, 400)
+
+  // Supprimer les messages des salons du groupe puis les salons puis le groupe
+  const channels = await c.env.DB.prepare('SELECT id FROM chat_channels WHERE group_id = ?').bind(id).all()
+  for (const ch of channels.results as any[]) {
+    await c.env.DB.prepare('DELETE FROM chat_messages WHERE channel_id = ?').bind(ch.id).run()
+    await c.env.DB.prepare('DELETE FROM chat_reads WHERE channel_id = ?').bind(ch.id).run()
+  }
+  await c.env.DB.prepare('DELETE FROM chat_channels WHERE group_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM chat_groups WHERE id = ?').bind(id).run()
+
+  return c.json({ success: true })
+})
+
+// POST /api/chat/channels — Créer un salon
+app.post('/api/chat/channels', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canManageChannels(user) || !user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+  const { group_id, name, description, icon } = await c.req.json()
+  if (!name || !group_id) return c.json({ error: 'Nom et groupe requis' }, 400)
+
+  // Vérifier que le groupe appartient à l'hôtel de l'utilisateur
+  const group = await c.env.DB.prepare('SELECT hotel_id FROM chat_groups WHERE id = ?').bind(group_id).first() as any
+  if (!group || group.hotel_id !== user.hotel_id) return c.json({ error: 'Groupe invalide' }, 400)
+
+  const maxOrder = await c.env.DB.prepare('SELECT MAX(sort_order) as m FROM chat_channels WHERE group_id = ?').bind(group_id).first() as any
+  const result = await c.env.DB.prepare(
+    'INSERT INTO chat_channels (hotel_id, group_id, name, description, icon, sort_order, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).bind(user.hotel_id, group_id, name, description || null, icon || 'fa-hashtag', (maxOrder?.m || 0) + 1, user.id).run()
+
+  return c.json({ id: result.meta.last_row_id, name })
+})
+
+// PUT /api/chat/channels/:id — Modifier un salon
+app.put('/api/chat/channels/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canManageChannels(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const { name, description, icon, group_id } = await c.req.json()
+
+  const channel = await c.env.DB.prepare('SELECT hotel_id FROM chat_channels WHERE id = ?').bind(id).first() as any
+  if (!channel || channel.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+
+  if (group_id) {
+    const group = await c.env.DB.prepare('SELECT hotel_id FROM chat_groups WHERE id = ?').bind(group_id).first() as any
+    if (!group || group.hotel_id !== user.hotel_id) return c.json({ error: 'Groupe invalide' }, 400)
+  }
+
+  await c.env.DB.prepare(
+    'UPDATE chat_channels SET name = ?, description = ?, icon = COALESCE(?, icon), group_id = COALESCE(?, group_id), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).bind(name, description || null, icon || null, group_id || null, id).run()
+
+  return c.json({ success: true })
+})
+
+// DELETE /api/chat/channels/:id — Supprimer un salon (et tous ses messages)
+app.delete('/api/chat/channels/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canManageChannels(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+
+  const channel = await c.env.DB.prepare('SELECT hotel_id FROM chat_channels WHERE id = ?').bind(id).first() as any
+  if (!channel || channel.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+
+  await c.env.DB.prepare('DELETE FROM chat_messages WHERE channel_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM chat_reads WHERE channel_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM chat_channels WHERE id = ?').bind(id).run()
+
+  return c.json({ success: true })
+})
+
+// GET /api/chat/channels/:id/messages — Lister les messages d'un salon
+app.get('/api/chat/channels/:id/messages', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canAccessChat(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const after = c.req.query('after') // ID du dernier message connu pour le polling
+
+  const channel = await c.env.DB.prepare('SELECT hotel_id, name, description, icon, group_id FROM chat_channels WHERE id = ?').bind(id).first() as any
+  if (!channel || channel.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+
+  let query = `SELECT m.*, u.name as user_name, u.role as user_role, u.can_edit_procedures as user_can_edit
+    FROM chat_messages m
+    LEFT JOIN users u ON m.user_id = u.id
+    WHERE m.channel_id = ?`
+  const params: any[] = [id]
+
+  if (after) {
+    query += ' AND m.id > ?'
+    params.push(after)
+  }
+
+  query += ' ORDER BY m.created_at ASC, m.id ASC LIMIT 200'
+
+  const messages = await c.env.DB.prepare(query).bind(...params).all()
+
+  return c.json({ channel, messages: messages.results })
+})
+
+// POST /api/chat/channels/:id/messages — Envoyer un message
+app.post('/api/chat/channels/:id/messages', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canAccessChat(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const { content } = await c.req.json()
+
+  if (!content || !content.trim()) return c.json({ error: 'Message vide' }, 400)
+  if (content.length > 5000) return c.json({ error: 'Message trop long (max 5000 caractères)' }, 400)
+
+  const channel = await c.env.DB.prepare('SELECT hotel_id FROM chat_channels WHERE id = ?').bind(id).first() as any
+  if (!channel || channel.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+
+  const result = await c.env.DB.prepare(
+    'INSERT INTO chat_messages (channel_id, user_id, content) VALUES (?, ?, ?)'
+  ).bind(id, user.id, content.trim()).run()
+
+  // L'auteur a forcément lu son propre message → mettre à jour son chat_reads
+  await c.env.DB.prepare(`
+    INSERT INTO chat_reads (user_id, channel_id, last_read_message_id, last_read_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, channel_id) DO UPDATE SET 
+      last_read_message_id = excluded.last_read_message_id,
+      last_read_at = CURRENT_TIMESTAMP
+  `).bind(user.id, id, result.meta.last_row_id).run()
+
+  // Récupérer le message complet pour le retour
+  const msg = await c.env.DB.prepare(`
+    SELECT m.*, u.name as user_name, u.role as user_role, u.can_edit_procedures as user_can_edit
+    FROM chat_messages m
+    LEFT JOIN users u ON m.user_id = u.id
+    WHERE m.id = ?
+  `).bind(result.meta.last_row_id).first()
+
+  return c.json({ message: msg })
+})
+
+// PUT /api/chat/messages/:id — Éditer son propre message
+app.put('/api/chat/messages/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = c.req.param('id')
+  const { content } = await c.req.json()
+
+  if (!content || !content.trim()) return c.json({ error: 'Message vide' }, 400)
+
+  const msg = await c.env.DB.prepare('SELECT user_id FROM chat_messages WHERE id = ?').bind(id).first() as any
+  if (!msg) return c.json({ error: 'Message non trouvé' }, 404)
+  if (msg.user_id !== user.id) return c.json({ error: 'Vous ne pouvez modifier que vos propres messages' }, 403)
+
+  await c.env.DB.prepare(
+    'UPDATE chat_messages SET content = ?, edited_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).bind(content.trim(), id).run()
+
+  return c.json({ success: true })
+})
+
+// POST /api/chat/channels/:id/read — Marquer un salon comme lu
+app.post('/api/chat/channels/:id/read', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canAccessChat(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+
+  const channel = await c.env.DB.prepare('SELECT hotel_id FROM chat_channels WHERE id = ?').bind(id).first() as any
+  if (!channel || channel.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+
+  const lastMsg = await c.env.DB.prepare('SELECT MAX(id) as max_id FROM chat_messages WHERE channel_id = ?').bind(id).first() as any
+  const lastId = lastMsg?.max_id || 0
+
+  await c.env.DB.prepare(`
+    INSERT INTO chat_reads (user_id, channel_id, last_read_message_id, last_read_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_id, channel_id) DO UPDATE SET 
+      last_read_message_id = MAX(last_read_message_id, excluded.last_read_message_id),
+      last_read_at = CURRENT_TIMESTAMP
+  `).bind(user.id, id, lastId).run()
+
+  return c.json({ success: true })
 })
 
 // ============================================

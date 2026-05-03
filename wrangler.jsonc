@@ -8,7 +8,7 @@
     {
       "binding": "DB",
       "database_name": "wikot-production",
-      "database_id": "local-dev-id"
+      "database_id": "be6ae379-24fd-4e06-9987-e3e2cb480289"
     }
   ]
 }

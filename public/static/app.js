@@ -1588,8 +1588,8 @@ function renderConversationsView() {
       </div>
     </div>
 
-    <!-- Colonne salon ouvert -->
-    <div class="${hasSelected ? 'flex' : 'hidden lg:flex'} flex-col flex-1 min-w-0 bg-white">
+    <!-- Colonne salon ouvert (mobile : fullscreen fixe / desktop : 2e colonne) -->
+    <div class="${hasSelected ? 'chat-mobile-fullscreen' : 'hidden lg:flex flex-col flex-1 min-w-0 bg-white'}">
       ${hasSelected ? renderChannelView() : `
         <div class="flex-1 flex items-center justify-center p-6 text-center bg-gray-50">
           <div>
@@ -1659,7 +1659,7 @@ function renderChannelRow(ch, canManage) {
     </div>
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2">
-        <span class="text-navy-700 font-medium text-sm truncate ${unread > 0 ? 'font-bold' : ''}">#${escapeHtml(ch.name)}</span>
+        <span class="text-navy-700 font-medium text-sm truncate ${unread > 0 ? 'font-bold' : ''}">${escapeHtml(ch.name)}</span>
         ${unread > 0 ? `<span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">${unread > 99 ? '99+' : unread} non lu${unread > 1 ? 's' : ''}</span>` : ''}
       </div>
       ${ch.description ? `<p class="text-xs text-navy-400 truncate">${escapeHtml(ch.description)}</p>` : ''}
@@ -1694,21 +1694,21 @@ function renderChannelView() {
   return `
   <div class="flex flex-col h-full w-full bg-white min-h-0">
     <!-- Header salon -->
-    <div class="px-4 sm:px-5 py-3 border-b border-gray-200 flex items-center gap-3 shrink-0 bg-white">
-      <button onclick="closeChannel()" class="w-9 h-9 rounded-lg hover:bg-navy-50 text-navy-600 flex items-center justify-center shrink-0">
+    <div class="px-3 sm:px-5 py-3 border-b border-gray-200 flex items-center gap-3 shrink-0 bg-white">
+      <button onclick="closeChannel()" class="w-9 h-9 rounded-lg hover:bg-navy-50 text-navy-600 flex items-center justify-center shrink-0 lg:hidden">
         <i class="fas fa-arrow-left"></i>
       </button>
       <div class="w-9 h-9 rounded-lg bg-navy-100 text-navy-600 flex items-center justify-center shrink-0">
-        <i class="fas ${ch.icon || 'fa-hashtag'}"></i>
+        <i class="fas ${ch.icon || 'fa-comment'}"></i>
       </div>
       <div class="flex-1 min-w-0">
-        <h3 class="font-semibold text-navy-800 truncate">#${escapeHtml(ch.name)}</h3>
-        ${ch.description ? `<p class="text-xs text-navy-500 truncate">${escapeHtml(ch.description)}</p>` : `<p class="text-xs text-navy-400 italic">${escapeHtml(ch.group_name || '')}</p>`}
+        <h3 class="font-semibold text-navy-800 truncate">${escapeHtml(ch.name)}</h3>
+        ${ch.description ? `<p class="text-xs text-navy-500 truncate">${escapeHtml(ch.description)}</p>` : `<p class="text-xs text-navy-400 italic truncate">${escapeHtml(ch.group_name || '')}</p>`}
       </div>
     </div>
 
     <!-- Zone messages -->
-    <div id="chat-messages-zone" class="flex-1 overflow-y-auto px-3 sm:px-5 py-4 space-y-3 bg-gray-50">
+    <div id="chat-messages-zone" class="chat-messages-scroll px-3 sm:px-5 py-4 space-y-3 bg-gray-50">
       ${messages.length === 0 ? `
         <div class="text-center py-12">
           <i class="fas fa-comment-dots text-4xl text-navy-200 mb-2"></i>
@@ -1719,10 +1719,10 @@ function renderChannelView() {
     </div>
 
     <!-- Champ d'envoi -->
-    <div class="border-t border-gray-200 p-3 sm:p-4 bg-white shrink-0">
+    <div class="chat-input-bar border-t border-gray-200 p-2 sm:p-3 bg-white">
       <form onsubmit="event.preventDefault(); sendMessage()" class="flex items-end gap-2">
-        <textarea id="chat-input" rows="1" placeholder="Écrivez votre message... (Entrée pour envoyer, Maj+Entrée pour aller à la ligne)"
-          class="flex-1 resize-none px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm max-h-32"
+        <textarea id="chat-input" rows="1" placeholder="Écrivez votre message..."
+          class="flex-1 resize-none px-3 sm:px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm max-h-32"
           onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); sendMessage();}"
           oninput="autoResizeTextarea(this)"></textarea>
         <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow">

@@ -1028,6 +1028,39 @@ app.get('*', (c) => {
     @media (min-width: 1024px) {
       .chat-view-shell { height: calc(100vh - 4rem); height: calc(100dvh - 4rem); }
     }
+    /* === MOBILE — vue salon ouverte en plein écran fixe === */
+    /* Le salon prend tout le viewport entre le header mobile et la bottom nav.
+       Évite le bug où la barre d'envoi est sous la bottom nav et invisible. */
+    .chat-mobile-fullscreen {
+      position: fixed;
+      top: var(--mobile-header-h);
+      left: 0;
+      right: 0;
+      bottom: var(--mobile-bottomnav-h);
+      bottom: calc(var(--mobile-bottomnav-h) + env(safe-area-inset-bottom));
+      z-index: 15;
+      background: white;
+      display: flex;
+      flex-direction: column;
+    }
+    @media (min-width: 1024px) {
+      /* Sur desktop on revient à un layout in-flow (2 colonnes) */
+      .chat-mobile-fullscreen {
+        position: relative;
+        top: auto; left: auto; right: auto; bottom: auto;
+        z-index: auto;
+        height: 100%;
+      }
+    }
+    /* Zone messages doit pouvoir scroller indépendamment */
+    .chat-messages-scroll {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      min-height: 0;
+    }
+    /* Barre d'envoi toujours visible en bas */
+    .chat-input-bar { flex-shrink: 0; }
     /* Tables avec scroll horizontal + indicateur visuel d'ombre */
     .table-scroll-wrapper {
       position: relative;

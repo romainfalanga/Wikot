@@ -237,25 +237,33 @@ function renderMainLayout() {
   const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', employee: canEdit ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700' };
 
   return `
+  <!-- Overlay mobile sidebar -->
+  <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden" onclick="closeSidebar()"></div>
+
   <div class="flex h-screen overflow-hidden">
     <!-- Sidebar -->
-    <aside class="w-64 bg-navy-900 text-white flex flex-col shrink-0">
+    <aside id="main-sidebar" class="fixed lg:relative z-40 lg:z-auto -translate-x-full lg:translate-x-0 transition-transform duration-300 w-72 lg:w-64 bg-navy-900 text-white flex flex-col shrink-0 h-full">
       <div class="p-5 border-b border-navy-700">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 bg-brand-400 rounded-xl flex items-center justify-center shadow">
-            <i class="fas fa-concierge-bell text-white"></i>
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-brand-400 rounded-xl flex items-center justify-center shadow">
+              <i class="fas fa-concierge-bell text-white"></i>
+            </div>
+            <div>
+              <h1 class="text-lg font-bold tracking-tight">Wik<span class="text-brand-400">ot</span></h1>
+              <p class="text-[10px] text-navy-400 uppercase tracking-wider">Procédures Hôtelières</p>
+            </div>
           </div>
-          <div>
-            <h1 class="text-lg font-bold tracking-tight">Wik<span class="text-brand-400">ot</span></h1>
-            <p class="text-[10px] text-navy-400 uppercase tracking-wider">Procédures Hôtelières</p>
-          </div>
+          <button onclick="closeSidebar()" class="lg:hidden text-navy-400 hover:text-white p-1">
+            <i class="fas fa-times"></i>
+          </button>
         </div>
       </div>
       
       <nav class="flex-1 py-4 overflow-y-auto">
         ${menuItems.map(item => `
-          <button onclick="navigate('${item.id}')" 
-            class="sidebar-item ${state.currentView === item.id ? 'active' : ''} w-full text-left px-5 py-2.5 flex items-center gap-3 text-sm text-navy-200 hover:text-white">
+          <button onclick="navigate('${item.id}'); closeSidebar()" 
+            class="sidebar-item ${state.currentView === item.id ? 'active' : ''} w-full text-left px-5 py-3 flex items-center gap-3 text-sm text-navy-200 hover:text-white">
             <i class="fas ${item.icon} w-5 text-center text-xs ${state.currentView === item.id ? 'text-brand-400' : ''}"></i>
             <span>${item.label}</span>
             ${item.badge ? `<span class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">${item.badge}</span>` : ''}
@@ -265,7 +273,7 @@ function renderMainLayout() {
 
       <div class="p-4 border-t border-navy-700">
         <div class="flex items-center gap-3 mb-3">
-          <div class="w-9 h-9 bg-navy-600 rounded-full flex items-center justify-center text-sm font-semibold">
+          <div class="w-9 h-9 bg-navy-600 rounded-full flex items-center justify-center text-sm font-semibold shrink-0">
             ${state.user.name.charAt(0)}
           </div>
           <div class="flex-1 min-w-0">
@@ -284,14 +292,52 @@ function renderMainLayout() {
 
     <!-- Main Content -->
     <main class="flex-1 overflow-y-auto bg-gray-50">
-      <div class="p-6 lg:p-8 max-w-7xl mx-auto">
+      <!-- Header mobile avec burger -->
+      <div class="lg:hidden sticky top-0 z-20 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm">
+        <button onclick="openSidebar()" class="w-9 h-9 flex items-center justify-center rounded-lg bg-navy-50 hover:bg-navy-100 text-navy-600 transition-colors">
+          <i class="fas fa-bars"></i>
+        </button>
+        <div class="flex items-center gap-2">
+          <div class="w-7 h-7 bg-brand-400 rounded-lg flex items-center justify-center">
+            <i class="fas fa-concierge-bell text-white text-xs"></i>
+          </div>
+          <span class="font-bold text-navy-800">Wik<span class="text-brand-400">ot</span></span>
+        </div>
+        <div class="ml-auto flex items-center gap-2">
+          ${state.unreadRequired > 0 ? `<span class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">${state.unreadRequired}</span>` : ''}
+          <div class="w-8 h-8 bg-navy-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">${state.user.name.charAt(0)}</div>
+        </div>
+      </div>
+
+      <div class="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto pb-24 lg:pb-8">
         ${renderCurrentView()}
       </div>
     </main>
   </div>
 
+  <!-- Bottom navigation (mobile uniquement) -->
+  <nav class="lg:hidden fixed bottom-0 left-0 right-0 z-20 bg-navy-900 border-t border-navy-700 flex">
+    ${menuItems.slice(0, 5).map(item => `
+      <button onclick="navigate('${item.id}')" class="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 relative ${state.currentView === item.id ? 'text-brand-400' : 'text-navy-400'} hover:text-white transition-colors">
+        <i class="fas ${item.icon} text-base"></i>
+        <span class="text-[10px] font-medium">${item.label.split(' ')[0]}</span>
+        ${item.badge ? `<span class="absolute top-1 right-1/4 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[14px] text-center">${item.badge}</span>` : ''}
+      </button>
+    `).join('')}
+  </nav>
+
   <!-- Modal Container -->
   <div id="modal-container"></div>`;
+}
+
+function openSidebar() {
+  document.getElementById('main-sidebar')?.classList.remove('-translate-x-full');
+  document.getElementById('sidebar-overlay')?.classList.remove('hidden');
+}
+
+function closeSidebar() {
+  document.getElementById('main-sidebar')?.classList.add('-translate-x-full');
+  document.getElementById('sidebar-overlay')?.classList.add('hidden');
 }
 
 function navigate(view) {
@@ -327,19 +373,19 @@ function renderDashboard() {
   if (isSuperAdmin) {
     return `
     <div class="fade-in">
-      <div class="mb-8">
-        <h2 class="text-2xl font-bold text-navy-900">Tableau de bord <span class="text-brand-400">Super Admin</span></h2>
-        <p class="text-navy-500 mt-1">Gestion de la plateforme — hôtels &amp; administrateurs</p>
+      <div class="mb-6 sm:mb-8">
+        <h2 class="text-xl sm:text-2xl font-bold text-navy-900">Tableau de bord <span class="text-brand-400">Super Admin</span></h2>
+        <p class="text-navy-500 mt-1 text-sm">Gestion de la plateforme — hôtels &amp; administrateurs</p>
       </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
+      <div class="grid grid-cols-2 gap-3 sm:gap-5 mb-6 sm:mb-8">
         ${statCard('fa-hotel', 'Hôtels actifs', s.hotels || 0, 'bg-blue-500')}
         ${statCard('fa-users', 'Utilisateurs total', s.users || 0, 'bg-green-500')}
       </div>
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-        <div class="flex items-center justify-between mb-5">
-          <h3 class="text-lg font-semibold text-navy-800"><i class="fas fa-hotel mr-2 text-blue-500"></i>Hôtels enregistrés</h3>
-          <button onclick="navigate('hotels')" class="text-sm bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm">
-            <i class="fas fa-plus mr-1.5"></i>Nouvel hôtel
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+          <h3 class="text-base sm:text-lg font-semibold text-navy-800"><i class="fas fa-hotel mr-2 text-blue-500"></i>Hôtels enregistrés</h3>
+          <button onclick="navigate('hotels')" class="self-start sm:self-auto text-sm bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm flex items-center gap-1.5">
+            <i class="fas fa-plus"></i>Nouvel hôtel
           </button>
         </div>
         ${state.hotels.length === 0 ? `
@@ -349,18 +395,18 @@ function renderDashboard() {
             <p class="text-navy-300 text-sm mt-1">Commencez par créer votre premier hôtel</p>
           </div>
         ` : state.hotels.map(h => `
-          <div class="flex items-center justify-between py-3.5 border-b border-gray-50 last:border-0">
-            <div class="flex items-center gap-3">
-              <div class="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center">
+          <div class="flex items-center justify-between py-3 sm:py-3.5 border-b border-gray-50 last:border-0 gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
                 <i class="fas fa-hotel text-blue-400 text-sm"></i>
               </div>
-              <div>
-                <p class="font-medium text-navy-800">${h.name}</p>
-                <p class="text-xs text-navy-400"><i class="fas fa-map-marker-alt mr-1"></i>${h.address || 'Adresse non renseignée'}</p>
+              <div class="min-w-0">
+                <p class="font-medium text-navy-800 truncate">${h.name}</p>
+                <p class="text-xs text-navy-400 truncate"><i class="fas fa-map-marker-alt mr-1"></i>${h.address || 'Adresse non renseignée'}</p>
               </div>
             </div>
-            <button onclick="navigate('users')" class="text-xs bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-1.5 rounded-lg transition-colors">
-              <i class="fas fa-users mr-1"></i>Gérer les admins
+            <button onclick="navigate('users')" class="shrink-0 text-xs bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-1.5 rounded-lg transition-colors">
+              <i class="fas fa-users mr-1"></i><span class="hidden sm:inline">Gérer les </span>admins
             </button>
           </div>
         `).join('')}
@@ -371,58 +417,58 @@ function renderDashboard() {
   // Admin / Employee dashboard
   return `
   <div class="fade-in">
-    <div class="mb-8">
-      <h2 class="text-2xl font-bold text-navy-900">Bonjour, <span class="text-brand-400">${state.user.name}</span></h2>
-      <p class="text-navy-500 mt-1">${state.user.role === 'admin' ? 'Gérez les procédures de votre hôtel' : 'Consultez les procédures à suivre'}</p>
+    <div class="mb-6 sm:mb-8">
+      <h2 class="text-xl sm:text-2xl font-bold text-navy-900">Bonjour, <span class="text-brand-400">${state.user.name}</span></h2>
+      <p class="text-navy-500 mt-1 text-sm">${state.user.role === 'admin' ? 'Gérez les procédures de votre hôtel' : 'Consultez les procédures à suivre'}</p>
     </div>
 
     ${state.unreadRequired > 0 ? `
-    <div class="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-center gap-3 cursor-pointer hover:bg-red-100 transition-colors" onclick="navigate('changelog')">
-      <div class="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
-        <i class="fas fa-exclamation-triangle text-red-500"></i>
+    <div class="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3 cursor-pointer hover:bg-red-100 transition-colors" onclick="navigate('changelog')">
+      <div class="w-9 h-9 sm:w-10 sm:h-10 bg-red-100 rounded-full flex items-center justify-center shrink-0">
+        <i class="fas fa-exclamation-triangle text-red-500 text-sm"></i>
       </div>
-      <div>
-        <p class="font-semibold text-red-800">${state.unreadRequired} changement(s) de procédure à lire</p>
-        <p class="text-xs text-red-600">Des procédures ont été mises à jour. Consultez les changements.</p>
+      <div class="flex-1 min-w-0">
+        <p class="font-semibold text-red-800 text-sm">${state.unreadRequired} changement(s) à lire</p>
+        <p class="text-xs text-red-600 mt-0.5">Des procédures ont été mises à jour.</p>
       </div>
-      <i class="fas fa-chevron-right text-red-300 ml-auto"></i>
+      <i class="fas fa-chevron-right text-red-300 mt-1 shrink-0"></i>
     </div>` : ''}
 
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+    <div class="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-5 mb-6 sm:mb-8">
       ${statCard('fa-sitemap', 'Procédures actives', s.active_procedures || 0, 'bg-green-500')}
       ${statCard('fa-file-pen', 'Brouillons', s.draft_procedures || 0, 'bg-yellow-500')}
       ${statCard('fa-users', 'Membres de l\'équipe', s.total_users || 0, 'bg-blue-500')}
     </div>
 
     <!-- Quick access to categories -->
-    <div class="mb-8">
-      <h3 class="text-lg font-semibold text-navy-800 mb-4"><i class="fas fa-th-large mr-2 text-brand-400"></i>Accès rapide par catégorie</h3>
-      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+    <div class="mb-6 sm:mb-8">
+      <h3 class="text-base sm:text-lg font-semibold text-navy-800 mb-3 sm:mb-4"><i class="fas fa-th-large mr-2 text-brand-400"></i>Accès rapide par catégorie</h3>
+      <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-3">
         ${state.categories.map(cat => `
           <button onclick="state.filterCategory='${cat.id}'; navigate('procedures')" 
-            class="bg-white rounded-xl p-4 border border-gray-100 shadow-sm hover:shadow-md transition-all text-center group">
-            <div class="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-2 transition-colors" style="background:${cat.color}15">
-              <i class="fas ${cat.icon} text-lg" style="color:${cat.color}"></i>
+            class="bg-white rounded-xl p-3 sm:p-4 border border-gray-100 shadow-sm hover:shadow-md transition-all text-center group active:scale-95">
+            <div class="w-9 h-9 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center mx-auto mb-1.5 sm:mb-2" style="background:${cat.color}15">
+              <i class="fas ${cat.icon} text-base sm:text-lg" style="color:${cat.color}"></i>
             </div>
-            <p class="text-xs font-medium text-navy-700 group-hover:text-navy-900">${cat.name}</p>
-            <p class="text-[10px] text-navy-400">${state.procedures.filter(p => p.category_id == cat.id && p.status === 'active').length} procédures</p>
+            <p class="text-[10px] sm:text-xs font-medium text-navy-700 leading-tight">${cat.name}</p>
+            <p class="text-[9px] sm:text-[10px] text-navy-400">${state.procedures.filter(p => p.category_id == cat.id && p.status === 'active').length} proc.</p>
           </button>
         `).join('')}
       </div>
     </div>
 
     <!-- Recent changes -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-      <h3 class="text-lg font-semibold text-navy-800 mb-4"><i class="fas fa-clock-rotate-left mr-2 text-navy-400"></i>Derniers changements</h3>
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
+      <h3 class="text-base sm:text-lg font-semibold text-navy-800 mb-4"><i class="fas fa-clock-rotate-left mr-2 text-navy-400"></i>Derniers changements</h3>
       ${(s.recent_changes || []).length === 0 ? '<p class="text-navy-400 text-sm">Aucun changement récent</p>' :
         (s.recent_changes || []).map(ch => `
           <div class="flex items-start gap-3 py-3 border-b border-gray-50 last:border-0">
             <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${getActionColor(ch.action)}">
               <i class="fas ${getActionIcon(ch.action)} text-xs"></i>
             </div>
-            <div>
-              <p class="text-sm text-navy-700">${ch.summary}</p>
-              <p class="text-xs text-navy-400">${ch.user_name} · ${formatDate(ch.created_at)}</p>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm text-navy-700 leading-snug">${ch.summary}</p>
+              <p class="text-xs text-navy-400 mt-0.5">${ch.user_name} · ${formatDate(ch.created_at)}</p>
             </div>
           </div>
         `).join('')}
@@ -469,53 +515,54 @@ function renderProceduresList() {
 
   return `
   <div class="fade-in">
-    <div class="flex items-center justify-between mb-6">
+    <!-- Header responsive -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
       <div>
-        <h2 class="text-2xl font-bold text-navy-900"><i class="fas fa-sitemap mr-2 text-brand-400"></i>Procédures</h2>
-        <p class="text-navy-500 text-sm mt-1">${filtered.length} procédure(s) · Vue arborescence</p>
+        <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-sitemap mr-2 text-brand-400"></i>Procédures</h2>
+        <p class="text-navy-500 text-sm mt-1">${filtered.length} procédure(s)</p>
       </div>
-      <div class="flex gap-2">
-        ${canEdit ? `
-        <button onclick="showProcedureForm()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
-          <i class="fas fa-plus mr-1.5"></i>Nouvelle procédure
-        </button>` : ''}
-      </div>
+      ${canEdit ? `
+      <button onclick="showProcedureForm()" class="self-start sm:self-auto bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-1.5">
+        <i class="fas fa-plus"></i>Nouvelle procédure
+      </button>` : ''}
     </div>
 
     <!-- Filters -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-6 flex flex-wrap gap-3">
-      <select onchange="state.filterCategory=this.value; render()" class="text-sm border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
-        <option value="">Toutes les catégories</option>
-        ${state.categories.map(c => `<option value="${c.id}" ${state.filterCategory == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
-      </select>
-      <select onchange="state.filterStatus=this.value; render()" class="text-sm border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
-        <option value="">Tous les statuts</option>
-        <option value="active" ${state.filterStatus === 'active' ? 'selected' : ''}>✅ Active</option>
-        <option value="draft" ${state.filterStatus === 'draft' ? 'selected' : ''}>📝 Brouillon</option>
-        <option value="archived" ${state.filterStatus === 'archived' ? 'selected' : ''}>📦 Archivée</option>
-      </select>
-      ${state.filterCategory || state.filterStatus ? `
-      <button onclick="state.filterCategory='';state.filterStatus=''; render()" class="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
-        <i class="fas fa-times"></i>Réinitialiser
-      </button>` : ''}
+    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-3 sm:p-4 mb-6">
+      <div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
+        <select onchange="state.filterCategory=this.value; render()" class="flex-1 text-sm border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
+          <option value="">Toutes les catégories</option>
+          ${state.categories.map(c => `<option value="${c.id}" ${state.filterCategory == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
+        </select>
+        <select onchange="state.filterStatus=this.value; render()" class="flex-1 text-sm border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
+          <option value="">Tous les statuts</option>
+          <option value="active" ${state.filterStatus === 'active' ? 'selected' : ''}>✅ Active</option>
+          <option value="draft" ${state.filterStatus === 'draft' ? 'selected' : ''}>📝 Brouillon</option>
+          <option value="archived" ${state.filterStatus === 'archived' ? 'selected' : ''}>📦 Archivée</option>
+        </select>
+        ${state.filterCategory || state.filterStatus ? `
+        <button onclick="state.filterCategory='';state.filterStatus=''; render()" class="text-xs text-red-500 hover:text-red-700 flex items-center justify-center gap-1 px-3 py-2 border border-red-200 rounded-lg">
+          <i class="fas fa-times"></i>Réinitialiser
+        </button>` : ''}
+      </div>
     </div>
 
     <!-- Tree View -->
     <div class="space-y-4">
       ${Object.keys(grouped).length === 0 ? `
-        <div class="bg-white rounded-xl p-12 text-center border border-gray-100">
+        <div class="bg-white rounded-xl p-10 sm:p-12 text-center border border-gray-100">
           <i class="fas fa-sitemap text-4xl text-navy-200 mb-4"></i>
           <p class="text-navy-400 font-medium">Aucune procédure trouvée</p>
           ${canEdit ? '<p class="text-sm text-navy-300 mt-1">Créez votre première procédure</p>' : ''}
         </div>
       ` : Object.entries(grouped).map(([catName, catData]) => `
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div class="px-5 py-3 border-b border-gray-100 flex items-center gap-3" style="background:${catData.color}08">
-            <div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:${catData.color}15">
+          <div class="px-4 sm:px-5 py-3 border-b border-gray-100 flex items-center gap-3" style="background:${catData.color}08">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background:${catData.color}15">
               <i class="fas ${catData.icon} text-sm" style="color:${catData.color}"></i>
             </div>
-            <h3 class="font-semibold text-navy-800">${catName}</h3>
-            <span class="text-xs bg-navy-100 text-navy-500 px-2 py-0.5 rounded-full">${catData.procedures.length}</span>
+            <h3 class="font-semibold text-navy-800 truncate">${catName}</h3>
+            <span class="text-xs bg-navy-100 text-navy-500 px-2 py-0.5 rounded-full ml-auto shrink-0">${catData.procedures.length}</span>
           </div>
           <div class="divide-y divide-gray-50">
             ${catData.procedures.map(proc => renderProcedureCard(proc, canEdit)).join('')}
@@ -542,31 +589,30 @@ function renderProcedureCard(proc, canEdit) {
   const pr = priorityConfig[proc.priority] || priorityConfig.normal;
 
   return `
-  <div class="px-5 py-4 hover:bg-gray-50 transition-colors cursor-pointer priority-${proc.priority}" onclick="viewProcedure(${proc.id})">
-    <div class="flex items-start gap-4">
-      <div class="w-10 h-10 bg-navy-50 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
-        <i class="fas ${proc.trigger_icon || 'fa-bolt'} text-navy-500"></i>
+  <div class="px-4 sm:px-5 py-3 sm:py-4 hover:bg-gray-50 transition-colors cursor-pointer priority-${proc.priority}" onclick="viewProcedure(${proc.id})">
+    <div class="flex items-start gap-3">
+      <div class="w-9 h-9 sm:w-10 sm:h-10 bg-navy-50 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
+        <i class="fas ${proc.trigger_icon || 'fa-bolt'} text-navy-500 text-sm"></i>
       </div>
       <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2 mb-1">
-          <h4 class="font-semibold text-navy-800 truncate">${proc.title}</h4>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${st.class}">
+        <div class="flex flex-wrap items-center gap-1.5 mb-1">
+          <h4 class="font-semibold text-navy-800 text-sm sm:text-base truncate max-w-full">${proc.title}</h4>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${st.class} shrink-0">
             <i class="fas ${st.icon} mr-0.5"></i>${st.label}
           </span>
-          ${proc.priority !== 'normal' ? `<span class="text-[10px] font-medium ${pr.class}"><i class="fas fa-flag mr-0.5"></i>${pr.label}</span>` : ''}
+          ${proc.priority !== 'normal' ? `<span class="text-[10px] font-medium ${pr.class} shrink-0"><i class="fas fa-flag mr-0.5"></i>${pr.label}</span>` : ''}
         </div>
-        <div class="flex items-center gap-1.5 mb-1.5">
+        <div class="flex items-center gap-1 mb-1">
           <i class="fas fa-bolt text-[10px] text-brand-400"></i>
-          <p class="text-sm text-navy-600">${proc.trigger_event}</p>
+          <p class="text-xs sm:text-sm text-navy-600 truncate">${proc.trigger_event}</p>
         </div>
-        <div class="flex items-center gap-4 text-[11px] text-navy-400">
+        <div class="flex flex-wrap items-center gap-2 sm:gap-4 text-[11px] text-navy-400">
           <span><i class="fas fa-list-ol mr-1"></i>${proc.step_count || 0} étapes</span>
-          ${proc.condition_count > 0 ? `<span><i class="fas fa-code-branch mr-1"></i>${proc.condition_count} cas spécifiques</span>` : ''}
-          <span><i class="fas fa-code-branch mr-1"></i>v${proc.version || 1}</span>
-          ${proc.created_by_name ? `<span><i class="fas fa-user mr-1"></i>${proc.created_by_name}</span>` : ''}
+          ${proc.condition_count > 0 ? `<span class="hidden sm:inline"><i class="fas fa-code-branch mr-1"></i>${proc.condition_count} cas</span>` : ''}
+          <span class="hidden sm:inline"><i class="fas fa-code-branch mr-1"></i>v${proc.version || 1}</span>
         </div>
       </div>
-      <div class="flex items-center gap-1.5 shrink-0">
+      <div class="flex items-center gap-1 shrink-0">
         ${canEdit ? `
           <button onclick="event.stopPropagation(); showProcedureForm(${proc.id})" class="w-8 h-8 rounded-lg bg-navy-50 hover:bg-navy-100 flex items-center justify-center text-navy-400 hover:text-navy-600 transition-colors" title="Modifier">
             <i class="fas fa-pen text-xs"></i>
@@ -576,7 +622,7 @@ function renderProcedureCard(proc, canEdit) {
             <i class="fas fa-check text-xs"></i>
           </button>` : ''}
         ` : ''}
-        <i class="fas fa-chevron-right text-navy-300 text-xs ml-2"></i>
+        <i class="fas fa-chevron-right text-navy-300 text-xs ml-1"></i>
       </div>
     </div>
   </div>`;
@@ -604,21 +650,21 @@ function renderProcedureDetail() {
   return `
   <div class="fade-in">
     <!-- Header -->
-    <div class="mb-6">
+    <div class="mb-5 sm:mb-6">
       <button onclick="state.selectedProcedure=null; navigate('procedures')" class="text-sm text-navy-400 hover:text-navy-600 mb-3 inline-flex items-center gap-1.5 transition-colors">
         <i class="fas fa-arrow-left"></i>Retour aux procédures
       </button>
       
-      <div class="bg-white rounded-xl shadow-sm border-l-4 ${priorityBorder[proc.priority] || 'border-blue-400'} p-6">
-        <div class="flex items-start justify-between">
-          <div class="flex items-start gap-4">
-            <div class="w-14 h-14 bg-navy-50 rounded-xl flex items-center justify-center">
-              <i class="fas ${proc.trigger_icon || 'fa-bolt'} text-2xl text-navy-600"></i>
+      <div class="bg-white rounded-xl shadow-sm border-l-4 ${priorityBorder[proc.priority] || 'border-blue-400'} p-4 sm:p-6">
+        <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div class="flex items-start gap-3 sm:gap-4">
+            <div class="w-12 h-12 sm:w-14 sm:h-14 bg-navy-50 rounded-xl flex items-center justify-center shrink-0">
+              <i class="fas ${proc.trigger_icon || 'fa-bolt'} text-xl sm:text-2xl text-navy-600"></i>
             </div>
-            <div>
-              <h2 class="text-xl font-bold text-navy-900">${proc.title}</h2>
+            <div class="flex-1 min-w-0">
+              <h2 class="text-lg sm:text-xl font-bold text-navy-900 leading-tight">${proc.title}</h2>
               ${proc.description ? `<p class="text-navy-500 text-sm mt-1">${proc.description}</p>` : ''}
-              <div class="flex items-center gap-4 mt-3 text-xs text-navy-400">
+              <div class="flex flex-wrap items-center gap-2 mt-2 sm:mt-3 text-xs text-navy-400">
                 <span class="bg-navy-50 px-2 py-1 rounded">${proc.category_name || 'Sans catégorie'}</span>
                 <span>v${proc.version}</span>
                 ${proc.approved_by_name ? `<span><i class="fas fa-check-circle text-green-500 mr-1"></i>Approuvé par ${proc.approved_by_name}</span>` : ''}
@@ -626,9 +672,9 @@ function renderProcedureDetail() {
             </div>
           </div>
           ${canEdit ? `
-          <div class="flex gap-2">
-            <button onclick="showProcedureForm(${proc.id})" class="bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-2 rounded-lg text-sm transition-colors">
-              <i class="fas fa-pen mr-1"></i>Modifier
+          <div class="flex gap-2 sm:shrink-0">
+            <button onclick="showProcedureForm(${proc.id})" class="bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-1.5">
+              <i class="fas fa-pen"></i>Modifier
             </button>
           </div>` : ''}
         </div>
@@ -759,8 +805,8 @@ function renderCondition(cond) {
 function renderSearchView() {
   return `
   <div class="fade-in">
-    <div class="mb-6">
-      <h2 class="text-2xl font-bold text-navy-900"><i class="fas fa-search mr-2 text-brand-400"></i>Rechercher une procédure</h2>
+    <div class="mb-5 sm:mb-6">
+      <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-search mr-2 text-brand-400"></i>Rechercher</h2>
       <p class="text-navy-500 text-sm mt-1">Trouvez rapidement quoi faire face à une situation</p>
     </div>
 
@@ -839,8 +885,8 @@ function renderSearchResults(returnString = false) {
 function renderChangelogView() {
   return `
   <div class="fade-in">
-    <div class="mb-6">
-      <h2 class="text-2xl font-bold text-navy-900"><i class="fas fa-clock-rotate-left mr-2 text-brand-400"></i>Historique des changements</h2>
+    <div class="mb-5 sm:mb-6">
+      <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-clock-rotate-left mr-2 text-brand-400"></i>Historique</h2>
       <p class="text-navy-500 text-sm mt-1">Suivi des modifications de procédures</p>
     </div>
 
@@ -1010,13 +1056,13 @@ function renderUsersView() {
 
   return `
   <div class="fade-in">
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
       <div>
-        <h2 class="text-2xl font-bold text-navy-900"><i class="fas fa-users mr-2 text-brand-400"></i>Utilisateurs</h2>
+        <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-users mr-2 text-brand-400"></i>Utilisateurs</h2>
         <p class="text-navy-500 text-sm mt-1">${filteredUsers.length} compte(s)${filterHotelId ? ' — filtré' : ''}</p>
       </div>
-      <button onclick="showUserForm()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
-        <i class="fas fa-user-plus mr-1.5"></i>Ajouter
+      <button onclick="showUserForm()" class="self-start sm:self-auto bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-1.5">
+        <i class="fas fa-user-plus"></i>Ajouter
       </button>
     </div>
 
@@ -1040,7 +1086,8 @@ function renderUsersView() {
       </div>
     </div>` : ''}
 
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <!-- Desktop table (md+) -->
+    <div class="hidden md:block bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
       <table class="w-full">
         <thead>
           <tr class="bg-navy-50 text-xs text-navy-500 uppercase tracking-wider">
@@ -1103,6 +1150,53 @@ function renderUsersView() {
       </table>
     </div>
 
+    <!-- Mobile cards (< md) -->
+    <div class="md:hidden space-y-3">
+      ${filteredUsers.length === 0 ? `
+        <div class="bg-white rounded-xl p-8 text-center border border-gray-100">
+          <p class="text-navy-400 text-sm">Aucun utilisateur</p>
+        </div>
+      ` : filteredUsers.map(u => {
+        const hasEditRight = u.can_edit_procedures === 1;
+        const isEmployee = u.role === 'employee';
+        const isSelf = u.id === state.user.id;
+        return `
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+          <div class="flex items-start justify-between gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-10 h-10 bg-navy-100 rounded-full flex items-center justify-center text-sm font-bold text-navy-600 shrink-0">${u.name.charAt(0)}</div>
+              <div class="min-w-0">
+                <p class="text-sm font-semibold text-navy-800 truncate">${u.name}${isSelf ? ' <span class="text-[10px] bg-gray-100 text-gray-400 px-1 py-0.5 rounded">vous</span>' : ''}</p>
+                <p class="text-xs text-navy-400 truncate">${u.email}</p>
+                ${isSuperAdmin && u.hotel_name ? `<p class="text-xs text-blue-500 mt-0.5"><i class="fas fa-hotel mr-1"></i>${u.hotel_name}</p>` : ''}
+              </div>
+            </div>
+            ${isSelf ? '' : `
+            <button onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')" 
+              class="w-8 h-8 rounded-lg bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-400 shrink-0">
+              <i class="fas fa-trash text-xs"></i>
+            </button>`}
+          </div>
+          <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-50">
+            <span class="text-[10px] px-2 py-0.5 rounded-full font-medium ${roleColors[u.role]}">${roleLabels[u.role]}</span>
+            <span class="flex items-center gap-1 text-xs text-navy-400">
+              <span class="w-1.5 h-1.5 rounded-full ${u.is_active ? 'bg-green-500' : 'bg-red-500'}"></span>
+              ${u.is_active ? 'Actif' : 'Inactif'}
+            </span>
+            <span class="text-[10px] text-navy-400"><i class="fas fa-clock mr-0.5"></i>${u.last_login ? formatDate(u.last_login) : 'Jamais connecté'}</span>
+          </div>
+          ${isAdmin && isEmployee ? `
+          <div class="mt-2">
+            <button onclick="toggleEditPermission(${u.id}, ${hasEditRight ? 0 : 1})" 
+              class="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors w-full justify-center ${hasEditRight ? 'bg-orange-100 text-orange-700' : 'bg-gray-100 text-gray-500'}">
+              <i class="fas ${hasEditRight ? 'fa-shield-halved' : 'fa-shield'}"></i>
+              ${hasEditRight ? 'Éditeur — cliquer pour retirer' : 'Lecture seule — cliquer pour accorder droits édition'}
+            </button>
+          </div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>
+
     ${isAdmin ? `
     <div class="mt-4 bg-orange-50 border border-orange-100 rounded-xl p-4 flex items-start gap-3">
       <i class="fas fa-circle-info text-orange-400 mt-0.5"></i>
@@ -1130,13 +1224,13 @@ async function deleteUser(id, name) {
 function renderHotelsView() {
   return `
   <div class="fade-in">
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
       <div>
-        <h2 class="text-2xl font-bold text-navy-900"><i class="fas fa-hotel mr-2 text-brand-400"></i>Hôtels</h2>
+        <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-hotel mr-2 text-brand-400"></i>Hôtels</h2>
         <p class="text-navy-500 text-sm mt-1">${state.hotels.length} hôtel(s)</p>
       </div>
-      <button onclick="showHotelForm()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
-        <i class="fas fa-plus mr-1.5"></i>Nouvel hôtel
+      <button onclick="showHotelForm()" class="self-start sm:self-auto bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-1.5">
+        <i class="fas fa-plus"></i>Nouvel hôtel
       </button>
     </div>
 
@@ -1325,50 +1419,52 @@ async function showProcedureForm(procedureId = null) {
   const content = `
   <form onsubmit="event.preventDefault(); saveProcedure(${procedureId || 'null'})">
     <div class="space-y-4">
-      <div class="grid grid-cols-2 gap-4">
-        <div class="col-span-2">
+      <div class="space-y-3">
+        <div>
           <label class="block text-sm font-medium text-navy-600 mb-1">Titre de la procédure *</label>
           <input id="proc-title" type="text" required value="${proc?.title || ''}" placeholder="Ex: Check-in d'un client"
             class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
         </div>
-        <div class="col-span-2">
+        <div>
           <label class="block text-sm font-medium text-navy-600 mb-1">Description</label>
           <textarea id="proc-desc" rows="2" placeholder="Description courte de la procédure"
             class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">${proc?.description || ''}</textarea>
         </div>
-        <div class="col-span-2">
+        <div>
           <label class="block text-sm font-medium text-navy-600 mb-1"><i class="fas fa-bolt text-brand-400 mr-1"></i>Déclencheur — Qu'est-ce qu'il se passe ? *</label>
           <input id="proc-trigger" type="text" required value="${proc?.trigger_event || ''}" placeholder="Ex: Un client arrive à la réception pour s'enregistrer"
             class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
         </div>
-        <div>
-          <label class="block text-sm font-medium text-navy-600 mb-1">Catégorie</label>
-          <select id="proc-category" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
-            <option value="">Sans catégorie</option>
-            ${state.categories.map(c => `<option value="${c.id}" ${proc?.category_id == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-navy-600 mb-1">Priorité</label>
-          <select id="proc-priority" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
-            <option value="low" ${proc?.priority === 'low' ? 'selected' : ''}>Faible</option>
-            <option value="normal" ${!proc || proc?.priority === 'normal' ? 'selected' : ''}>Normal</option>
-            <option value="high" ${proc?.priority === 'high' ? 'selected' : ''}>Important</option>
-            <option value="critical" ${proc?.priority === 'critical' ? 'selected' : ''}>Critique</option>
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-navy-600 mb-1">Icône du déclencheur</label>
-          <input id="proc-icon" type="text" value="${proc?.trigger_icon || 'fa-bolt'}" placeholder="fa-bolt"
-            class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-navy-600 mb-1">Statut</label>
-          <select id="proc-status" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
-            <option value="draft" ${!proc || proc?.status === 'draft' ? 'selected' : ''}>Brouillon</option>
-            <option value="active" ${proc?.status === 'active' ? 'selected' : ''}>Active</option>
-            <option value="archived" ${proc?.status === 'archived' ? 'selected' : ''}>Archivée</option>
-          </select>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-sm font-medium text-navy-600 mb-1">Catégorie</label>
+            <select id="proc-category" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+              <option value="">Sans catégorie</option>
+              ${state.categories.map(c => `<option value="${c.id}" ${proc?.category_id == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-navy-600 mb-1">Priorité</label>
+            <select id="proc-priority" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+              <option value="low" ${proc?.priority === 'low' ? 'selected' : ''}>Faible</option>
+              <option value="normal" ${!proc || proc?.priority === 'normal' ? 'selected' : ''}>Normal</option>
+              <option value="high" ${proc?.priority === 'high' ? 'selected' : ''}>Important</option>
+              <option value="critical" ${proc?.priority === 'critical' ? 'selected' : ''}>Critique</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-navy-600 mb-1">Icône du déclencheur</label>
+            <input id="proc-icon" type="text" value="${proc?.trigger_icon || 'fa-bolt'}" placeholder="fa-bolt"
+              class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-navy-600 mb-1">Statut</label>
+            <select id="proc-status" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+              <option value="draft" ${!proc || proc?.status === 'draft' ? 'selected' : ''}>Brouillon</option>
+              <option value="active" ${proc?.status === 'active' ? 'selected' : ''}>Active</option>
+              <option value="archived" ${proc?.status === 'archived' ? 'selected' : ''}>Archivée</option>
+            </select>
+          </div>
         </div>
       </div>
 

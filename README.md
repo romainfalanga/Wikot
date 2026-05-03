@@ -22,7 +22,9 @@ Wikot fonctionne comme un système d'automatisation IF/THEN appliqué aux procé
 | **Employé** | Consulter procédures, rechercher, proposer suggestions |
 
 ## URLs
-- **App** : https://3000-ikc3f6798ke5uiecvnuqp-de59bda9.sandbox.novita.ai
+- **Production** : https://wikot.fr
+- **Cloudflare Pages** : https://wikot.pages.dev
+- **GitHub** : https://github.com/romainfalanga/Wikot
 
 ## Comptes de démonstration
 | Email | Rôle | Mot de passe |
@@ -37,12 +39,17 @@ Wikot fonctionne comme un système d'automatisation IF/THEN appliqué aux procé
 - [x] CRUD complet des procédures (trigger + steps + conditions)
 - [x] Vue arborescence par catégories
 - [x] Recherche de procédures par mots-clés
-- [x] Système de suggestions (employés proposent, admins valident)
 - [x] Historique des changements avec lecture obligatoire
 - [x] Templates créés par le super admin, importables par les hôtels
 - [x] Gestion multi-hôtels
 - [x] Gestion des utilisateurs
-- [x] Données de démo (5 procédures complètes pour l'hôtel Le Grand Paris)
+- [x] **Système de Conversations (Discord-like)** : groupes de salons + salons + messages temps réel
+  - 3 groupes par défaut : **Espaces communs**, **Chambres**, **Opérationnel**
+  - Salons par défaut : réception, restaurant, bar, piscine, parking · chambres 101→105 / 201→205 · ménage, technique, cuisine, urgence, objets-trouvés
+  - Suggestions de noms de salons par groupe lors de la création
+  - Compteur de messages non lus dans la sidebar (global) et sur chaque salon
+  - Polling temps réel (4s) pour les nouveaux messages, 15s pour les badges
+- [x] Données de démo (procédures complètes pour l'hôtel Le Grand Paris)
 
 ## Architecture technique
 - **Backend** : Hono (TypeScript) sur Cloudflare Workers
@@ -62,6 +69,10 @@ Wikot fonctionne comme un système d'automatisation IF/THEN appliqué aux procé
 - `changelog` : Historique des modifications
 - `changelog_reads` : Accusés de lecture
 - `templates` : Templates de procédures (super admin)
+- `chat_groups` : Groupes de salons (Espaces communs, Chambres, Opérationnel)
+- `chat_channels` : Salons de conversation rattachés à un groupe
+- `chat_messages` : Messages échangés (suppression désactivée, édition autorisée par l'auteur)
+- `chat_reads` : État de lecture par utilisateur/salon (pour compteurs non-lus)
 
 ## API Endpoints
 
@@ -79,6 +90,20 @@ Wikot fonctionne comme un système d'automatisation IF/THEN appliqué aux procé
 
 ### Categories, Suggestions, Changelog, Users, Hotels, Templates
 - CRUD complet disponible pour chaque ressource
+
+### Chat / Conversations
+- `GET /api/chat/overview` — Tous les groupes + salons + compteurs non-lus pour mon hôtel
+- `GET /api/chat/unread-total` — Compteur global des messages non lus
+- `POST /api/chat/groups` — Créer un groupe (admin/éditeur)
+- `PUT /api/chat/groups/:id` — Renommer un groupe
+- `DELETE /api/chat/groups/:id` — Supprimer un groupe (sauf groupes système)
+- `POST /api/chat/channels` — Créer un salon
+- `PUT /api/chat/channels/:id` — Modifier un salon
+- `DELETE /api/chat/channels/:id` — Supprimer un salon (et tous ses messages)
+- `GET /api/chat/channels/:id/messages?after=<id>` — Lister les messages (polling)
+- `POST /api/chat/channels/:id/messages` — Envoyer un message
+- `PUT /api/chat/messages/:id` — Éditer son propre message
+- `POST /api/chat/channels/:id/read` — Marquer le salon comme lu
 
 ## Prochaines étapes recommandées
 - [ ] Hashage des mots de passe (bcrypt/argon2)

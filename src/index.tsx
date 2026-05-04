@@ -24,7 +24,7 @@ const authMiddleware = async (c: any, next: any) => {
   try {
     const decoded = atob(sessionToken)
     const [userId] = decoded.split(':')
-    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
+    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, is_active FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
     if (!user) return c.json({ error: 'Utilisateur non trouvé' }, 401)
     c.set('user', user)
     await next()

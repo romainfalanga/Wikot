@@ -124,10 +124,18 @@ function stopProfilePolling() {
 async function syncUserProfile() {
   if (!state.token || !state.user) return;
   // Appel silencieux — pas de toast d'erreur si le réseau est en vrac
+  // cache: 'no-store' + timestamp pour éviter tout cache navigateur/CDN
   let data;
   try {
-    const res = await fetch(`${API}/auth/me`, {
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` }
+    const res = await fetch(`${API}/auth/me?_=${Date.now()}`, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${state.token}`,
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache'
+      }
     });
     if (res.status === 401) { logout(); return; }
     if (!res.ok) return;
@@ -138,8 +146,14 @@ async function syncUserProfile() {
   const fresh = data.user;
   const old = state.user;
 
+  // Coercion stricte en nombre pour éviter les comparaisons foireuses
+  // (D1 peut renvoyer 0/1 ou "0"/"1" selon la sérialisation)
+  const freshCanEdit = Number(fresh.can_edit_procedures) === 1 ? 1 : 0;
+  const oldCanEdit = Number(old.can_edit_procedures) === 1 ? 1 : 0;
+  const freshIsActive = Number(fresh.is_active);
+
   // Cas 1 : compte désactivé → déconnexion forcée
-  if (fresh.is_active === 0) {
+  if (freshIsActive === 0) {
     showToast('Votre compte a été désactivé. Déconnexion...', 'warning');
     setTimeout(() => logout(), 1500);
     return;
@@ -147,19 +161,39 @@ async function syncUserProfile() {
 
   // Cas 2 : changement de rôle ou de droits d'édition
   const roleChanged = fresh.role !== old.role;
-  const editRightsChanged = (fresh.can_edit_procedures || 0) !== (old.can_edit_procedures || 0);
+  const editRightsChanged = freshCanEdit !== oldCanEdit;
   const hotelChanged = fresh.hotel_id !== old.hotel_id;
 
   if (roleChanged || editRightsChanged || hotelChanged) {
-    state.user = { ...old, ...fresh };
+    // Remplacement complet (pas de merge) pour éviter de garder d'anciens champs fantômes
+    state.user = {
+      id: fresh.id,
+      hotel_id: fresh.hotel_id,
+      email: fresh.email,
+      name: fresh.name,
+      role: fresh.role,
+      can_edit_procedures: freshCanEdit,
+      is_active: freshIsActive
+    };
     localStorage.setItem('wikot_user', JSON.stringify(state.user));
+
+    // Si les droits d'édition ont été retirés et qu'on était dans une vue/action
+    // qui les requérait, on revient à une vue safe pour éviter les boutons fantômes.
+    if (editRightsChanged && freshCanEdit === 0) {
+      // Fermer un éventuel modal d'édition ouvert
+      try { closeModal(); } catch (e) {}
+      // Si on était en train d'éditer une procédure, revenir à la liste
+      if (state.currentView === 'procedures' && state.selectedProcedure && state.editingProcedure) {
+        state.editingProcedure = null;
+      }
+    }
 
     // Message adapté
     if (editRightsChanged) {
-      if (fresh.can_edit_procedures === 1) {
+      if (freshCanEdit === 1) {
         showToast('Vos droits ont été mis à jour : vous pouvez maintenant créer/modifier des procédures et gérer les salons.', 'success');
       } else {
-        showToast('Vos droits d\'édition ont été retirés.', 'info');
+        showToast('Vos droits d\'édition ont été retirés.', 'warning');
       }
     } else if (roleChanged) {
       showToast(`Votre rôle a été modifié : ${fresh.role}`, 'info');

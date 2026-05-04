@@ -90,19 +90,40 @@ async function login(email, password) {
 }
 
 function logout() {
+  // Stopper tous les pollings chat AVANT de nettoyer le state
+  try { stopChatPolling(); } catch (e) {}
+  try {
+    if (typeof chatGlobalPollingTimer !== 'undefined' && chatGlobalPollingTimer) {
+      clearInterval(chatGlobalPollingTimer);
+      chatGlobalPollingTimer = null;
+    }
+  } catch (e) {}
+
+  // Reset complet du state
   state.token = null;
   state.user = null;
-  localStorage.removeItem('wikot_token');
-  localStorage.removeItem('wikot_user');
-  state.currentView = 'dashboard'; // reset propre pour la prochaine connexion
-  // Stopper tous les pollings chat
-  stopChatPolling();
-  if (_chatGlobalTimer) { clearInterval(_chatGlobalTimer); _chatGlobalTimer = null; }
+  state.currentView = 'dashboard';
   state.selectedChannelId = null;
+  state.selectedProcedure = null;
   state.chatMessages = [];
   state.chatChannels = [];
   state.chatGroups = [];
   state.unreadChatTotal = 0;
+  state.chatLastLoadedAt = null;
+  state.procedures = [];
+  state.categories = [];
+  state.users = [];
+  state.hotels = [];
+  state.stats = {};
+  state.unreadRequired = 0;
+
+  // Nettoyer le localStorage
+  localStorage.removeItem('wikot_token');
+  localStorage.removeItem('wikot_user');
+
+  // Fermer le sidebar mobile s'il est ouvert
+  document.body.classList.remove('sidebar-open');
+
   render();
 }
 
@@ -301,16 +322,6 @@ function renderLoginPage() {
             <i class="fas fa-sign-in-alt mr-2"></i>Se connecter
           </button>
         </form>
-        <div class="mt-6 p-4 bg-navy-50 rounded-lg">
-          <p class="text-xs font-medium text-navy-500 mb-2"><i class="fas fa-info-circle mr-1"></i>Comptes de démonstration :</p>
-          <div class="space-y-1 text-xs text-navy-400">
-            <p><span class="font-mono bg-white px-1.5 py-0.5 rounded">romain@wikot.app</span> — Super Admin</p>
-            <p><span class="font-mono bg-white px-1.5 py-0.5 rounded">marie@grandparis.com</span> — Admin Hôtel</p>
-            <p><span class="font-mono bg-white px-1.5 py-0.5 rounded">sophie@grandparis.com</span> — Employé éditeur</p>
-            <p><span class="font-mono bg-white px-1.5 py-0.5 rounded">jean@grandparis.com</span> — Employé lecture seule</p>
-            <p class="text-navy-300 mt-1">Mot de passe : <span class="font-mono bg-white px-1.5 py-0.5 rounded">demo123</span></p>
-          </div>
-        </div>
       </div>
     </div>
   </div>`;

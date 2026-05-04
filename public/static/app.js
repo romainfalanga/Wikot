@@ -595,7 +595,7 @@ function renderMainLayout() {
         </div>
       </div>
 
-      <div id="main-content-container" class="flex-1 ${state.currentView === 'conversations' && state.selectedChannelId ? 'overflow-hidden' : 'p-4 md:p-6 lg:p-8 max-w-7xl mx-auto w-full mobile-content-padding'}">
+      <div id="main-content-container" class="flex-1 ${state.currentView === 'conversations' ? 'overflow-hidden w-full' : 'p-4 md:p-6 lg:p-8 max-w-7xl mx-auto w-full mobile-content-padding'}">
         ${renderCurrentView()}
       </div>
     </main>
@@ -2073,8 +2073,12 @@ function scrollChatToBottom() {
 }
 
 function autoResizeTextarea(el) {
+  // Pour la barre d'envoi du chat : plafond 128px
+  // Pour les textareas dans les modaux d'édition : plafond plus grand pour voir le contenu
   el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 128) + 'px';
+  const isInModal = !!el.closest('#modal-container');
+  const maxHeight = isInModal ? 400 : 128;
+  el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px';
 }
 
 // ============================================
@@ -2149,20 +2153,20 @@ function showCreateChannelModal(presetGroupId = null) {
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom du salon <span class="text-red-500">*</span></label>
         <input id="ch-name" type="text" required maxlength="60" placeholder="ex: chambre-301"
-          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
       </div>
 
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Description <span class="text-navy-400 font-normal text-xs">(facultatif)</span></label>
-        <textarea id="ch-description" rows="2" maxlength="200" placeholder="ex: Discussions liées à cette chambre"
-          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none resize-none"></textarea>
+        <textarea id="ch-description" rows="3" maxlength="200" oninput="autoResizeTextarea(this)" placeholder="ex: Discussions liées à cette chambre"
+          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none"></textarea>
       </div>
 
       <input type="hidden" id="ch-icon" value="fa-hashtag">
 
-      <div class="flex gap-2 justify-end pt-2">
-        <button type="button" onclick="closeModal()" class="px-4 py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
-        <button type="submit" class="px-4 py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">
+      <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
+        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">
           <i class="fas fa-check mr-1"></i>Créer
         </button>
       </div>
@@ -2221,23 +2225,23 @@ function showEditChannelModal(channelId) {
     <form onsubmit="event.preventDefault(); submitEditChannel(${channelId})">
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Groupe</label>
-        <select id="ch-group" class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+        <select id="ch-group" class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none bg-white">
           ${groups.map(g => `<option value="${g.id}" ${g.id === ch.group_id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
         </select>
       </div>
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom du salon</label>
         <input id="ch-name" type="text" required maxlength="60" value="${escapeHtml(ch.name)}"
-          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
       </div>
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Description</label>
-        <textarea id="ch-description" rows="2" maxlength="200"
-          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none resize-none">${escapeHtml(ch.description || '')}</textarea>
+        <textarea id="ch-description" rows="3" maxlength="200" oninput="autoResizeTextarea(this)"
+          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">${escapeHtml(ch.description || '')}</textarea>
       </div>
-      <div class="flex gap-2 justify-end pt-2">
-        <button type="button" onclick="closeModal()" class="px-4 py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
-        <button type="submit" class="px-4 py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
+      <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
+        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
       </div>
     </form>
   `);
@@ -2278,11 +2282,11 @@ function showEditGroupModal(groupId) {
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom du groupe</label>
         <input id="grp-name" type="text" required maxlength="60" value="${escapeHtml(g.name)}"
-          class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
       </div>
-      <div class="flex gap-2 justify-end pt-2">
-        <button type="button" onclick="closeModal()" class="px-4 py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
-        <button type="submit" class="px-4 py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
+      <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
+        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
       </div>
     </form>
   `);
@@ -2342,19 +2346,25 @@ function formatChatTime(iso) {
 function showModal(title, content) {
   const container = document.getElementById('modal-container');
   container.innerHTML = `
-  <div class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onclick="if(event.target===this)closeModal()">
-    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto fade-in">
-      <div class="flex items-center justify-between p-5 border-b border-gray-100 sticky top-0 bg-white rounded-t-2xl z-10">
-        <h3 class="text-lg font-semibold text-navy-800">${title}</h3>
-        <button onclick="closeModal()" class="w-8 h-8 rounded-lg bg-navy-50 hover:bg-navy-100 flex items-center justify-center text-navy-400 transition-colors">
-          <i class="fas fa-times text-sm"></i>
+  <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center sm:p-4 modal-overlay" onclick="if(event.target===this)closeModal()">
+    <div class="bg-white shadow-2xl w-full max-w-2xl modal-panel fade-in">
+      <div class="flex items-center justify-between p-4 sm:p-5 border-b border-gray-100 sticky top-0 bg-white z-10 modal-header">
+        <h3 class="text-base sm:text-lg font-semibold text-navy-800 truncate pr-3">${title}</h3>
+        <button onclick="closeModal()" class="w-9 h-9 rounded-lg bg-navy-50 hover:bg-navy-100 flex items-center justify-center text-navy-500 transition-colors shrink-0">
+          <i class="fas fa-times"></i>
         </button>
       </div>
-      <div class="p-5">
+      <div class="p-4 sm:p-5 modal-body">
         ${content}
       </div>
     </div>
   </div>`;
+  // Auto-resize toutes les textareas de saisie longue ouvertes dans le modal
+  setTimeout(() => {
+    document.querySelectorAll('#modal-container textarea[oninput*="autoResizeTextarea"]').forEach(t => {
+      try { autoResizeTextarea(t); } catch(e) {}
+    });
+  }, 30);
 }
 
 function closeModal() {
@@ -2376,29 +2386,29 @@ async function showProcedureForm(procedureId = null) {
         <div>
           <label class="block text-sm font-medium text-navy-600 mb-1">Titre de la procédure *</label>
           <input id="proc-title" type="text" required value="${proc?.title || ''}" placeholder="Ex: Check-in d'un client"
-            class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
         </div>
         <div>
           <label class="block text-sm font-medium text-navy-600 mb-1">Description</label>
-          <textarea id="proc-desc" rows="2" placeholder="Description courte de la procédure"
-            class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">${proc?.description || ''}</textarea>
+          <textarea id="proc-desc" rows="3" oninput="autoResizeTextarea(this)" placeholder="Description courte de la procédure"
+            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">${proc?.description || ''}</textarea>
         </div>
         <div>
           <label class="block text-sm font-medium text-navy-600 mb-1"><i class="fas fa-bolt text-brand-400 mr-1"></i>Déclencheur — Qu'est-ce qu'il se passe ? *</label>
           <input id="proc-trigger" type="text" required value="${proc?.trigger_event || ''}" placeholder="Ex: Un client arrive à la réception pour s'enregistrer"
-            class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label class="block text-sm font-medium text-navy-600 mb-1">Catégorie</label>
-            <select id="proc-category" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+            <select id="proc-category" class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 bg-white">
               <option value="">Sans catégorie</option>
               ${state.categories.map(c => `<option value="${c.id}" ${proc?.category_id == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
             </select>
           </div>
           <div>
             <label class="block text-sm font-medium text-navy-600 mb-1">Priorité</label>
-            <select id="proc-priority" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+            <select id="proc-priority" class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 bg-white">
               <option value="low" ${proc?.priority === 'low' ? 'selected' : ''}>Faible</option>
               <option value="normal" ${!proc || proc?.priority === 'normal' ? 'selected' : ''}>Normal</option>
               <option value="high" ${proc?.priority === 'high' ? 'selected' : ''}>Important</option>
@@ -2408,11 +2418,11 @@ async function showProcedureForm(procedureId = null) {
           <div>
             <label class="block text-sm font-medium text-navy-600 mb-1">Icône du déclencheur</label>
             <input id="proc-icon" type="text" value="${proc?.trigger_icon || 'fa-bolt'}" placeholder="fa-bolt"
-              class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+              class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
           </div>
           <div>
             <label class="block text-sm font-medium text-navy-600 mb-1">Statut</label>
-            <select id="proc-status" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+            <select id="proc-status" class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 bg-white">
               <option value="draft" ${!proc || proc?.status === 'draft' ? 'selected' : ''}>Brouillon</option>
               <option value="active" ${proc?.status === 'active' ? 'selected' : ''}>Active</option>
               <option value="archived" ${proc?.status === 'archived' ? 'selected' : ''}>Archivée</option>
@@ -2443,9 +2453,9 @@ async function showProcedureForm(procedureId = null) {
         </div>
       </div>
 
-      <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
-        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500 hover:text-navy-700 transition-colors">Annuler</button>
-        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
+      <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-4 border-t border-gray-100 sticky bottom-0 bg-white -mx-4 sm:-mx-5 px-4 sm:px-5 -mb-4 sm:-mb-5 pb-4 sm:pb-5 z-10">
+        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 text-sm font-medium text-navy-600 hover:text-navy-800 hover:bg-navy-50 rounded-lg transition-colors">Annuler</button>
+        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-3 sm:py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm">
           <i class="fas fa-save mr-1.5"></i>${proc ? 'Mettre à jour' : 'Créer la procédure'}
         </button>
       </div>
@@ -2461,24 +2471,33 @@ let conditionCounter = 0;
 function stepFieldHTML(index, step = null) {
   const id = stepCounter++;
   return `
-  <div class="bg-navy-50 rounded-lg p-3 step-field" data-step-id="${id}">
-    <div class="flex items-center gap-2 mb-2">
-      <span class="text-xs font-bold text-navy-400">Étape ${index + 1}</span>
-      <select class="step-type text-[10px] border border-navy-200 rounded px-1.5 py-0.5">
+  <div class="bg-navy-50 rounded-lg p-3 sm:p-4 step-field" data-step-id="${id}">
+    <div class="flex items-center gap-2 mb-3 flex-wrap">
+      <span class="text-sm font-bold text-navy-500">Étape ${index + 1}</span>
+      <select class="step-type form-input-mobile text-sm border border-navy-200 rounded px-2 py-1.5 bg-white">
         <option value="action" ${step?.step_type === 'action' || !step ? 'selected' : ''}>Action</option>
         <option value="check" ${step?.step_type === 'check' ? 'selected' : ''}>Vérification</option>
         <option value="notification" ${step?.step_type === 'notification' ? 'selected' : ''}>Notification</option>
         <option value="escalation" ${step?.step_type === 'escalation' ? 'selected' : ''}>Escalade</option>
         <option value="decision" ${step?.step_type === 'decision' ? 'selected' : ''}>Décision</option>
       </select>
-      <button type="button" onclick="this.closest('.step-field').remove()" class="ml-auto text-red-400 hover:text-red-600 text-xs"><i class="fas fa-trash"></i></button>
+      <button type="button" onclick="this.closest('.step-field').remove()" class="ml-auto text-red-400 hover:text-red-600 text-sm w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center"><i class="fas fa-trash"></i></button>
     </div>
-    <input type="text" class="step-title w-full border border-navy-200 rounded px-2 py-1.5 text-sm mb-1.5" placeholder="Titre de l'étape *" value="${step?.title || ''}" required>
-    <textarea class="step-desc w-full border border-navy-200 rounded px-2 py-1.5 text-xs" rows="1" placeholder="Description">${step?.description || ''}</textarea>
-    <textarea class="step-details w-full border border-navy-200 rounded px-2 py-1.5 text-xs mt-1" rows="1" placeholder="Détails / Instructions">${step?.details || ''}</textarea>
-    <div class="grid grid-cols-2 gap-1.5 mt-1.5">
-      <input type="text" class="step-warning border border-navy-200 rounded px-2 py-1 text-xs" placeholder="⚠️ Attention" value="${step?.warning || ''}">
-      <input type="text" class="step-tip border border-navy-200 rounded px-2 py-1 text-xs" placeholder="💡 Astuce" value="${step?.tip || ''}">
+    <label class="block text-xs font-medium text-navy-500 mb-1">Titre *</label>
+    <input type="text" class="step-title form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-3" placeholder="Titre de l'étape" value="${step?.title || ''}" required>
+    <label class="block text-xs font-medium text-navy-500 mb-1">Description</label>
+    <textarea class="step-desc form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-3" rows="3" oninput="autoResizeTextarea(this)" placeholder="Description courte">${step?.description || ''}</textarea>
+    <label class="block text-xs font-medium text-navy-500 mb-1">Détails / Instructions</label>
+    <textarea class="step-details form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-3" rows="4" oninput="autoResizeTextarea(this)" placeholder="Détails complets, instructions, script à dire...">${step?.details || ''}</textarea>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      <div>
+        <label class="block text-xs font-medium text-amber-600 mb-1">⚠️ Attention</label>
+        <input type="text" class="step-warning form-input-mobile w-full border border-amber-200 rounded-lg px-3 py-2.5 text-base bg-amber-50/30" placeholder="Point critique à ne pas oublier" value="${step?.warning || ''}">
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-emerald-600 mb-1">💡 Astuce</label>
+        <input type="text" class="step-tip form-input-mobile w-full border border-emerald-200 rounded-lg px-3 py-2.5 text-base bg-emerald-50/30" placeholder="Conseil ou bonne pratique" value="${step?.tip || ''}">
+      </div>
     </div>
   </div>`;
 }
@@ -2487,17 +2506,19 @@ function conditionFieldHTML(index, cond = null) {
   const id = conditionCounter++;
   const condSteps = cond?.steps || [];
   return `
-  <div class="bg-purple-50 rounded-lg p-3 condition-field border border-purple-100" data-cond-id="${id}">
-    <div class="flex items-center gap-2 mb-2">
-      <i class="fas fa-code-branch text-purple-500 text-xs"></i>
-      <span class="text-xs font-bold text-purple-600">Si en plus...</span>
-      <button type="button" onclick="this.closest('.condition-field').remove()" class="ml-auto text-red-400 hover:text-red-600 text-xs"><i class="fas fa-trash"></i></button>
+  <div class="bg-purple-50 rounded-lg p-3 sm:p-4 condition-field border border-purple-100" data-cond-id="${id}">
+    <div class="flex items-center gap-2 mb-3 flex-wrap">
+      <i class="fas fa-code-branch text-purple-500 text-sm"></i>
+      <span class="text-sm font-bold text-purple-600">Si en plus...</span>
+      <button type="button" onclick="this.closest('.condition-field').remove()" class="ml-auto text-red-400 hover:text-red-600 text-sm w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center"><i class="fas fa-trash"></i></button>
     </div>
-    <input type="text" class="cond-text w-full border border-purple-200 rounded px-2 py-1.5 text-sm mb-1.5" placeholder="Condition - Ex: Le client est un VIP *" value="${cond?.condition_text || ''}" required>
-    <textarea class="cond-desc w-full border border-purple-200 rounded px-2 py-1.5 text-xs mb-2" rows="1" placeholder="Description du cas">${cond?.description || ''}</textarea>
-    <div class="flex items-center justify-between mb-1.5">
-      <span class="text-[10px] font-semibold text-purple-500">Étapes spécifiques à ce cas</span>
-      <button type="button" onclick="addCondStepField(this)" class="text-[10px] text-purple-500 hover:text-purple-700"><i class="fas fa-plus mr-1"></i>Ajouter</button>
+    <label class="block text-xs font-medium text-purple-600 mb-1">Condition *</label>
+    <input type="text" class="cond-text form-input-mobile w-full border border-purple-200 rounded-lg px-3 py-2.5 text-base mb-3" placeholder="Ex: Le client est un VIP" value="${cond?.condition_text || ''}" required>
+    <label class="block text-xs font-medium text-purple-600 mb-1">Description du cas</label>
+    <textarea class="cond-desc form-input-mobile w-full border border-purple-200 rounded-lg px-3 py-2.5 text-base mb-3" rows="3" oninput="autoResizeTextarea(this)" placeholder="Décrivez ce cas particulier">${cond?.description || ''}</textarea>
+    <div class="flex items-center justify-between mb-2">
+      <span class="text-xs font-semibold text-purple-600">Étapes spécifiques à ce cas</span>
+      <button type="button" onclick="addCondStepField(this)" class="text-xs text-purple-600 hover:text-purple-800 font-medium px-2 py-1 rounded hover:bg-purple-100"><i class="fas fa-plus mr-1"></i>Ajouter</button>
     </div>
     <div class="cond-steps-container space-y-2">
       ${condSteps.map((s, i) => condStepFieldHTML(i, s)).join('')}
@@ -2507,13 +2528,13 @@ function conditionFieldHTML(index, cond = null) {
 
 function condStepFieldHTML(index, step = null) {
   return `
-  <div class="bg-white rounded p-2 cond-step-field border border-purple-100">
-    <div class="flex items-center gap-2 mb-1">
-      <span class="text-[10px] text-purple-400">Étape ${index + 1}</span>
-      <button type="button" onclick="this.closest('.cond-step-field').remove()" class="ml-auto text-red-400 hover:text-red-600 text-[10px]"><i class="fas fa-times"></i></button>
+  <div class="bg-white rounded-lg p-3 cond-step-field border border-purple-100">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-xs font-semibold text-purple-500">Étape ${index + 1}</span>
+      <button type="button" onclick="this.closest('.cond-step-field').remove()" class="ml-auto text-red-400 hover:text-red-600 w-7 h-7 rounded hover:bg-red-50 flex items-center justify-center"><i class="fas fa-times text-sm"></i></button>
     </div>
-    <input type="text" class="cstep-title w-full border border-navy-200 rounded px-2 py-1 text-xs mb-1" placeholder="Titre *" value="${step?.title || ''}">
-    <textarea class="cstep-desc w-full border border-navy-200 rounded px-2 py-1 text-[10px]" rows="1" placeholder="Description">${step?.description || ''}</textarea>
+    <input type="text" class="cstep-title form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-2" placeholder="Titre de l'étape" value="${step?.title || ''}">
+    <textarea class="cstep-desc form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base" rows="2" oninput="autoResizeTextarea(this)" placeholder="Description">${step?.description || ''}</textarea>
   </div>`;
 }
 

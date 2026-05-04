@@ -1087,6 +1087,48 @@ app.get('*', (c) => {
     }
     /* Texte tronqué multi-lignes utilitaire */
     .truncate-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+    /* === MODAL RESPONSIVE === */
+    /* Sur mobile : modal en bas, full width, hauteur quasi-totale (bottom-sheet style) */
+    /* Sur desktop : centré classique avec coins arrondis */
+    .modal-panel {
+      max-height: 95vh;
+      max-height: 95dvh;
+      display: flex;
+      flex-direction: column;
+      border-radius: 1rem 1rem 0 0;
+      overflow: hidden;
+    }
+    .modal-header { flex-shrink: 0; border-radius: 1rem 1rem 0 0; }
+    .modal-body { flex: 1 1 auto; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    @media (min-width: 640px) {
+      .modal-panel {
+        max-height: 90vh;
+        max-height: 90dvh;
+        border-radius: 1rem;
+      }
+      .modal-header { border-radius: 1rem 1rem 0 0; }
+    }
+
+    /* === INPUTS MOBILES === */
+    /* Empêche le zoom iOS quand on focus un champ : font-size minimum 16px */
+    .form-input-mobile {
+      font-size: 16px !important;
+      line-height: 1.5;
+      min-height: 44px;            /* taille tactile recommandée Apple/Google */
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    textarea.form-input-mobile {
+      min-height: 80px;
+      line-height: 1.5;
+      resize: vertical;
+    }
+    /* Sur desktop on peut revenir à un texte un peu plus tassé pour densité */
+    @media (min-width: 1024px) {
+      .form-input-mobile { font-size: 14px !important; min-height: 38px; }
+      textarea.form-input-mobile { min-height: 70px; }
+    }
   </style>
 </head>
 <body class="bg-gray-50 min-h-screen">

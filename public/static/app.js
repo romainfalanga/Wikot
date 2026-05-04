@@ -29,7 +29,13 @@ let state = {
   selectedChannelId: null,
   chatMessages: [],
   chatPollingTimer: null,
-  chatLastMessageId: null
+  chatLastMessageId: null,
+  // Hotel Info
+  hotelInfoCategories: [],
+  hotelInfoItems: [],
+  hotelInfoSearchQuery: '',
+  hotelInfoActiveCategory: null,
+  hotelInfoLoaded: false
 };
 
 // ============================================
@@ -472,6 +478,7 @@ function renderMainLayout() {
       { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
+      { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
@@ -481,6 +488,7 @@ function renderMainLayout() {
     menuItems = [
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
+      { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
     ];
@@ -494,6 +502,7 @@ function renderMainLayout() {
     dashboard: 'Tableau de bord',
     procedures: 'Procédures',
     search: 'Rechercher',
+    info: 'Informations',
     conversations: 'Conversations',
     changelog: 'Historique',
     users: 'Utilisateurs',
@@ -508,11 +517,11 @@ function renderMainLayout() {
   if (isSuperAdmin) {
     bottomNavItems = menuItems; // 3 items, tous tiennent
   } else if (isAdmin) {
-    // Admin : Dashboard, Procédures, Conversations, Recherche, Historique (Users dispo via burger)
-    bottomNavItems = menuItems.filter(i => ['dashboard','procedures','conversations','search','changelog'].includes(i.id));
+    // Admin : 5 items prioritaires en bottom nav (le reste accessible via burger)
+    bottomNavItems = menuItems.filter(i => ['procedures','info','conversations','search','changelog'].includes(i.id));
   } else {
-    // Employé : 4 items, tous tiennent
-    bottomNavItems = menuItems;
+    // Employé : 5 items, tous tiennent
+    bottomNavItems = menuItems.filter(i => ['procedures','info','conversations','search','changelog'].includes(i.id));
   }
 
   return `
@@ -689,6 +698,7 @@ function renderCurrentView() {
     case 'dashboard': return renderDashboard();
     case 'procedures': return state.selectedProcedure ? renderProcedureDetail() : renderProceduresList();
     case 'search': return renderSearchView();
+    case 'info': return renderHotelInfoView();
     case 'changelog': return renderChangelogView();
     case 'conversations': return renderConversationsView();
     case 'users': return renderUsersView();
@@ -1553,6 +1563,373 @@ async function deleteUser(id, name) {
     await loadData();
     render();
     showToast(`Compte de ${name} supprimé`, 'success');
+  }
+}
+
+// ============================================
+// HOTEL INFO — Page Informations
+// ============================================
+async function loadHotelInfo() {
+  const data = await api('/hotel-info');
+  if (data) {
+    state.hotelInfoCategories = data.categories || [];
+    state.hotelInfoItems = data.items || [];
+    state.hotelInfoLoaded = true;
+  }
+}
+
+function renderHotelInfoView() {
+  // Charger en arrière-plan si pas encore fait
+  if (!state.hotelInfoLoaded) {
+    loadHotelInfo().then(() => render());
+    return `
+    <div class="fade-in flex items-center justify-center py-20">
+      <div class="text-center">
+        <i class="fas fa-circle-notch fa-spin text-3xl text-brand-400 mb-3"></i>
+        <p class="text-navy-500 text-sm">Chargement des informations...</p>
+      </div>
+    </div>`;
+  }
+
+  const isAdmin = state.user && state.user.role === 'admin';
+  const isSuperAdmin = state.user && state.user.role === 'super_admin';
+  const canEditInfo = isAdmin || isSuperAdmin;
+  const cats = state.hotelInfoCategories || [];
+  const items = state.hotelInfoItems || [];
+  const q = (state.hotelInfoSearchQuery || '').trim().toLowerCase();
+
+  // Filtre items selon recherche
+  const filteredItems = q
+    ? items.filter(it => (it.title || '').toLowerCase().includes(q) || (it.content || '').toLowerCase().includes(q))
+    : items;
+
+  // Si recherche active : on affiche une liste à plat des résultats
+  // Sinon : groupé par catégorie en accordéon
+  return `
+  <div class="fade-in">
+    <!-- Header -->
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+      <div class="min-w-0">
+        <h2 class="text-xl sm:text-2xl font-bold text-navy-900">
+          <i class="fas fa-circle-info mr-2 text-brand-400"></i>Informations
+        </h2>
+        <p class="text-navy-500 text-sm mt-1">Tout ce qu'il faut savoir sur l'hôtel, à portée de main.</p>
+      </div>
+      ${canEditInfo ? `
+        <div class="flex flex-wrap gap-2 shrink-0">
+          <button onclick="showHotelInfoCategoryModal()" class="bg-white border border-navy-200 hover:bg-navy-50 text-navy-700 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
+            <i class="fas fa-folder-plus"></i><span class="hidden sm:inline">Catégorie</span>
+          </button>
+          <button onclick="showHotelInfoItemModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shadow">
+            <i class="fas fa-plus"></i><span>Nouvelle info</span>
+          </button>
+        </div>
+      ` : ''}
+    </div>
+
+    <!-- Barre de recherche sticky -->
+    <div class="sticky top-0 z-10 bg-gray-50 -mx-4 md:-mx-6 lg:-mx-8 px-4 md:px-6 lg:px-8 py-3 mb-4 border-b border-gray-200">
+      <div class="relative max-w-2xl">
+        <i class="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-navy-400 text-sm"></i>
+        <input id="hotel-info-search" type="text" value="${escapeHtml(state.hotelInfoSearchQuery || '')}"
+          oninput="state.hotelInfoSearchQuery = this.value; renderHotelInfoBody()"
+          placeholder="Rechercher une info (parking, petit-déjeuner, jacuzzi…)"
+          class="form-input-mobile w-full pl-10 pr-10 py-2.5 border border-navy-200 rounded-xl outline-none focus:ring-2 focus:ring-brand-400 bg-white shadow-sm">
+        ${q ? `<button onclick="state.hotelInfoSearchQuery=''; document.getElementById('hotel-info-search').value=''; renderHotelInfoBody()" class="absolute right-3 top-1/2 -translate-y-1/2 text-navy-400 hover:text-navy-700"><i class="fas fa-xmark"></i></button>` : ''}
+      </div>
+    </div>
+
+    <!-- Corps -->
+    <div id="hotel-info-body">
+      ${renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo)}
+    </div>
+  </div>`;
+}
+
+function renderHotelInfoBody() {
+  // Refresh seulement le corps sans tout re-rendre (recherche live, ouverture/fermeture catégories)
+  const body = document.getElementById('hotel-info-body');
+  if (!body) { render(); return; }
+  const cats = state.hotelInfoCategories || [];
+  const items = state.hotelInfoItems || [];
+  const q = (state.hotelInfoSearchQuery || '').trim().toLowerCase();
+  const filteredItems = q
+    ? items.filter(it => (it.title || '').toLowerCase().includes(q) || (it.content || '').toLowerCase().includes(q))
+    : items;
+  const canEditInfo = state.user && (state.user.role === 'admin' || state.user.role === 'super_admin');
+  body.innerHTML = renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo);
+}
+
+function renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo) {
+  if (filteredItems.length === 0 && q) {
+    return `
+    <div class="bg-white rounded-xl border border-gray-200 p-8 text-center">
+      <i class="fas fa-magnifying-glass text-4xl text-navy-200 mb-3"></i>
+      <p class="text-navy-600 font-semibold">Aucun résultat pour « ${escapeHtml(q)} »</p>
+      <p class="text-navy-400 text-sm mt-1">Essayez avec un autre terme.</p>
+    </div>`;
+  }
+
+  if (cats.length === 0 && filteredItems.length === 0) {
+    return `
+    <div class="bg-white rounded-xl border border-gray-200 p-8 text-center">
+      <i class="fas fa-circle-info text-4xl text-navy-200 mb-3"></i>
+      <p class="text-navy-600 font-semibold">Aucune information renseignée pour le moment.</p>
+      ${canEditInfo ? '<p class="text-navy-400 text-sm mt-1">Cliquez sur « Nouvelle info » pour commencer.</p>' : ''}
+    </div>`;
+  }
+
+  // Mode recherche : liste à plat avec catégorie en badge
+  if (q) {
+    return `
+    <div class="space-y-3">
+      ${filteredItems.map(it => {
+        const cat = cats.find(c => c.id === it.category_id);
+        return renderHotelInfoItemCard(it, cat, canEditInfo, true);
+      }).join('')}
+    </div>`;
+  }
+
+  // Mode normal : groupé par catégorie en accordéon
+  const itemsByCat = {};
+  filteredItems.forEach(it => {
+    const cid = it.category_id || 0;
+    if (!itemsByCat[cid]) itemsByCat[cid] = [];
+    itemsByCat[cid].push(it);
+  });
+
+  const orphanItems = itemsByCat[0] || [];
+
+  return `
+  <div class="space-y-3">
+    ${cats.map(cat => {
+      const catItems = itemsByCat[cat.id] || [];
+      const isOpen = state.hotelInfoActiveCategory === cat.id;
+      return `
+      <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <button onclick="toggleHotelInfoCategory(${cat.id})" class="w-full flex items-center gap-3 px-4 sm:px-5 py-4 hover:bg-navy-50 transition-colors text-left">
+          <div class="w-10 h-10 rounded-lg flex items-center justify-center text-white shrink-0" style="background:${cat.color || '#3B82F6'}">
+            <i class="fas ${cat.icon || 'fa-circle-info'}"></i>
+          </div>
+          <div class="flex-1 min-w-0">
+            <h3 class="font-semibold text-navy-800 text-sm sm:text-base">${escapeHtml(cat.name)}</h3>
+            <p class="text-xs text-navy-500">${catItems.length} info${catItems.length > 1 ? 's' : ''}</p>
+          </div>
+          ${canEditInfo ? `
+            <button onclick="event.stopPropagation(); showHotelInfoCategoryModal(${cat.id})" title="Renommer la catégorie"
+              class="w-8 h-8 rounded-lg hover:bg-white text-navy-400 hover:text-navy-700 flex items-center justify-center">
+              <i class="fas fa-pen text-xs"></i>
+            </button>
+            <button onclick="event.stopPropagation(); deleteHotelInfoCategory(${cat.id})" title="Supprimer"
+              class="w-8 h-8 rounded-lg hover:bg-white text-navy-400 hover:text-red-500 flex items-center justify-center">
+              <i class="fas fa-trash text-xs"></i>
+            </button>
+          ` : ''}
+          <i class="fas fa-chevron-${isOpen ? 'up' : 'down'} text-navy-400 text-sm ml-1"></i>
+        </button>
+        ${isOpen ? `
+          <div class="border-t border-gray-100 p-3 sm:p-4 space-y-2 bg-gray-50">
+            ${catItems.length === 0 ? `
+              <p class="text-sm text-navy-400 italic px-2 py-3">Aucune info dans cette catégorie.</p>
+            ` : catItems.map(it => renderHotelInfoItemCard(it, cat, canEditInfo, false)).join('')}
+            ${canEditInfo ? `
+              <button onclick="showHotelInfoItemModal(null, ${cat.id})" class="w-full mt-2 px-3 py-2 border-2 border-dashed border-navy-200 hover:border-brand-400 hover:bg-brand-50 text-navy-500 hover:text-brand-600 rounded-lg text-sm font-medium transition-colors">
+                <i class="fas fa-plus mr-1"></i>Ajouter une info dans « ${escapeHtml(cat.name)} »
+              </button>
+            ` : ''}
+          </div>
+        ` : ''}
+      </div>`;
+    }).join('')}
+
+    ${orphanItems.length > 0 ? `
+      <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div class="px-4 sm:px-5 py-3 border-b border-gray-100 bg-navy-50">
+          <h3 class="text-sm font-semibold text-navy-700"><i class="fas fa-folder-open mr-2 text-navy-400"></i>Sans catégorie</h3>
+        </div>
+        <div class="p-3 sm:p-4 space-y-2">
+          ${orphanItems.map(it => renderHotelInfoItemCard(it, null, canEditInfo, false)).join('')}
+        </div>
+      </div>
+    ` : ''}
+  </div>`;
+}
+
+function renderHotelInfoItemCard(item, category, canEditInfo, showCategoryBadge) {
+  return `
+  <div class="bg-white rounded-lg border border-gray-200 hover:border-brand-300 transition-colors">
+    <div class="px-4 py-3 flex items-start gap-3">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 flex-wrap mb-1">
+          <h4 class="font-semibold text-navy-800 text-sm sm:text-base">${escapeHtml(item.title)}</h4>
+          ${showCategoryBadge && category ? `
+            <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold" style="background:${category.color || '#3B82F6'}20; color:${category.color || '#3B82F6'}">
+              <i class="fas ${category.icon || 'fa-circle-info'} mr-1"></i>${escapeHtml(category.name)}
+            </span>
+          ` : ''}
+        </div>
+        ${item.content ? `<div class="text-sm text-navy-600 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(item.content)}</div>` : ''}
+      </div>
+      ${canEditInfo ? `
+        <div class="flex items-center gap-1 shrink-0">
+          <button onclick="showHotelInfoItemModal(${item.id})" title="Modifier"
+            class="w-8 h-8 rounded-lg hover:bg-navy-50 text-navy-400 hover:text-navy-700 flex items-center justify-center">
+            <i class="fas fa-pen text-xs"></i>
+          </button>
+          <button onclick="deleteHotelInfoItem(${item.id})" title="Supprimer"
+            class="w-8 h-8 rounded-lg hover:bg-red-50 text-navy-400 hover:text-red-500 flex items-center justify-center">
+            <i class="fas fa-trash text-xs"></i>
+          </button>
+        </div>
+      ` : ''}
+    </div>
+  </div>`;
+}
+
+// Mise en forme légère du contenu : transforme **gras**, ⚠️/💡/📧 en couleurs, garde retours ligne
+function formatHotelInfoContent(text) {
+  let html = escapeHtml(text);
+  // **gras**
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong class="font-semibold text-navy-800">$1</strong>');
+  // Lignes commençant par • ou - → puces stylées
+  html = html.replace(/^(\s*[•\-]\s+)(.+)$/gm, '<span class="block pl-4 relative"><span class="absolute left-0 text-brand-400">•</span>$2</span>');
+  return html;
+}
+
+function toggleHotelInfoCategory(catId) {
+  state.hotelInfoActiveCategory = state.hotelInfoActiveCategory === catId ? null : catId;
+  renderHotelInfoBody();
+}
+
+// Modaux édition catégorie
+function showHotelInfoCategoryModal(catId = null) {
+  const cat = catId ? (state.hotelInfoCategories || []).find(c => c.id === catId) : null;
+  const isEdit = !!cat;
+  showModal(isEdit ? 'Renommer la catégorie' : 'Nouvelle catégorie', `
+    <form onsubmit="event.preventDefault(); submitHotelInfoCategory(${catId || 'null'})">
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom de la catégorie *</label>
+        <input id="info-cat-name" type="text" required maxlength="60" value="${cat ? escapeHtml(cat.name) : ''}"
+          placeholder="Ex: Restauration, Loisirs..."
+          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
+      </div>
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div>
+          <label class="block text-sm font-medium text-navy-600 mb-1.5">Icône (Font Awesome)</label>
+          <input id="info-cat-icon" type="text" value="${cat ? cat.icon || 'fa-circle-info' : 'fa-circle-info'}"
+            placeholder="fa-circle-info"
+            class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-navy-600 mb-1.5">Couleur</label>
+          <input id="info-cat-color" type="color" value="${cat ? cat.color || '#3B82F6' : '#3B82F6'}"
+            class="w-full h-11 border border-navy-200 rounded-lg cursor-pointer">
+        </div>
+      </div>
+      <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
+        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+      </div>
+    </form>
+  `);
+}
+
+async function submitHotelInfoCategory(catId) {
+  const name = document.getElementById('info-cat-name').value.trim();
+  const icon = document.getElementById('info-cat-icon').value.trim() || 'fa-circle-info';
+  const color = document.getElementById('info-cat-color').value || '#3B82F6';
+  if (!name) return;
+
+  const path = catId ? `/hotel-info/categories/${catId}` : '/hotel-info/categories';
+  const method = catId ? 'PUT' : 'POST';
+  const data = await api(path, { method, body: JSON.stringify({ name, icon, color }) });
+  if (data) {
+    closeModal();
+    showToast(catId ? 'Catégorie modifiée' : 'Catégorie créée', 'success');
+    await loadHotelInfo();
+    render();
+  }
+}
+
+async function deleteHotelInfoCategory(catId) {
+  const cat = (state.hotelInfoCategories || []).find(c => c.id === catId);
+  if (!cat) return;
+  if (!confirm(`Supprimer la catégorie « ${cat.name} » ? Les infos qu'elle contient ne seront pas supprimées mais deviendront sans catégorie.`)) return;
+  const data = await api(`/hotel-info/categories/${catId}`, { method: 'DELETE' });
+  if (data) {
+    showToast('Catégorie supprimée', 'success');
+    await loadHotelInfo();
+    render();
+  }
+}
+
+// Modaux édition item
+function showHotelInfoItemModal(itemId = null, presetCategoryId = null) {
+  const item = itemId ? (state.hotelInfoItems || []).find(i => i.id === itemId) : null;
+  const isEdit = !!item;
+  const cats = state.hotelInfoCategories || [];
+  const currentCatId = item ? item.category_id : presetCategoryId;
+
+  showModal(isEdit ? 'Modifier l\'info' : 'Nouvelle info', `
+    <form onsubmit="event.preventDefault(); submitHotelInfoItem(${itemId || 'null'})">
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Titre *</label>
+        <input id="info-item-title" type="text" required maxlength="120" value="${item ? escapeHtml(item.title) : ''}"
+          placeholder="Ex: Parking, Petit-déjeuner..."
+          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
+      </div>
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Catégorie</label>
+        <select id="info-item-cat" class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400 bg-white">
+          <option value="">Sans catégorie</option>
+          ${cats.map(c => `<option value="${c.id}" ${c.id === currentCatId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Contenu</label>
+        <textarea id="info-item-content" rows="8" oninput="autoResizeTextarea(this)" placeholder="Toutes les infos utiles : horaires, tarifs, conditions, etc.&#10;&#10;Astuces : utilisez **gras** pour mettre en valeur, • pour des puces."
+          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400">${item ? escapeHtml(item.content || '') : ''}</textarea>
+        <p class="text-xs text-navy-400 mt-1">Vous pouvez utiliser **gras** et des puces (• ou -)</p>
+      </div>
+      <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2 sticky bottom-0 bg-white -mx-4 sm:-mx-5 px-4 sm:px-5 -mb-4 sm:-mb-5 pb-4 sm:pb-5 border-t border-gray-100">
+        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
+        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+      </div>
+    </form>
+  `);
+}
+
+async function submitHotelInfoItem(itemId) {
+  const title = document.getElementById('info-item-title').value.trim();
+  const cat = document.getElementById('info-item-cat').value;
+  const content = document.getElementById('info-item-content').value;
+  if (!title) return;
+
+  const body = {
+    title,
+    category_id: cat ? parseInt(cat) : null,
+    content
+  };
+  const path = itemId ? `/hotel-info/items/${itemId}` : '/hotel-info/items';
+  const method = itemId ? 'PUT' : 'POST';
+  const data = await api(path, { method, body: JSON.stringify(body) });
+  if (data) {
+    closeModal();
+    showToast(itemId ? 'Info modifiée' : 'Info créée', 'success');
+    await loadHotelInfo();
+    render();
+  }
+}
+
+async function deleteHotelInfoItem(itemId) {
+  const item = (state.hotelInfoItems || []).find(i => i.id === itemId);
+  if (!item) return;
+  if (!confirm(`Supprimer l'info « ${item.title} » ?`)) return;
+  const data = await api(`/hotel-info/items/${itemId}`, { method: 'DELETE' });
+  if (data) {
+    showToast('Info supprimée', 'success');
+    await loadHotelInfo();
+    render();
   }
 }
 

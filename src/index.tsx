@@ -270,7 +270,6 @@ app.get('/api/procedures', authMiddleware, async (c) => {
   if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
   const hotelId = c.req.query('hotel_id') || user.hotel_id
   const categoryId = c.req.query('category_id')
-  const status = c.req.query('status')
   const search = c.req.query('search')
 
   let query = `SELECT p.*, c.name as category_name, c.icon as category_icon, c.color as category_color, 
@@ -285,7 +284,6 @@ app.get('/api/procedures', authMiddleware, async (c) => {
   const params: any[] = [hotelId]
 
   if (categoryId) { query += ' AND p.category_id = ?'; params.push(categoryId) }
-  if (status) { query += ' AND p.status = ?'; params.push(status) }
   if (search) { query += ' AND (p.title LIKE ? OR p.trigger_event LIKE ? OR p.description LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`) }
 
   query += ' ORDER BY p.priority DESC, c.sort_order, p.title'
@@ -309,11 +307,25 @@ app.get('/api/procedures/:id', authMiddleware, async (c) => {
 
   if (!procedure) return c.json({ error: 'Procédure non trouvée' }, 404)
 
-  const steps = await c.env.DB.prepare('SELECT * FROM steps WHERE procedure_id = ? ORDER BY step_number').bind(id).all()
+  // Steps avec linked_procedure (titre de la procédure liée)
+  const steps = await c.env.DB.prepare(`
+    SELECT s.*, lp.title as linked_procedure_title
+    FROM steps s
+    LEFT JOIN procedures lp ON s.linked_procedure_id = lp.id
+    WHERE s.procedure_id = ?
+    ORDER BY s.step_number
+  `).bind(id).all()
+
   const conditions = await c.env.DB.prepare('SELECT * FROM conditions WHERE procedure_id = ? ORDER BY sort_order').bind(id).all()
 
   const conditionsWithSteps = await Promise.all((conditions.results as any[]).map(async (cond: any) => {
-    const condSteps = await c.env.DB.prepare('SELECT * FROM condition_steps WHERE condition_id = ? ORDER BY step_number').bind(cond.id).all()
+    const condSteps = await c.env.DB.prepare(`
+      SELECT cs.*, lp.title as linked_procedure_title
+      FROM condition_steps cs
+      LEFT JOIN procedures lp ON cs.linked_procedure_id = lp.id
+      WHERE cs.condition_id = ?
+      ORDER BY cs.step_number
+    `).bind(cond.id).all()
     return { ...cond, steps: condSteps.results }
   }))
 
@@ -326,20 +338,23 @@ app.post('/api/procedures', authMiddleware, async (c) => {
   const body = await c.req.json()
   const hotelId = user.role === 'super_admin' ? (body.hotel_id || user.hotel_id) : user.hotel_id
 
+  // Note : trigger_icon (anciennement supprimé de l'UI) a default 'fa-bolt' en DB
+  // Note : status (anciennement supprimé de l'UI) → on force 'active' (toutes les procédures sont actives)
   const result = await c.env.DB.prepare(
-    `INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, trigger_icon, trigger_conditions, priority, status, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).bind(hotelId, body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_icon || 'fa-bolt', body.trigger_conditions || null, body.priority || 'normal', body.status || 'draft', user.id).run()
+    `INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, trigger_conditions, priority, status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)`
+  ).bind(hotelId, body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_conditions || null, body.priority || 'normal', user.id).run()
 
   const procId = result.meta.last_row_id
 
-  // Insert steps
+  // Insert steps : on utilise le champ "content" (fusion description + détails + warning + tip)
+  // step_type est forcé à 'action' (champ supprimé de l'UI)
   if (body.steps && Array.isArray(body.steps)) {
     for (const step of body.steps) {
       await c.env.DB.prepare(
-        `INSERT INTO steps (procedure_id, step_number, title, description, step_type, details, warning, tip, duration_minutes, is_optional, condition_text)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(procId, step.step_number, step.title, step.description || null, step.step_type || 'action', step.details || null, step.warning || null, step.tip || null, step.duration_minutes || null, step.is_optional ? 1 : 0, step.condition_text || null).run()
+        `INSERT INTO steps (procedure_id, step_number, title, content, linked_procedure_id, step_type, duration_minutes, is_optional, condition_text)
+         VALUES (?, ?, ?, ?, ?, 'action', ?, ?, ?)`
+      ).bind(procId, step.step_number, step.title, step.content || null, step.linked_procedure_id || null, step.duration_minutes || null, step.is_optional ? 1 : 0, step.condition_text || null).run()
     }
   }
 
@@ -353,9 +368,9 @@ app.post('/api/procedures', authMiddleware, async (c) => {
       if (cond.steps && Array.isArray(cond.steps)) {
         for (const step of cond.steps) {
           await c.env.DB.prepare(
-            `INSERT INTO condition_steps (condition_id, step_number, title, description, step_type, details, warning, tip, duration_minutes, is_optional)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          ).bind(condResult.meta.last_row_id, step.step_number, step.title, step.description || null, step.step_type || 'action', step.details || null, step.warning || null, step.tip || null, step.duration_minutes || null, step.is_optional ? 1 : 0).run()
+            `INSERT INTO condition_steps (condition_id, step_number, title, content, linked_procedure_id, step_type, duration_minutes, is_optional)
+             VALUES (?, ?, ?, ?, ?, 'action', ?, ?)`
+          ).bind(condResult.meta.last_row_id, step.step_number, step.title, step.content || null, step.linked_procedure_id || null, step.duration_minutes || null, step.is_optional ? 1 : 0).run()
         }
       }
     }
@@ -375,18 +390,19 @@ app.put('/api/procedures/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json()
 
+  // Status reste 'active' (champ supprimé de l'UI)
   await c.env.DB.prepare(
-    `UPDATE procedures SET category_id = ?, title = ?, description = ?, trigger_event = ?, trigger_icon = ?, trigger_conditions = ?, priority = ?, status = ?, version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-  ).bind(body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_icon || 'fa-bolt', body.trigger_conditions || null, body.priority || 'normal', body.status || 'draft', id).run()
+    `UPDATE procedures SET category_id = ?, title = ?, description = ?, trigger_event = ?, trigger_conditions = ?, priority = ?, status = 'active', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_conditions || null, body.priority || 'normal', id).run()
 
-  // Re-create steps
+  // Re-create steps avec content + linked_procedure_id
   if (body.steps) {
     await c.env.DB.prepare('DELETE FROM steps WHERE procedure_id = ?').bind(id).run()
     for (const step of body.steps) {
       await c.env.DB.prepare(
-        `INSERT INTO steps (procedure_id, step_number, title, description, step_type, details, warning, tip, duration_minutes, is_optional, condition_text)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(id, step.step_number, step.title, step.description || null, step.step_type || 'action', step.details || null, step.warning || null, step.tip || null, step.duration_minutes || null, step.is_optional ? 1 : 0, step.condition_text || null).run()
+        `INSERT INTO steps (procedure_id, step_number, title, content, linked_procedure_id, step_type, duration_minutes, is_optional, condition_text)
+         VALUES (?, ?, ?, ?, ?, 'action', ?, ?, ?)`
+      ).bind(id, step.step_number, step.title, step.content || null, step.linked_procedure_id || null, step.duration_minutes || null, step.is_optional ? 1 : 0, step.condition_text || null).run()
     }
   }
 
@@ -406,9 +422,9 @@ app.put('/api/procedures/:id', authMiddleware, async (c) => {
       if (cond.steps && Array.isArray(cond.steps)) {
         for (const step of cond.steps) {
           await c.env.DB.prepare(
-            `INSERT INTO condition_steps (condition_id, step_number, title, description, step_type, details, warning, tip, duration_minutes, is_optional)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          ).bind(condResult.meta.last_row_id, step.step_number, step.title, step.description || null, step.step_type || 'action', step.details || null, step.warning || null, step.tip || null, step.duration_minutes || null, step.is_optional ? 1 : 0).run()
+            `INSERT INTO condition_steps (condition_id, step_number, title, content, linked_procedure_id, step_type, duration_minutes, is_optional)
+             VALUES (?, ?, ?, ?, ?, 'action', ?, ?)`
+          ).bind(condResult.meta.last_row_id, step.step_number, step.title, step.content || null, step.linked_procedure_id || null, step.duration_minutes || null, step.is_optional ? 1 : 0).run()
         }
       }
     }
@@ -961,6 +977,152 @@ app.post('/api/chat/channels/:id/read', authMiddleware, async (c) => {
       last_read_at = CURRENT_TIMESTAMP
   `).bind(user.id, id, lastId).run()
 
+  return c.json({ success: true })
+})
+
+// ============================================
+// HOTEL INFO API
+// ============================================
+function getUserHotelId(c: any) {
+  const user = c.get('user')
+  if (!user) return null
+  // Pour super_admin : on peut filtrer via query param ?hotel_id=
+  if (user.role === 'super_admin') {
+    const q = c.req.query('hotel_id')
+    return q ? parseInt(q) : null
+  }
+  return user.hotel_id || null
+}
+
+// GET toutes les catégories + items d'un hôtel
+app.get('/api/hotel-info', authMiddleware, async (c) => {
+  const { env } = c
+  const hotelId = getUserHotelId(c)
+  if (!hotelId) return c.json({ categories: [], items: [] })
+
+  const cats = await env.DB.prepare(`
+    SELECT id, name, icon, color, sort_order
+    FROM hotel_info_categories
+    WHERE hotel_id = ?
+    ORDER BY sort_order ASC, id ASC
+  `).bind(hotelId).all()
+
+  const items = await env.DB.prepare(`
+    SELECT id, category_id, title, content, sort_order, updated_at
+    FROM hotel_info_items
+    WHERE hotel_id = ?
+    ORDER BY sort_order ASC, id ASC
+  `).bind(hotelId).all()
+
+  return c.json({ categories: cats.results || [], items: items.results || [] })
+})
+
+// Recherche dans les infos
+app.get('/api/hotel-info/search', authMiddleware, async (c) => {
+  const { env } = c
+  const hotelId = getUserHotelId(c)
+  const q = (c.req.query('q') || '').trim()
+  if (!hotelId || !q) return c.json({ results: [] })
+
+  const like = `%${q}%`
+  const results = await env.DB.prepare(`
+    SELECT i.id, i.category_id, i.title, i.content, c.name as category_name, c.icon as category_icon, c.color as category_color
+    FROM hotel_info_items i
+    LEFT JOIN hotel_info_categories c ON c.id = i.category_id
+    WHERE i.hotel_id = ? AND (i.title LIKE ? OR i.content LIKE ?)
+    ORDER BY i.sort_order ASC
+    LIMIT 50
+  `).bind(hotelId, like, like).all()
+
+  return c.json({ results: results.results || [] })
+})
+
+// POST nouvelle catégorie (admin seulement)
+app.post('/api/hotel-info/categories', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  const hotelId = user.role === 'super_admin' ? parseInt(c.req.query('hotel_id') || '0') : user.hotel_id
+  if (!hotelId) return c.json({ error: 'Aucun hôtel' }, 400)
+
+  const { name, icon, color, sort_order } = await c.req.json()
+  if (!name) return c.json({ error: 'Nom requis' }, 400)
+
+  const r = await c.env.DB.prepare(`
+    INSERT INTO hotel_info_categories (hotel_id, name, icon, color, sort_order)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(hotelId, name, icon || 'fa-circle-info', color || '#3B82F6', sort_order || 0).run()
+
+  return c.json({ id: r.meta.last_row_id, success: true })
+})
+
+// PUT modifier catégorie
+app.put('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  const id = parseInt(c.req.param('id'))
+  const { name, icon, color, sort_order } = await c.req.json()
+
+  await c.env.DB.prepare(`
+    UPDATE hotel_info_categories
+    SET name = COALESCE(?, name), icon = COALESCE(?, icon), color = COALESCE(?, color), sort_order = COALESCE(?, sort_order)
+    WHERE id = ?
+  `).bind(name, icon, color, sort_order, id).run()
+
+  return c.json({ success: true })
+})
+
+// DELETE catégorie (les items deviennent sans catégorie)
+app.delete('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  const id = parseInt(c.req.param('id'))
+
+  await c.env.DB.prepare(`DELETE FROM hotel_info_categories WHERE id = ?`).bind(id).run()
+  return c.json({ success: true })
+})
+
+// POST nouvel item (admin seulement)
+app.post('/api/hotel-info/items', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  const hotelId = user.role === 'super_admin' ? parseInt(c.req.query('hotel_id') || '0') : user.hotel_id
+  if (!hotelId) return c.json({ error: 'Aucun hôtel' }, 400)
+
+  const { category_id, title, content, sort_order } = await c.req.json()
+  if (!title) return c.json({ error: 'Titre requis' }, 400)
+
+  const r = await c.env.DB.prepare(`
+    INSERT INTO hotel_info_items (hotel_id, category_id, title, content, sort_order)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(hotelId, category_id || null, title, content || '', sort_order || 0).run()
+
+  return c.json({ id: r.meta.last_row_id, success: true })
+})
+
+// PUT modifier item
+app.put('/api/hotel-info/items/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  const id = parseInt(c.req.param('id'))
+  const { category_id, title, content, sort_order } = await c.req.json()
+
+  await c.env.DB.prepare(`
+    UPDATE hotel_info_items
+    SET category_id = ?, title = COALESCE(?, title), content = COALESCE(?, content), sort_order = COALESCE(?, sort_order),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(category_id || null, title, content, sort_order, id).run()
+
+  return c.json({ success: true })
+})
+
+// DELETE item
+app.delete('/api/hotel-info/items/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  const id = parseInt(c.req.param('id'))
+
+  await c.env.DB.prepare(`DELETE FROM hotel_info_items WHERE id = ?`).bind(id).run()
   return c.json({ success: true })
 })
 

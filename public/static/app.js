@@ -1796,8 +1796,8 @@ function renderConversationsView() {
       </div>
     </div>
 
-    <!-- Colonne salon ouvert (mobile : fullscreen fixe / desktop : 2e colonne) -->
-    <div class="${hasSelected ? 'chat-mobile-fullscreen' : 'hidden lg:flex flex-col flex-1 min-w-0 bg-white'}">
+    <!-- Colonne salon ouvert (mobile : fullscreen fixe / desktop : 2e colonne qui prend tout l'espace restant) -->
+    <div class="${hasSelected ? 'chat-mobile-fullscreen lg:flex lg:flex-col lg:flex-1 lg:min-w-0 lg:bg-white' : 'hidden lg:flex flex-col flex-1 min-w-0 bg-white'}">
       ${hasSelected ? renderChannelView() : `
         <div class="flex-1 flex items-center justify-center p-6 text-center bg-gray-50">
           <div>

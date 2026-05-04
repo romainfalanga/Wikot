@@ -86,6 +86,90 @@ async function login(email, password) {
     await loadData();
     render();
     ensureChatGlobalPolling();
+    ensureProfilePolling();
+  }
+}
+
+// ============================================
+// PROFILE SYNC — Rafraîchissement périodique du profil utilisateur
+// Détecte automatiquement les changements de droits (can_edit_procedures, role,
+// is_active) appliqués par un admin sans nécessiter de reconnexion.
+// ============================================
+let profilePollingTimer = null;
+
+function ensureProfilePolling() {
+  if (profilePollingTimer) return;
+  if (!state.token || !state.user) return;
+  // Polling toutes les 20s — léger (1 seule requête, juste la fiche utilisateur)
+  profilePollingTimer = setInterval(syncUserProfile, 20000);
+  // Refresh immédiat quand l'utilisateur revient sur l'onglet (focus / visibility)
+  if (!window._wikotProfileVisListener) {
+    window._wikotProfileVisListener = () => {
+      if (document.visibilityState === 'visible' && state.token && state.user) {
+        syncUserProfile();
+      }
+    };
+    document.addEventListener('visibilitychange', window._wikotProfileVisListener);
+    window.addEventListener('focus', window._wikotProfileVisListener);
+  }
+}
+
+function stopProfilePolling() {
+  if (profilePollingTimer) {
+    clearInterval(profilePollingTimer);
+    profilePollingTimer = null;
+  }
+}
+
+async function syncUserProfile() {
+  if (!state.token || !state.user) return;
+  // Appel silencieux — pas de toast d'erreur si le réseau est en vrac
+  let data;
+  try {
+    const res = await fetch(`${API}/auth/me`, {
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${state.token}` }
+    });
+    if (res.status === 401) { logout(); return; }
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (e) { return; }
+
+  if (!data || !data.user) return;
+  const fresh = data.user;
+  const old = state.user;
+
+  // Cas 1 : compte désactivé → déconnexion forcée
+  if (fresh.is_active === 0) {
+    showToast('Votre compte a été désactivé. Déconnexion...', 'warning');
+    setTimeout(() => logout(), 1500);
+    return;
+  }
+
+  // Cas 2 : changement de rôle ou de droits d'édition
+  const roleChanged = fresh.role !== old.role;
+  const editRightsChanged = (fresh.can_edit_procedures || 0) !== (old.can_edit_procedures || 0);
+  const hotelChanged = fresh.hotel_id !== old.hotel_id;
+
+  if (roleChanged || editRightsChanged || hotelChanged) {
+    state.user = { ...old, ...fresh };
+    localStorage.setItem('wikot_user', JSON.stringify(state.user));
+
+    // Message adapté
+    if (editRightsChanged) {
+      if (fresh.can_edit_procedures === 1) {
+        showToast('Vos droits ont été mis à jour : vous pouvez maintenant créer/modifier des procédures et gérer les salons.', 'success');
+      } else {
+        showToast('Vos droits d\'édition ont été retirés.', 'info');
+      }
+    } else if (roleChanged) {
+      showToast(`Votre rôle a été modifié : ${fresh.role}`, 'info');
+    } else if (hotelChanged) {
+      showToast('Votre hôtel d\'affectation a été modifié.', 'info');
+    }
+
+    // Recharger les données et re-render pour refléter les nouveaux droits
+    await loadData();
+    render();
   }
 }
 
@@ -98,6 +182,8 @@ function logout() {
       chatGlobalPollingTimer = null;
     }
   } catch (e) {}
+  // Stopper le polling profil
+  try { stopProfilePolling(); } catch (e) {}
 
   // Reset complet du state
   state.token = null;
@@ -2862,8 +2948,12 @@ async function init() {
     if (state.user.role === 'employee') {
       state.currentView = 'procedures';
     }
+    // Sync immédiat du profil au démarrage pour récupérer les éventuels
+    // changements de droits effectués pendant que l'onglet était fermé
+    await syncUserProfile();
     await loadData();
     ensureChatGlobalPolling();
+    ensureProfilePolling();
   }
   render();
 }

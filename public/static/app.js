@@ -35,14 +35,25 @@ let state = {
   hotelInfoSearchQuery: '',
   hotelInfoActiveCategory: null,
   hotelInfoLoaded: false,
-  // Wikot AI Agent
+  // Wikot AI Agent — état séparé par mode (standard / max)
+  // Wikot classique (lecture / sourcing)
   wikotConversations: [],
   wikotCurrentConvId: null,
   wikotMessages: [],
-  wikotActions: [],          // pending_actions liées aux messages affichés
+  wikotActions: [],
   wikotLoading: false,
   wikotSending: false,
-  wikotSidebarOpen: false
+  wikotSidebarOpen: false,
+  _wikotInitialLoad: false,
+  // Wikot Max (rédaction / création / modification)
+  wikotMaxConversations: [],
+  wikotMaxCurrentConvId: null,
+  wikotMaxMessages: [],
+  wikotMaxActions: [],
+  wikotMaxLoading: false,
+  wikotMaxSending: false,
+  wikotMaxSidebarOpen: false,
+  _wikotMaxInitialLoad: false
 };
 
 // ============================================
@@ -492,10 +503,11 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else if (isAdmin) {
-    // Admin hôtel : tout sauf suggestions
+    // Admin hôtel : tout sauf suggestions ; les admins ont accès à Wikot Max
     menuItems = [
       { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
+      { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Wikot Max' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
@@ -504,9 +516,11 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
-    // Employé (éditeur ou lecture seule) : pas de dashboard, pas de suggestions
+    // Employé : Wikot pour tous, Wikot Max uniquement si peut éditer procédures OU informations
+    const canUseMax = userCanEditProcedures() || userCanEditInfo();
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
+      ...(canUseMax ? [{ id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Wikot Max' }] : []),
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
@@ -522,6 +536,7 @@ function renderMainLayout() {
   const viewTitles = {
     dashboard: 'Tableau de bord',
     wikot: 'Wikot',
+    'wikot-max': 'Wikot Max',
     procedures: 'Procédures',
     search: 'Rechercher',
     info: 'Informations',
@@ -538,12 +553,16 @@ function renderMainLayout() {
   let bottomNavItems;
   if (isSuperAdmin) {
     bottomNavItems = menuItems; // 3 items, tous tiennent
-  } else if (isAdmin) {
-    // Admin : 5 items prioritaires en bottom nav (le reste accessible via burger)
-    bottomNavItems = menuItems.filter(i => ['wikot','procedures','info','conversations','search'].includes(i.id));
   } else {
-    // Employé : 5 items, tous tiennent
-    bottomNavItems = menuItems.filter(i => ['wikot','procedures','info','conversations','search'].includes(i.id));
+    // Admin et employé : on priorise Wikot, Wikot Max (si dispo), Procédures, Infos, Conversations
+    // 5 items max — on garde l'ordre pour rester cohérent avec la sidebar desktop
+    const priorityIds = userCanUseWikotMax()
+      ? ['wikot','wikot-max','procedures','info','conversations']
+      : ['wikot','procedures','info','conversations','search'];
+    bottomNavItems = priorityIds
+      .map(id => menuItems.find(i => i.id === id))
+      .filter(Boolean)
+      .slice(0, 5);
   }
 
   return `
@@ -718,7 +737,8 @@ function showChatLoadingPlaceholder() {
 function renderCurrentView() {
   switch (state.currentView) {
     case 'dashboard': return renderDashboard();
-    case 'wikot': return renderWikotView();
+    case 'wikot': return renderWikotView('standard');
+    case 'wikot-max': return renderWikotView('max');
     case 'procedures': return state.selectedProcedure ? renderProcedureDetail() : renderProceduresList();
     case 'search': return renderSearchView();
     case 'info': return renderHotelInfoView();
@@ -2187,125 +2207,170 @@ const CHANNEL_SUGGESTIONS = {
 };
 
 // ============================================
-// WIKOT — AGENT IA (vue chat)
+// WIKOT — AGENTS IA (vue chat) — Wikot (standard) + Wikot Max (max)
 // ============================================
-
-async function loadWikotConversations() {
-  const data = await api('/wikot/conversations');
-  if (data) state.wikotConversations = data.conversations || [];
+// Helper : récupère/écrit l'état chat correspondant au mode (state.wikot* ou state.wikotMax*)
+function wikotState(mode) {
+  // mode = 'standard' | 'max'
+  const prefix = mode === 'max' ? 'wikotMax' : 'wikot';
+  return {
+    get conversations() { return state[prefix + 'Conversations']; },
+    set conversations(v) { state[prefix + 'Conversations'] = v; },
+    get currentConvId() { return state[prefix + 'CurrentConvId']; },
+    set currentConvId(v) { state[prefix + 'CurrentConvId'] = v; },
+    get messages() { return state[prefix + 'Messages']; },
+    set messages(v) { state[prefix + 'Messages'] = v; },
+    get actions() { return state[prefix + 'Actions']; },
+    set actions(v) { state[prefix + 'Actions'] = v; },
+    get loading() { return state[prefix + 'Loading']; },
+    set loading(v) { state[prefix + 'Loading'] = v; },
+    get sending() { return state[prefix + 'Sending']; },
+    set sending(v) { state[prefix + 'Sending'] = v; },
+    get sidebarOpen() { return state[prefix + 'SidebarOpen']; },
+    set sidebarOpen(v) { state[prefix + 'SidebarOpen'] = v; }
+  };
 }
 
-async function loadWikotConversation(convId) {
-  state.wikotLoading = true;
+// Détermine le mode actif selon la vue courante
+function activeWikotMode() {
+  return state.currentView === 'wikot-max' ? 'max' : 'standard';
+}
+
+// L'utilisateur a-t-il accès à Wikot Max ?
+function userCanUseWikotMax() {
+  if (!state.user) return false;
+  if (state.user.role === 'admin' || state.user.role === 'super_admin') return true;
+  return state.user.can_edit_procedures === 1 || state.user.can_edit_info === 1;
+}
+
+async function loadWikotConversations(mode) {
+  mode = mode || activeWikotMode();
+  const s = wikotState(mode);
+  const data = await api(`/wikot/conversations?mode=${mode}`);
+  if (data) s.conversations = data.conversations || [];
+}
+
+async function loadWikotConversation(convId, mode) {
+  mode = mode || activeWikotMode();
+  const s = wikotState(mode);
+  s.loading = true;
   render();
   const data = await api(`/wikot/conversations/${convId}`);
-  state.wikotLoading = false;
+  s.loading = false;
   if (!data) return;
-  state.wikotCurrentConvId = convId;
-  state.wikotMessages = (data.messages || []).map(m => ({
+  s.currentConvId = convId;
+  s.messages = (data.messages || []).map(m => ({
     id: m.id,
     role: m.role,
     content: m.content,
     references: m.references_json ? JSON.parse(m.references_json) : []
   }));
-  state.wikotActions = data.actions || [];
+  s.actions = data.actions || [];
   render();
-  scrollWikotToBottom();
+  scrollWikotToBottom(mode);
 }
 
-async function newWikotConversation() {
-  const data = await api('/wikot/conversations', { method: 'POST' });
+async function newWikotConversation(mode) {
+  mode = mode || activeWikotMode();
+  const s = wikotState(mode);
+  const data = await api('/wikot/conversations', {
+    method: 'POST',
+    body: JSON.stringify({ mode })
+  });
   if (!data) return;
-  await loadWikotConversations();
-  state.wikotCurrentConvId = data.id;
-  state.wikotMessages = [];
-  state.wikotActions = [];
+  await loadWikotConversations(mode);
+  s.currentConvId = data.id;
+  s.messages = [];
+  s.actions = [];
   render();
   setTimeout(() => {
-    const input = document.getElementById('wikot-input');
+    const input = document.getElementById(mode === 'max' ? 'wikot-max-input' : 'wikot-input');
     if (input) input.focus();
   }, 100);
 }
 
-async function deleteWikotConversation(convId, ev) {
+async function deleteWikotConversation(convId, ev, mode) {
   if (ev) ev.stopPropagation();
+  mode = mode || activeWikotMode();
+  const s = wikotState(mode);
   if (!confirm('Archiver cette conversation ?')) return;
   await api(`/wikot/conversations/${convId}`, { method: 'DELETE' });
-  if (state.wikotCurrentConvId === convId) {
-    state.wikotCurrentConvId = null;
-    state.wikotMessages = [];
-    state.wikotActions = [];
+  if (s.currentConvId === convId) {
+    s.currentConvId = null;
+    s.messages = [];
+    s.actions = [];
   }
-  await loadWikotConversations();
+  await loadWikotConversations(mode);
   render();
 }
 
-async function sendWikotMessage() {
-  const input = document.getElementById('wikot-input');
+async function sendWikotMessage(mode) {
+  mode = mode || activeWikotMode();
+  const s = wikotState(mode);
+  const inputId = mode === 'max' ? 'wikot-max-input' : 'wikot-input';
+  const input = document.getElementById(inputId);
   if (!input) return;
   const content = input.value.trim();
-  if (!content || state.wikotSending) return;
+  if (!content || s.sending) return;
 
-  // Si pas de conversation active, on en crée une
-  if (!state.wikotCurrentConvId) {
-    const data = await api('/wikot/conversations', { method: 'POST' });
+  // Si pas de conversation active, on en crée une avec le bon mode
+  if (!s.currentConvId) {
+    const data = await api('/wikot/conversations', {
+      method: 'POST',
+      body: JSON.stringify({ mode })
+    });
     if (!data) return;
-    state.wikotCurrentConvId = data.id;
+    s.currentConvId = data.id;
   }
 
   // Affichage optimiste du message utilisateur
-  state.wikotMessages.push({ id: 'temp-' + Date.now(), role: 'user', content, references: [] });
-  state.wikotSending = true;
+  s.messages.push({ id: 'temp-' + Date.now(), role: 'user', content, references: [] });
+  s.sending = true;
   input.value = '';
   autoResizeTextarea(input);
   render();
-  scrollWikotToBottom();
+  scrollWikotToBottom(mode);
 
-  const result = await api(`/wikot/conversations/${state.wikotCurrentConvId}/message`, {
+  const result = await api(`/wikot/conversations/${s.currentConvId}/message`, {
     method: 'POST',
     body: JSON.stringify({ content })
   });
-  state.wikotSending = false;
+  s.sending = false;
 
   if (!result) {
-    // Retirer le message optimiste en cas d'erreur
-    state.wikotMessages.pop();
+    s.messages.pop();
     render();
     return;
   }
 
-  // Remplacer l'id temporaire par le vrai
-  const lastUser = state.wikotMessages[state.wikotMessages.length - 1];
+  const lastUser = s.messages[s.messages.length - 1];
   if (lastUser && lastUser.role === 'user') lastUser.id = result.user_message_id;
 
-  // Ajouter la réponse de Wikot
-  state.wikotMessages.push({
+  s.messages.push({
     id: result.assistant_message.id,
     role: 'assistant',
     content: result.assistant_message.content,
     references: result.assistant_message.references || []
   });
 
-  // Ajouter les actions proposées
   if (result.actions && result.actions.length > 0) {
-    state.wikotActions.push(...result.actions);
+    s.actions.push(...result.actions);
   }
 
-  // Refresh la liste des conversations (titre auto-généré)
-  await loadWikotConversations();
+  await loadWikotConversations(mode);
   render();
-  scrollWikotToBottom();
+  scrollWikotToBottom(mode);
 }
 
 async function acceptWikotAction(actionId) {
   if (!confirm('Appliquer cette modification ?')) return;
   const r = await api(`/wikot/actions/${actionId}/accept`, { method: 'POST' });
   if (!r) return;
-  // Mettre à jour le statut local
-  const a = state.wikotActions.find(x => x.id === actionId);
+  // Mettre à jour le statut local — chercher dans les deux modes
+  const all = [...(state.wikotActions || []), ...(state.wikotMaxActions || [])];
+  const a = all.find(x => x.id === actionId);
   if (a) a.status = 'accepted';
-  showToast('Modification appliquée par Wikot', 'success');
-  // Recharger les données globales pour refléter la modif
+  showToast('Modification appliquée par Wikot Max', 'success');
   await loadData();
   render();
 }
@@ -2313,7 +2378,8 @@ async function acceptWikotAction(actionId) {
 async function rejectWikotAction(actionId) {
   const r = await api(`/wikot/actions/${actionId}/reject`, { method: 'POST' });
   if (!r) return;
-  const a = state.wikotActions.find(x => x.id === actionId);
+  const all = [...(state.wikotActions || []), ...(state.wikotMaxActions || [])];
+  const a = all.find(x => x.id === actionId);
   if (a) a.status = 'rejected';
   render();
 }
@@ -2338,15 +2404,19 @@ function viewWikotReference(ref) {
   }
 }
 
-function scrollWikotToBottom() {
+function scrollWikotToBottom(mode) {
+  mode = mode || activeWikotMode();
+  const containerId = mode === 'max' ? 'wikot-max-messages' : 'wikot-messages';
   setTimeout(() => {
-    const container = document.getElementById('wikot-messages');
+    const container = document.getElementById(containerId);
     if (container) container.scrollTop = container.scrollHeight;
   }, 50);
 }
 
-function toggleWikotSidebar() {
-  state.wikotSidebarOpen = !state.wikotSidebarOpen;
+function toggleWikotSidebar(mode) {
+  mode = mode || activeWikotMode();
+  const s = wikotState(mode);
+  s.sidebarOpen = !s.sidebarOpen;
   render();
 }
 
@@ -2359,11 +2429,13 @@ function formatWikotContent(text) {
     .replace(/\n/g, '<br>');
 }
 
-function renderWikotMessage(msg) {
+function renderWikotMessage(msg, mode) {
+  mode = mode || activeWikotMode();
+  const userBubbleColor = mode === 'max' ? 'bg-orange-500' : 'bg-brand-500';
   if (msg.role === 'user') {
     return `
       <div class="flex justify-end mb-4">
-        <div class="max-w-[85%] sm:max-w-[75%] bg-brand-500 text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap">
+        <div class="max-w-[85%] sm:max-w-[75%] ${userBubbleColor} text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap">
           ${escapeHtml(msg.content)}
         </div>
       </div>
@@ -2371,13 +2443,15 @@ function renderWikotMessage(msg) {
   }
   // Assistant
   const refs = msg.references || [];
-  const actionsForMsg = (state.wikotActions || []).filter(a => a.message_id === msg.id);
+  const actionsArr = mode === 'max' ? (state.wikotMaxActions || []) : (state.wikotActions || []);
+  const actionsForMsg = actionsArr.filter(a => a.message_id === msg.id);
+  const cfg = WIKOT_MODE_CONFIG[mode] || WIKOT_MODE_CONFIG.standard;
 
   return `
     <div class="flex justify-start mb-4">
       <div class="flex gap-2 max-w-[90%] sm:max-w-[80%]">
-        <div class="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br from-brand-400 to-purple-500 flex items-center justify-center text-white text-xs">
-          <i class="fas fa-robot"></i>
+        <div class="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white text-xs">
+          <i class="fas ${cfg.icon}"></i>
         </div>
         <div class="flex-1 min-w-0">
           <div class="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm leading-relaxed shadow-sm">
@@ -2478,75 +2552,123 @@ function renderWikotActionCard(action) {
   `;
 }
 
-function renderWikotView() {
+// Configuration visuelle/textuelle de chaque mode (Wikot vs Wikot Max)
+const WIKOT_MODE_CONFIG = {
+  standard: {
+    title: 'Wikot',
+    subtitle: 'Ton assistant de consultation',
+    icon: 'fa-robot',
+    avatarGradient: 'from-brand-400 to-purple-500',
+    sendButton: 'bg-brand-500 hover:bg-brand-600',
+    newButton: 'bg-brand-500 hover:bg-brand-600',
+    focusRing: 'focus:ring-brand-400',
+    selectedConv: 'bg-brand-50 border-l-2 border-l-brand-400',
+    bouncingDots: 'bg-brand-400',
+    placeholder: 'Pose ta question à Wikot…',
+    inputId: 'wikot-input',
+    messagesId: 'wikot-messages',
+    emptyTitle: 'Bonjour, je suis Wikot',
+    emptyText: "Je connais toutes les procédures et informations de l'hôtel. Pose-moi une question, je cherche, je résume et je te donne le bouton pour aller voir le détail.",
+    quickButtons: [
+      { label: 'Comment faire un check-in ?', q: 'Comment je fais un check-in ?' },
+      { label: 'Horaires de la piscine ?', q: 'Quelles sont les horaires de la piscine ?' },
+      { label: 'Carte démagnétisée ?', q: 'Que faire si une carte de chambre est démagnétisée ?' },
+      { label: 'Procédures de réception', q: 'Liste-moi toutes les procédures de réception' }
+    ],
+    footer: 'Wikot peut faire des erreurs — vérifie les informations importantes.'
+  },
+  max: {
+    title: 'Wikot Max',
+    subtitle: 'Ton assistant de rédaction et création',
+    icon: 'fa-pen-ruler',
+    avatarGradient: 'from-orange-400 to-rose-500',
+    sendButton: 'bg-orange-500 hover:bg-orange-600',
+    newButton: 'bg-orange-500 hover:bg-orange-600',
+    focusRing: 'focus:ring-orange-400',
+    selectedConv: 'bg-orange-50 border-l-2 border-l-orange-400',
+    bouncingDots: 'bg-orange-400',
+    placeholder: 'Décris la procédure ou l\'information à créer / modifier…',
+    inputId: 'wikot-max-input',
+    messagesId: 'wikot-max-messages',
+    emptyTitle: 'Bonjour, je suis Wikot Max',
+    emptyText: "Je suis spécialisé dans la rédaction et la modification des procédures et informations. Décris-moi ce que tu veux créer ou modifier — je rédige, je structure, et tu valides via une carte avant/après.",
+    quickButtons: [
+      { label: 'Créer une procédure check-out', q: 'Crée-moi une procédure de check-out à la réception, du moment où le client se présente jusqu\'à son départ.' },
+      { label: 'Ajouter une info Wi-Fi', q: 'Ajoute une information sur le Wi-Fi (nom du réseau, mot de passe, contact en cas de panne).' },
+      { label: 'Modifier les horaires piscine', q: 'Je veux modifier les horaires d\'ouverture de la piscine.' },
+      { label: 'Créer une procédure réclamation', q: 'Crée une procédure pour gérer une réclamation client à la réception.' }
+    ],
+    footer: 'Wikot Max propose les modifications — rien n\'est appliqué tant que tu n\'as pas validé la carte avant/après.'
+  }
+};
+
+function renderWikotView(mode) {
+  mode = mode || activeWikotMode();
+  const cfg = WIKOT_MODE_CONFIG[mode];
+  const s = wikotState(mode);
+  const initialFlag = mode === 'max' ? '_wikotMaxInitialLoad' : '_wikotInitialLoad';
+
   // Lazy-load la liste des conversations à la première ouverture
-  if (!state.wikotConversations || state.wikotConversations.length === 0) {
-    if (!state._wikotInitialLoad) {
-      state._wikotInitialLoad = true;
-      loadWikotConversations().then(() => render());
-    }
+  if (!state[initialFlag]) {
+    state[initialFlag] = true;
+    loadWikotConversations(mode).then(() => render());
   }
 
-  const convs = state.wikotConversations || [];
-  const currentConv = convs.find(c => c.id === state.wikotCurrentConvId);
-  const messages = state.wikotMessages || [];
-  const sidebarVisible = state.wikotSidebarOpen;
+  const convs = s.conversations || [];
+  const currentConv = convs.find(c => c.id === s.currentConvId);
+  const messages = s.messages || [];
+  const sidebarVisible = s.sidebarOpen;
+  const isLoading = s.loading;
+  const isSending = s.sending;
+
+  const quickButtonsHtml = cfg.quickButtons.map(btn => `
+    <button onclick="quickWikot('${btn.q.replace(/'/g, "\\'")}', '${mode}')" class="text-xs text-left bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-lg px-3 py-2 transition-colors">
+      <i class="fas fa-question-circle text-gray-400 mr-1"></i>${escapeHtml(btn.label)}
+    </button>
+  `).join('');
 
   const emptyState = `
     <div class="flex flex-col items-center justify-center h-full p-6 text-center">
-      <div class="w-20 h-20 rounded-full bg-gradient-to-br from-brand-400 to-purple-500 flex items-center justify-center text-white text-3xl mb-4 shadow-lg">
-        <i class="fas fa-robot"></i>
+      <div class="w-20 h-20 rounded-full bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white text-3xl mb-4 shadow-lg">
+        <i class="fas ${cfg.icon}"></i>
       </div>
-      <h3 class="text-xl font-bold text-navy-800 mb-2">Bonjour, je suis Wikot</h3>
-      <p class="text-sm text-navy-500 max-w-md mb-6">
-        Ton assistant IA pour t'accompagner dans la gestion de l'hôtel. Je connais toutes les procédures et informations, et je peux te guider, te répondre, et même t'aider à créer ou modifier du contenu.
-      </p>
+      <h3 class="text-xl font-bold text-navy-800 mb-2">${cfg.emptyTitle}</h3>
+      <p class="text-sm text-navy-500 max-w-md mb-6">${cfg.emptyText}</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-md w-full">
-        <button onclick="quickWikot('Comment je fais un check-in ?')" class="text-xs text-left bg-white border border-gray-200 hover:border-brand-300 hover:bg-brand-50 rounded-lg px-3 py-2 transition-colors">
-          <i class="fas fa-question-circle text-brand-400 mr-1"></i>Comment faire un check-in ?
-        </button>
-        <button onclick="quickWikot('Quelles sont les horaires de la piscine ?')" class="text-xs text-left bg-white border border-gray-200 hover:border-brand-300 hover:bg-brand-50 rounded-lg px-3 py-2 transition-colors">
-          <i class="fas fa-question-circle text-brand-400 mr-1"></i>Horaires de la piscine ?
-        </button>
-        <button onclick="quickWikot('Que faire si une carte de chambre est démagnétisée ?')" class="text-xs text-left bg-white border border-gray-200 hover:border-brand-300 hover:bg-brand-50 rounded-lg px-3 py-2 transition-colors">
-          <i class="fas fa-question-circle text-brand-400 mr-1"></i>Carte démagnétisée ?
-        </button>
-        <button onclick="quickWikot('Liste-moi toutes les procédures de réception')" class="text-xs text-left bg-white border border-gray-200 hover:border-brand-300 hover:bg-brand-50 rounded-lg px-3 py-2 transition-colors">
-          <i class="fas fa-question-circle text-brand-400 mr-1"></i>Procédures de réception
-        </button>
+        ${quickButtonsHtml}
       </div>
     </div>
   `;
 
   return `
   <div class="fade-in flex flex-col" style="height: calc(100vh - 8rem); max-height: calc(100vh - 8rem);">
-    <!-- Header Wikot -->
+    <!-- Header Wikot/Wikot Max -->
     <div class="flex items-center justify-between mb-3 sm:mb-4 shrink-0">
       <div class="flex items-center gap-3 min-w-0">
-        <button onclick="toggleWikotSidebar()" class="lg:hidden w-9 h-9 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 flex items-center justify-center text-navy-600 transition-colors" title="Mes conversations">
+        <button onclick="toggleWikotSidebar('${mode}')" class="lg:hidden w-9 h-9 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 flex items-center justify-center text-navy-600 transition-colors" title="Mes conversations">
           <i class="fas fa-list"></i>
         </button>
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-brand-400 to-purple-500 flex items-center justify-center text-white shadow-sm shrink-0">
-          <i class="fas fa-robot"></i>
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white shadow-sm shrink-0">
+          <i class="fas ${cfg.icon}"></i>
         </div>
         <div class="min-w-0">
-          <h1 class="text-lg sm:text-xl font-bold text-navy-900 truncate">Wikot</h1>
-          <p class="text-xs text-navy-500 truncate">${currentConv ? escapeHtml(currentConv.title) : 'Ton assistant IA hôtelier'}</p>
+          <h1 class="text-lg sm:text-xl font-bold text-navy-900 truncate">${cfg.title}</h1>
+          <p class="text-xs text-navy-500 truncate">${currentConv ? escapeHtml(currentConv.title) : cfg.subtitle}</p>
         </div>
       </div>
-      <button onclick="newWikotConversation()" class="bg-brand-500 hover:bg-brand-600 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 shrink-0">
+      <button onclick="newWikotConversation('${mode}')" class="${cfg.newButton} text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 shrink-0">
         <i class="fas fa-plus"></i><span class="hidden sm:inline">Nouvelle</span>
       </button>
     </div>
 
     <!-- Layout chat avec sidebar conversations -->
     <div class="flex-1 flex gap-4 min-h-0 overflow-hidden">
-      <!-- Sidebar des conversations (desktop toujours visible, mobile en overlay) -->
+      <!-- Sidebar des conversations -->
       <div class="${sidebarVisible ? 'fixed inset-0 z-30 bg-black/40 lg:bg-transparent lg:relative lg:inset-auto lg:z-auto' : 'hidden'} lg:block">
         <div class="${sidebarVisible ? 'absolute left-0 top-0 bottom-0 w-72 lg:relative lg:w-64' : 'lg:w-64'} bg-white border-r lg:border border-gray-200 lg:rounded-xl flex flex-col h-full">
           <div class="px-3 py-3 border-b border-gray-100 flex items-center justify-between">
             <span class="text-sm font-semibold text-navy-700">Mes conversations</span>
-            <button onclick="toggleWikotSidebar()" class="lg:hidden w-7 h-7 rounded hover:bg-gray-100 flex items-center justify-center text-navy-500" title="Fermer">
+            <button onclick="toggleWikotSidebar('${mode}')" class="lg:hidden w-7 h-7 rounded hover:bg-gray-100 flex items-center justify-center text-navy-500" title="Fermer">
               <i class="fas fa-xmark"></i>
             </button>
           </div>
@@ -2556,13 +2678,13 @@ function renderWikotView() {
                 Aucune conversation.<br>Clique sur « Nouvelle » pour démarrer.
               </div>
             ` : convs.map(c => `
-              <div onclick="loadWikotConversation(${c.id}); state.wikotSidebarOpen=false;" class="px-3 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer ${state.wikotCurrentConvId === c.id ? 'bg-brand-50 border-l-2 border-l-brand-400' : ''}">
+              <div onclick="loadWikotConversation(${c.id}, '${mode}'); ${mode === 'max' ? 'state.wikotMaxSidebarOpen' : 'state.wikotSidebarOpen'}=false;" class="px-3 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer ${s.currentConvId === c.id ? cfg.selectedConv : ''}">
                 <div class="flex items-start justify-between gap-2">
                   <div class="flex-1 min-w-0">
                     <div class="text-sm text-navy-800 truncate">${escapeHtml(c.title)}</div>
                     <div class="text-[10px] text-navy-400 mt-0.5">${new Date(c.updated_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
                   </div>
-                  <button onclick="deleteWikotConversation(${c.id}, event)" class="w-6 h-6 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 flex items-center justify-center shrink-0 transition-colors" title="Archiver">
+                  <button onclick="deleteWikotConversation(${c.id}, event, '${mode}')" class="w-6 h-6 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 flex items-center justify-center shrink-0 transition-colors" title="Archiver">
                     <i class="fas fa-trash text-[10px]"></i>
                   </button>
                 </div>
@@ -2574,21 +2696,21 @@ function renderWikotView() {
 
       <!-- Zone chat principale -->
       <div class="flex-1 flex flex-col bg-gradient-to-b from-gray-50 to-white border border-gray-200 rounded-xl overflow-hidden min-w-0">
-        <div id="wikot-messages" class="flex-1 overflow-y-auto p-3 sm:p-4">
-          ${messages.length === 0 && !state.wikotLoading ? emptyState : ''}
-          ${state.wikotLoading ? '<div class="flex justify-center items-center h-full text-navy-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement...</div>' : ''}
-          ${messages.map(m => renderWikotMessage(m)).join('')}
-          ${state.wikotSending ? `
+        <div id="${cfg.messagesId}" class="flex-1 overflow-y-auto p-3 sm:p-4">
+          ${messages.length === 0 && !isLoading ? emptyState : ''}
+          ${isLoading ? '<div class="flex justify-center items-center h-full text-navy-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement…</div>' : ''}
+          ${messages.map(m => renderWikotMessage(m, mode)).join('')}
+          ${isSending ? `
             <div class="flex justify-start mb-4">
               <div class="flex gap-2">
-                <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-400 to-purple-500 flex items-center justify-center text-white text-xs">
-                  <i class="fas fa-robot"></i>
+                <div class="w-8 h-8 rounded-full bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white text-xs">
+                  <i class="fas ${cfg.icon}"></i>
                 </div>
                 <div class="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
                   <div class="flex gap-1">
-                    <div class="w-2 h-2 rounded-full bg-brand-400 animate-bounce" style="animation-delay: 0ms"></div>
-                    <div class="w-2 h-2 rounded-full bg-brand-400 animate-bounce" style="animation-delay: 150ms"></div>
-                    <div class="w-2 h-2 rounded-full bg-brand-400 animate-bounce" style="animation-delay: 300ms"></div>
+                    <div class="w-2 h-2 rounded-full ${cfg.bouncingDots} animate-bounce" style="animation-delay: 0ms"></div>
+                    <div class="w-2 h-2 rounded-full ${cfg.bouncingDots} animate-bounce" style="animation-delay: 150ms"></div>
+                    <div class="w-2 h-2 rounded-full ${cfg.bouncingDots} animate-bounce" style="animation-delay: 300ms"></div>
                   </div>
                 </div>
               </div>
@@ -2599,17 +2721,17 @@ function renderWikotView() {
         <!-- Zone de saisie -->
         <div class="border-t border-gray-200 bg-white p-2 sm:p-3 shrink-0">
           <div class="flex items-end gap-2">
-            <textarea id="wikot-input" rows="1"
-              placeholder="Pose ta question à Wikot..."
+            <textarea id="${cfg.inputId}" rows="1"
+              placeholder="${cfg.placeholder}"
               oninput="autoResizeTextarea(this)"
-              onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage();}"
-              ${state.wikotSending ? 'disabled' : ''}
-              class="form-input-mobile flex-1 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 resize-none max-h-32 text-sm"></textarea>
-            <button onclick="sendWikotMessage()" ${state.wikotSending ? 'disabled' : ''} class="w-10 h-10 rounded-xl bg-brand-500 hover:bg-brand-600 disabled:bg-gray-300 text-white flex items-center justify-center shrink-0 transition-colors" title="Envoyer">
-              <i class="fas ${state.wikotSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
+              onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('${mode}');}"
+              ${isSending ? 'disabled' : ''}
+              class="form-input-mobile flex-1 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 ${cfg.focusRing} resize-none max-h-32 text-sm"></textarea>
+            <button onclick="sendWikotMessage('${mode}')" ${isSending ? 'disabled' : ''} class="w-10 h-10 rounded-xl ${cfg.sendButton} disabled:bg-gray-300 text-white flex items-center justify-center shrink-0 transition-colors" title="Envoyer">
+              <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
             </button>
           </div>
-          <p class="text-[10px] text-navy-400 mt-1.5 text-center">Wikot peut faire des erreurs — vérifie les informations importantes.</p>
+          <p class="text-[10px] text-navy-400 mt-1.5 text-center">${cfg.footer}</p>
         </div>
       </div>
     </div>
@@ -2617,11 +2739,13 @@ function renderWikotView() {
   `;
 }
 
-function quickWikot(text) {
-  const input = document.getElementById('wikot-input');
+function quickWikot(text, mode) {
+  mode = mode || activeWikotMode();
+  const cfg = WIKOT_MODE_CONFIG[mode];
+  const input = document.getElementById(cfg.inputId);
   if (input) {
     input.value = text;
-    sendWikotMessage();
+    sendWikotMessage(mode);
   }
 }
 

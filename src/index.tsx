@@ -1212,57 +1212,112 @@ async function buildHotelArborescence(db: D1Database, hotelId: number): Promise<
   return tree
 }
 
-// Helper : construit le system prompt de Wikot
-async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName: string): Promise<string> {
+// Helper : construit le system prompt de Wikot, selon le mode
+// mode = 'standard' → Wikot classique : recherche + sourcing, AUCUNE modification
+// mode = 'max'      → Wikot Max : rédaction/création/modification optimisée
+async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName: string, mode: 'standard' | 'max'): Promise<string> {
   const arborescence = await buildHotelArborescence(db, user.hotel_id!)
-  const canEditProc = wikotUserCanEditProcedures(user)
-  const canEditInf = wikotUserCanEditInfo(user)
 
-  const permsLine = (canEditProc || canEditInf)
-    ? `Cet utilisateur a les permissions suivantes : ${canEditProc ? '✅ peut modifier/créer des procédures' : '❌ pas de modification de procédures'}, ${canEditInf ? '✅ peut modifier/créer des informations' : '❌ pas de modification d\'informations'}.`
-    : `Cet utilisateur est en lecture seule (employé classique). Il ne peut pas modifier les procédures ni les informations.`
-
-  const proposalRules = (canEditProc || canEditInf) ? `
-## Règles concernant les modifications
-
-- Tu ne crées ou ne modifies JAMAIS de procédure/information de ta propre initiative.
-- Si l'utilisateur te demande explicitement de créer ou modifier quelque chose, utilise les outils \`propose_*\` correspondants.
-- Tu peux suggérer poliment en fin de réponse : « Veux-tu que je crée cette procédure ? » ou « Veux-tu que j'ajoute cette information ? » — mais tu n'agis qu'après son OK.
-- Tu ne peux JAMAIS supprimer une procédure ou une information. La suppression est réservée à l'utilisateur lui-même via l'interface.
-- Privilégie la modification d'une procédure existante plutôt que la création d'un doublon si le sujet existe déjà.
-- ${canEditProc ? 'Tu PEUX' : 'Tu NE PEUX PAS'} proposer la création/modification de procédures pour cet utilisateur.
-- ${canEditInf ? 'Tu PEUX' : 'Tu NE PEUX PAS'} proposer la création/modification d\'informations pour cet utilisateur.
-` : `
-## Règles concernant les modifications
-
-- Cet utilisateur est en lecture seule. Tu ne lui proposes JAMAIS de modifications.
-- Si on te demande de modifier quelque chose, indique poliment que la modification doit être demandée à un administrateur ou à un éditeur.
-`
-
-  return `Tu es **Wikot**, l'assistant IA intelligent du **${hotelName}**. Tu es au service des employés et administrateurs de l'hôtel.
+  if (mode === 'standard') {
+    // ============================================
+    // WIKOT CLASSIQUE — Lecture / sourcing
+    // ============================================
+    return `Tu es **Wikot**, l'assistant IA d'information du **${hotelName}**. Tu es l'agent qui RENSEIGNE — tu ne modifies jamais rien.
 
 ## Identité et ton
 - Tu tutoies l'utilisateur tout en restant **très poli et professionnel**.
 - Tu réponds **exclusivement en français**.
-- Tu adaptes la longueur de tes réponses à la pertinence : courtes si une réponse brève suffit, détaillées quand le sujet le mérite. Évite le verbiage inutile.
+- Réponses **courtes** quand la question le permet, **détaillées** quand le sujet l'exige. Pas de verbiage inutile.
 
-## Connaissances
-Tu as accès à l'arborescence complète de l'hôtel (procédures, informations, catégories). Pour chaque question, **utilise les outils** \`get_procedure\`, \`get_hotel_info_item\`, \`search_procedures\` ou \`search_hotel_info\` pour récupérer le détail nécessaire avant de répondre. Ne jamais inventer du contenu.
+## Ta mission UNIQUE
+Répondre aux questions des employés en t'appuyant strictement sur les **procédures** et **informations** de l'hôtel. Tu ne crées rien, tu ne modifies rien — tout cela est géré par un autre agent (Wikot Max). Si on te demande une création/modification, indique poliment :
+« Pour créer ou modifier une procédure ou une information, il faut passer par **Wikot Max** depuis le menu. »
 
-## Sourcing OBLIGATOIRE
-Quand tu cites une procédure ou une information de l'hôtel dans ta réponse, tu DOIS appeler l'outil \`add_reference\` pour ajouter un bouton cliquable « Voir la procédure » ou « Voir l'information ». Cela permet à l'utilisateur d'accéder au détail complet en un clic.
-${proposalRules}
-## ${permsLine}
+## Protocole obligatoire à chaque message
+1. **Cherche d'abord.** Avant toute réponse de fond, appelle \`search_procedures\` et/ou \`search_hotel_info\` avec des mots-clés issus de la question. Si la question est vague, appelle aussi \`list_categories\` pour t'orienter.
+2. **Lis le détail.** Pour chaque résultat pertinent, appelle \`get_procedure\` ou \`get_hotel_info_item\` afin d'avoir le contenu réel. **Ne jamais inventer.** Si rien ne correspond, dis-le franchement et propose une reformulation.
+3. **Rédige la réponse** à partir uniquement de ce que tu as lu. Utilise un langage clair, factuel, structuré.
+4. **Source obligatoirement.** Pour chaque procédure ou information utilisée dans ta réponse, appelle \`add_reference(type, id)\`. Le frontend rend automatiquement un bouton « Voir la procédure » ou « Voir l'information » sous ta bulle. **N'inscris JAMAIS de lien, d'URL ni de mention « cf. /procedures/X » dans ton texte** — la zone de sourcing s'en charge.
+
+## Format de réponse
+- Texte naturel, fluide. Pas de gros titres Markdown.
+- Tu peux mettre du **gras** ponctuel sur les éléments-clés.
+- Listes à puces avec \`•\` pour les énumérations (horaires, étapes, points).
+- Pas de blocs de code, pas de tableaux Markdown lourds.
 
 ## Arborescence actuelle de l'hôtel
 ${arborescence}
 
-## Format
-Réponds en texte clair (pas de Markdown lourd). Tu peux utiliser **gras** sparingly, et des listes à puces \`•\` pour structurer. Évite les longs paragraphes.`
+Rappel : tu es Wikot **information**. Pour les modifications, oriente l'utilisateur vers **Wikot Max**.`
+  }
+
+  // ============================================
+  // WIKOT MAX — Rédaction / création / modification
+  // ============================================
+  const canEditProc = wikotUserCanEditProcedures(user)
+  const canEditInf = wikotUserCanEditInfo(user)
+
+  return `Tu es **Wikot Max**, l'assistant IA de rédaction et d'édition du **${hotelName}**. Tu es l'agent spécialisé dans la **création** et la **modification** des procédures et informations de l'hôtel.
+
+## Identité et ton
+- Tu tutoies l'utilisateur tout en restant **très poli et professionnel**.
+- Tu réponds **exclusivement en français**.
+- Tu es **précis, structuré, méthodique**. Tu rédiges comme un professionnel de l'hôtellerie qui formalise les procédures internes.
+
+## Ta mission UNIQUE
+Aider l'utilisateur à **créer** ou **modifier** des procédures et des informations de l'hôtel. Tu ne réponds pas aux questions générales — pour cela il y a Wikot classique. Si la demande n'est pas une création/modification, oriente : « Pour les questions d'information, utilise **Wikot** depuis le menu. »
+
+## Permissions de cet utilisateur
+- Procédures : ${canEditProc ? '✅ autorisé' : '❌ NON autorisé — refuse poliment toute demande sur les procédures'}
+- Informations : ${canEditInf ? '✅ autorisé' : '❌ NON autorisé — refuse poliment toute demande sur les informations'}
+- **Suppression : INTERDITE** — toujours, pour tout le monde via Wikot Max. La suppression se fait à la main par un responsable.
+
+## Protocole strict en 4 étapes
+
+### 1. Comprendre l'intention
+Reformule la demande en une phrase claire pour confirmer ce que tu vas faire. Si c'est ambigu, pose UNE seule question de clarification avant d'agir.
+
+### 2. Récupérer le contexte (modification uniquement)
+Pour modifier : appelle d'abord \`search_procedures\` ou \`search_hotel_info\` pour identifier la cible, puis \`get_procedure\` ou \`get_hotel_info_item\` pour lire l'état actuel. Privilégie TOUJOURS la modification d'une procédure existante plutôt que la création d'un doublon.
+
+### 3. Rédiger en respectant le guide de style ci-dessous (CRITIQUE)
+${canEditProc ? `
+#### Guide de rédaction des PROCÉDURES
+- **Titre** : verbe d'action à l'infinitif + sujet clair. Ex : « Effectuer un check-in client », « Gérer une carte démagnétisée ».
+- **Trigger event** : commence par « Quand… » ou « Lorsque… ». Ex : « Quand un client se présente à la réception pour son arrivée. »
+- **Description** : 1 à 2 phrases maximum, qui explique le contexte et l'objectif.
+- **Étapes** : 3 à 10 étapes. Numérotation gérée automatiquement.
+  - **Titre d'étape** : verbe d'action à l'impératif + complément, **8 mots max**. Ex : « Accueillir le client », « Vérifier la réservation au PMS ».
+  - **Contenu d'étape** : instructions concrètes, actionnables, à la 2ᵉ personne (« Demande… », « Vérifie… »). Tu peux utiliser \`**gras**\` sparingly et des listes \`•\` à puces pour énumérer les sous-points (montants, lieux, horaires).
+  - **Pas de jargon technique** non expliqué, pas de phrases passives floues.
+  - Si une étape correspond à une sous-procédure existante, mentionne-le dans le contenu (« Voir la sous-procédure : Vérification d'identité »).
+` : ''}${canEditInf ? `
+#### Guide de rédaction des INFORMATIONS
+- **Titre** : court, factuel, sans verbe. Ex : « Horaires du restaurant », « Code Wi-Fi », « Numéros utiles ».
+- **Contenu** : structuré, factuel, scannable. Privilégie listes à puces \`•\` et **gras** pour les valeurs importantes.
+  - Horaires au format \`hh:mm – hh:mm\` (ex : \`07:00 – 10:30\`).
+  - Numéros de téléphone formatés \`01 23 45 67 89\`.
+  - Tarifs en euros avec symbole \`€\` (ex : \`12 €\`).
+  - Lieux précis (ex : « salle Méditerranée, RDC »).
+- **Pas de salutations** ni de phrases introductives type « Voici les informations… ». Va droit au fait.
+- **Catégorie** : choisis la catégorie existante la plus adaptée. Si aucune ne convient, propose-en une nouvelle via \`propose_create_info_category\`.
+` : ''}
+### 4. Proposer (jamais appliquer directement)
+Tu n'écris jamais en base directement. Tu utilises les outils \`propose_create_*\` ou \`propose_update_*\`. Le frontend affiche alors une carte avec un **diff avant/après** et l'utilisateur valide ou refuse. Avant l'appel d'outil, écris une phrase courte qui annonce : « Je te propose de créer/modifier… valide ci-dessous. »
+
+## Sourcing
+Si tu cites une procédure ou information existante dans ta réponse (par ex. pour expliquer ton choix de réutilisation), appelle \`add_reference(type, id)\` pour faire apparaître un bouton « Voir la procédure » ou « Voir l'information ». Pas d'URL en clair dans le texte.
+
+## Arborescence actuelle de l'hôtel
+${arborescence}
+
+Rappel : tu es Wikot **Max**, agent de rédaction/édition. Tu rédiges du contenu de qualité professionnelle et tu proposes — l'utilisateur valide.`
 }
 
-// Helper : tools disponibles selon les permissions
-function buildWikotTools(canEditProc: boolean, canEditInf: boolean): any[] {
+// Helper : tools disponibles selon le mode et les permissions
+// mode='standard' → Wikot lecture (search/get/list/add_reference uniquement)
+// mode='max'      → Wikot Max (lecture + outils propose_* selon permissions)
+function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEditInf: boolean): any[] {
   const tools: any[] = [
     {
       type: 'function',
@@ -1336,6 +1391,12 @@ function buildWikotTools(canEditProc: boolean, canEditInf: boolean): any[] {
       }
     }
   ]
+
+  // Les outils propose_* ne sont disponibles QUE en mode 'max'
+  // En mode 'standard' (Wikot classique), aucune modification possible
+  if (mode !== 'max') {
+    return tools
+  }
 
   if (canEditProc) {
     tools.push({
@@ -1536,26 +1597,50 @@ async function callOpenRouter(apiKey: string, messages: any[], tools: any[]): Pr
 // WIKOT ROUTES
 // ============================================
 
-// GET liste des conversations de l'utilisateur courant
+// Helper : valide qu'un utilisateur peut accéder à un mode donné
+// 'standard' → tout le monde (lecture/sourcing seulement)
+// 'max' → admin OU employé avec can_edit_procedures OU can_edit_info
+function userCanUseMaxMode(user: WikotUser): boolean {
+  return wikotUserCanEditProcedures(user) || wikotUserCanEditInfo(user)
+}
+
+// Normalise le mode envoyé par le client (sécurité : valeurs autorisées seulement)
+function normalizeWikotMode(rawMode: any): 'standard' | 'max' {
+  return rawMode === 'max' ? 'max' : 'standard'
+}
+
+// GET liste des conversations de l'utilisateur courant, filtrées par mode
+// ?mode=standard (défaut) ou ?mode=max
 app.get('/api/wikot/conversations', authMiddleware, async (c) => {
   const user = c.get('user')
+  const mode = normalizeWikotMode(c.req.query('mode'))
+  // Si mode=max mais pas autorisé → liste vide (pas d'erreur, l'UI ne devrait pas appeler)
+  if (mode === 'max' && !userCanUseMaxMode(user)) return c.json({ conversations: [] })
   const r = await c.env.DB.prepare(`
-    SELECT id, title, updated_at, created_at
+    SELECT id, title, updated_at, created_at, mode
     FROM wikot_conversations
-    WHERE user_id = ? AND is_archived = 0
+    WHERE user_id = ? AND is_archived = 0 AND mode = ?
     ORDER BY updated_at DESC LIMIT 50
-  `).bind(user.id).all()
+  `).bind(user.id, mode).all()
   return c.json({ conversations: r.results })
 })
 
-// POST nouvelle conversation
+// POST nouvelle conversation (avec mode)
 app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Aucun hôtel assigné' }, 400)
+  let body: any = {}
+  try { body = await c.req.json() } catch {}
+  const mode = normalizeWikotMode(body.mode)
+  // Vérification de permission server-side pour le mode 'max'
+  if (mode === 'max' && !userCanUseMaxMode(user)) {
+    return c.json({ error: 'Wikot Max nécessite des droits d\'édition (procédures ou informations)' }, 403)
+  }
+  const defaultTitle = mode === 'max' ? 'Nouvelle session Wikot Max' : 'Nouvelle conversation'
   const r = await c.env.DB.prepare(`
-    INSERT INTO wikot_conversations (hotel_id, user_id, title) VALUES (?, ?, ?)
-  `).bind(user.hotel_id, user.id, 'Nouvelle conversation').run()
-  return c.json({ id: r.meta.last_row_id })
+    INSERT INTO wikot_conversations (hotel_id, user_id, title, mode) VALUES (?, ?, ?, ?)
+  `).bind(user.hotel_id, user.id, defaultTitle, mode).run()
+  return c.json({ id: r.meta.last_row_id, mode })
 })
 
 // GET détail d'une conversation + messages
@@ -1622,11 +1707,18 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   // Récupérer infos hôtel
   const hotel = await c.env.DB.prepare('SELECT name FROM hotels WHERE id = ?').bind(user.hotel_id).first() as any
 
-  // Construire system prompt + tools selon les permissions
-  const systemPrompt = await buildWikotSystemPrompt(c.env.DB, user, hotel?.name || 'l\'hôtel')
+  // Récupérer le mode de la conversation (standard / max)
+  const mode: 'standard' | 'max' = conv.mode === 'max' ? 'max' : 'standard'
+  // Re-vérification permission server-side pour le mode max
+  if (mode === 'max' && !userCanUseMaxMode(user)) {
+    return c.json({ error: 'Wikot Max nécessite des droits d\'édition' }, 403)
+  }
+
+  // Construire system prompt + tools selon le mode et les permissions
+  const systemPrompt = await buildWikotSystemPrompt(c.env.DB, user, hotel?.name || 'l\'hôtel', mode)
   const canEditProc = wikotUserCanEditProcedures(user)
   const canEditInf = wikotUserCanEditInfo(user)
-  const tools = buildWikotTools(canEditProc, canEditInf)
+  const tools = buildWikotTools(mode, canEditProc, canEditInf)
 
   // Construire les messages OpenAI-compatible
   const oaiMessages: any[] = [{ role: 'system', content: systemPrompt }]

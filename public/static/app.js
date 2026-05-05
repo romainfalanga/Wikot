@@ -1823,7 +1823,7 @@ function renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo) {
 
 function renderHotelInfoItemCard(item, category, canEditInfo, showCategoryBadge) {
   return `
-  <div class="bg-white rounded-lg border border-gray-200 hover:border-brand-300 transition-colors">
+  <div id="info-item-${item.id}" class="bg-white rounded-lg border border-gray-200 hover:border-brand-300 transition-colors">
     <div class="px-4 py-3 flex items-start gap-3">
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2 flex-wrap mb-1">
@@ -2384,23 +2384,62 @@ async function rejectWikotAction(actionId) {
   render();
 }
 
-function viewWikotReference(ref) {
+async function viewWikotReference(ref) {
   if (ref.type === 'procedure') {
-    viewProcedure(ref.id);
-  } else if (ref.type === 'info_item') {
+    // Procédure : navigation directe vers la page détail
+    await viewProcedure(ref.id);
+    return;
+  }
+  if (ref.type === 'info_item') {
+    // Info : on doit (1) charger la liste des infos si pas encore en mémoire,
+    //              (2) trouver la catégorie de l'item,
+    //              (3) ouvrir l'accordéon de cette catégorie,
+    //              (4) scroller vers l'item et le surligner.
+
+    // Si les infos ne sont pas chargées, on les récupère
+    if (!state.hotelInfoItems || !state.hotelInfoItems.length) {
+      try {
+        const data = await api('/hotel-info');
+        if (data) {
+          state.hotelInfoCategories = data.categories || [];
+          state.hotelInfoItems = data.items || [];
+        }
+      } catch (e) { /* on continue, on tentera quand même */ }
+    }
+
+    const item = (state.hotelInfoItems || []).find(it => it.id === ref.id);
+    const targetCategoryId = item ? item.category_id : null;
+
+    // Aller sur la vue Info, sans recherche active, et avec la bonne catégorie ouverte
     state.currentView = 'info';
-    state.hotelInfoActiveCategory = null;
     state.hotelInfoSearchQuery = '';
+    state.hotelInfoActiveCategory = targetCategoryId;
     render();
-    // Scroll vers l'item après render
+
+    // Après render, on s'assure que l'accordéon est ouvert et on scrolle/surligne
     setTimeout(() => {
+      if (targetCategoryId) {
+        const content = document.getElementById(`info-cat-content-${targetCategoryId}`);
+        const chevron = document.getElementById(`info-cat-chevron-${targetCategoryId}`);
+        if (content && content.classList.contains('hidden')) {
+          content.classList.remove('hidden');
+          if (chevron) {
+            chevron.classList.remove('fa-chevron-down');
+            chevron.classList.add('fa-chevron-up');
+          }
+        }
+      }
       const el = document.getElementById('info-item-' + ref.id);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('ring-2', 'ring-brand-400');
-        setTimeout(() => el.classList.remove('ring-2', 'ring-brand-400'), 2000);
+        el.classList.add('ring-2', 'ring-brand-400', 'shadow-md');
+        setTimeout(() => el.classList.remove('ring-2', 'ring-brand-400', 'shadow-md'), 2500);
+      } else if (targetCategoryId) {
+        // Fallback : si l'item DOM n'est pas trouvé, scroll au moins vers la catégorie
+        const catEl = document.getElementById(`info-cat-${targetCategoryId}`);
+        if (catEl) catEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
-    }, 200);
+    }, 250);
   }
 }
 

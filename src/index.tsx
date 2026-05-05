@@ -1176,6 +1176,38 @@ function wikotUserCanEditInfo(user: WikotUser): boolean {
   return user.role === 'admin' || user.can_edit_info === 1
 }
 
+// Helper : normalise un texte pour le matching algorithmique
+// (minuscules, sans accents, espaces simples, ponctuation virée)
+function normalizeForMatch(text: string): string {
+  return (text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // virer les accents
+    .replace(/[^\w\s]/g, ' ')        // ponctuation → espace
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Helper : un titre apparait-il dans un texte normalisé ?
+// Stratégie : on normalise le titre, on regarde s'il apparait tel quel,
+// sinon on découpe en mots significatifs (>3 lettres) et on demande
+// qu'au moins 60% des mots-clés du titre soient présents.
+function titleMatchesText(title: string, normalizedText: string): boolean {
+  const normTitle = normalizeForMatch(title)
+  if (!normTitle || !normalizedText) return false
+  // Match exact du titre complet
+  if (normalizedText.includes(normTitle)) return true
+  // Match par mots-clés significatifs
+  const STOPWORDS = new Set(['le','la','les','un','une','des','de','du','d','l','et','ou','a','au','aux','en','dans','pour','par','sur','avec','sans','que','qui','est','son','sa','ses','ce','cette','ces','quand','lors','lorsque'])
+  const words = normTitle.split(' ').filter(w => w.length > 3 && !STOPWORDS.has(w))
+  if (words.length === 0) return false
+  let hits = 0
+  for (const w of words) {
+    if (normalizedText.includes(w)) hits++
+  }
+  return hits / words.length >= 0.6
+}
+
 // Helper : construit l'arborescence courte de l'hôtel pour le system prompt
 async function buildHotelArborescence(db: D1Database, hotelId: number): Promise<string> {
   const cats = await db.prepare('SELECT id, name FROM categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all()
@@ -1740,6 +1772,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   // Boucle d'appels avec tools (max 5 itérations pour éviter une boucle infinie)
   const referencesCollected: any[] = []
   const proposalsCollected: { tool_name: string; args: any }[] = []
+  // IDs vus dans les résultats des tools de lecture (auto-sourcing)
+  const seenProcedureIds = new Set<number>()
+  const seenInfoItemIds = new Set<number>()
   let assistantText = ''
   let lastToolCalls: any[] | null = null
 
@@ -1777,6 +1812,16 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         if (fnName === 'add_reference') {
           referencesCollected.push({ type: fnArgs.type, id: fnArgs.id })
         }
+        // Auto-tracking : on enregistre tous les IDs que le modèle a "vus"
+        if (fnName === 'search_procedures' && Array.isArray(result)) {
+          for (const r of result) { if (r && r.id) seenProcedureIds.add(r.id) }
+        } else if (fnName === 'get_procedure' && result && (result as any).procedure?.id) {
+          seenProcedureIds.add((result as any).procedure.id)
+        } else if (fnName === 'search_hotel_info' && Array.isArray(result)) {
+          for (const r of result) { if (r && r.id) seenInfoItemIds.add(r.id) }
+        } else if (fnName === 'get_hotel_info_item' && result && (result as any).id) {
+          seenInfoItemIds.add((result as any).id)
+        }
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) })
       }
       // Tools de proposition → on stocke pour traitement après réponse finale
@@ -1790,16 +1835,119 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     }
   }
 
-  // Enrichir et déduire les références : pour chaque référence, on récupère le titre
+  // ============================================
+  // AUTO-SOURCING ALGORITHMIQUE (filet de sécurité)
+  // ============================================
+  // Si Wikot oublie d'appeler add_reference, on déduit automatiquement les références
+  // à partir de :
+  //   1) ce que le modèle a "vu" via search_*/get_* (seenProcedureIds, seenInfoItemIds)
+  //   2) un matching algorithmique titre ↔ texte de la réponse
+  //
+  // Règle : on prend en priorité ce qu'a explicitement référencé add_reference,
+  // puis on complète avec ce qui matche le titre dans le texte ET qui a été "vu".
+  // Limite : max 6 références au total.
   const enrichedRefs: any[] = []
+  const seenRefKeys = new Set<string>()
+
+  // 1) Références explicites du modèle (add_reference)
   for (const ref of referencesCollected) {
+    const key = `${ref.type}:${ref.id}`
+    if (seenRefKeys.has(key)) continue
     if (ref.type === 'procedure') {
       const p = await c.env.DB.prepare('SELECT id, title FROM procedures WHERE id = ? AND hotel_id = ?').bind(ref.id, user.hotel_id).first() as any
-      if (p) enrichedRefs.push({ type: 'procedure', id: p.id, title: p.title })
+      if (p) { enrichedRefs.push({ type: 'procedure', id: p.id, title: p.title }); seenRefKeys.add(key) }
     } else if (ref.type === 'info_item') {
       const i = await c.env.DB.prepare('SELECT id, title FROM hotel_info_items WHERE id = ? AND hotel_id = ?').bind(ref.id, user.hotel_id).first() as any
-      if (i) enrichedRefs.push({ type: 'info_item', id: i.id, title: i.title })
+      if (i) { enrichedRefs.push({ type: 'info_item', id: i.id, title: i.title }); seenRefKeys.add(key) }
     }
+  }
+
+  // 2) Auto-complétion : matching algorithmique titre ↔ texte de la réponse
+  // On charge tous les titres de procédures et infos de l'hôtel, on cherche les mentions.
+  if (assistantText && enrichedRefs.length < 6) {
+    const normText = normalizeForMatch(assistantText)
+
+    // Procédures vues : matching prioritaire (le modèle a déjà lu ces procédures)
+    if (seenProcedureIds.size > 0 && enrichedRefs.length < 6) {
+      const ids = Array.from(seenProcedureIds)
+      const placeholders = ids.map(() => '?').join(',')
+      const rows = await c.env.DB.prepare(
+        `SELECT id, title FROM procedures WHERE hotel_id = ? AND id IN (${placeholders})`
+      ).bind(user.hotel_id, ...ids).all()
+      for (const p of (rows.results as any[])) {
+        if (enrichedRefs.length >= 6) break
+        const key = `procedure:${p.id}`
+        if (seenRefKeys.has(key)) continue
+        if (titleMatchesText(p.title, normText)) {
+          enrichedRefs.push({ type: 'procedure', id: p.id, title: p.title })
+          seenRefKeys.add(key)
+        }
+      }
+    }
+
+    // Infos vues
+    if (seenInfoItemIds.size > 0 && enrichedRefs.length < 6) {
+      const ids = Array.from(seenInfoItemIds)
+      const placeholders = ids.map(() => '?').join(',')
+      const rows = await c.env.DB.prepare(
+        `SELECT id, title FROM hotel_info_items WHERE hotel_id = ? AND id IN (${placeholders})`
+      ).bind(user.hotel_id, ...ids).all()
+      for (const i of (rows.results as any[])) {
+        if (enrichedRefs.length >= 6) break
+        const key = `info_item:${i.id}`
+        if (seenRefKeys.has(key)) continue
+        if (titleMatchesText(i.title, normText)) {
+          enrichedRefs.push({ type: 'info_item', id: i.id, title: i.title })
+          seenRefKeys.add(key)
+        }
+      }
+    }
+
+    // 3) Filet de dernier recours : si AUCUNE référence et que le modèle a vu des résultats,
+    // on prend simplement les premiers résultats vus (max 3) pour garantir un sourcing.
+    if (enrichedRefs.length === 0) {
+      if (seenProcedureIds.size > 0) {
+        const ids = Array.from(seenProcedureIds).slice(0, 3)
+        const placeholders = ids.map(() => '?').join(',')
+        const rows = await c.env.DB.prepare(
+          `SELECT id, title FROM procedures WHERE hotel_id = ? AND id IN (${placeholders})`
+        ).bind(user.hotel_id, ...ids).all()
+        for (const p of (rows.results as any[])) {
+          enrichedRefs.push({ type: 'procedure', id: p.id, title: p.title })
+        }
+      } else if (seenInfoItemIds.size > 0) {
+        const ids = Array.from(seenInfoItemIds).slice(0, 3)
+        const placeholders = ids.map(() => '?').join(',')
+        const rows = await c.env.DB.prepare(
+          `SELECT id, title FROM hotel_info_items WHERE hotel_id = ? AND id IN (${placeholders})`
+        ).bind(user.hotel_id, ...ids).all()
+        for (const i of (rows.results as any[])) {
+          enrichedRefs.push({ type: 'info_item', id: i.id, title: i.title })
+        }
+      }
+    }
+  }
+
+  // ============================================
+  // FALLBACK TEXTE : si la réponse est vide ou trop courte alors qu'on a des références,
+  // on génère algorithmiquement une intro synthétique pour garantir un message exploitable.
+  // ============================================
+  const trimmedText = (assistantText || '').trim()
+  if (trimmedText.length < 40 && enrichedRefs.length > 0) {
+    const procRefs = enrichedRefs.filter(r => r.type === 'procedure')
+    const infoRefs = enrichedRefs.filter(r => r.type === 'info_item')
+    const parts: string[] = []
+    if (procRefs.length === 1) {
+      parts.push(`Voici la procédure qui répond à ta question : **${procRefs[0].title}**. Clique sur le bouton ci-dessous pour voir le détail complet.`)
+    } else if (procRefs.length > 1) {
+      parts.push(`Plusieurs procédures correspondent à ta question :\n${procRefs.map(r => '• **' + r.title + '**').join('\n')}\n\nClique sur les boutons ci-dessous pour ouvrir chacune.`)
+    }
+    if (infoRefs.length === 1) {
+      parts.push(`Voici l'information qui répond à ta question : **${infoRefs[0].title}**. Clique sur le bouton ci-dessous pour aller directement à l'emplacement.`)
+    } else if (infoRefs.length > 1) {
+      parts.push(`Plusieurs informations correspondent à ta question :\n${infoRefs.map(r => '• **' + r.title + '**').join('\n')}\n\nClique sur les boutons ci-dessous pour aller à chacune.`)
+    }
+    assistantText = parts.join('\n\n')
   }
 
   // Sauvegarder le message assistant

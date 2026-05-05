@@ -20,7 +20,6 @@ let state = {
   selectedProcedure: null,
   searchQuery: '',
   filterCategory: '',
-  filterStatus: '',
   unreadRequired: 0,
   // Chat
   chatGroups: [],
@@ -797,7 +796,7 @@ function renderDashboard() {
               <i class="fas ${cat.icon} text-base sm:text-lg" style="color:${cat.color}"></i>
             </div>
             <p class="text-[10px] sm:text-xs font-medium text-navy-700 leading-tight">${cat.name}</p>
-            <p class="text-[9px] sm:text-[10px] text-navy-400">${state.procedures.filter(p => p.category_id == cat.id && p.status === 'active').length} proc.</p>
+            <p class="text-[9px] sm:text-[10px] text-navy-400">${state.procedures.filter(p => p.category_id == cat.id).length} proc.</p>
           </button>
         `).join('')}
       </div>
@@ -849,7 +848,6 @@ function renderProceduresList() {
   const canEdit = userCanEditProcedures();
   let filtered = state.procedures;
   if (state.filterCategory) filtered = filtered.filter(p => p.category_id == state.filterCategory);
-  if (state.filterStatus) filtered = filtered.filter(p => p.status === state.filterStatus);
 
   // Group by category
   const grouped = {};
@@ -880,14 +878,8 @@ function renderProceduresList() {
           <option value="">Toutes les catégories</option>
           ${state.categories.map(c => `<option value="${c.id}" ${state.filterCategory == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
         </select>
-        <select onchange="state.filterStatus=this.value; render()" class="flex-1 text-sm border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
-          <option value="">Tous les statuts</option>
-          <option value="active" ${state.filterStatus === 'active' ? 'selected' : ''}>✅ Active</option>
-          <option value="draft" ${state.filterStatus === 'draft' ? 'selected' : ''}>📝 Brouillon</option>
-          <option value="archived" ${state.filterStatus === 'archived' ? 'selected' : ''}>📦 Archivée</option>
-        </select>
-        ${state.filterCategory || state.filterStatus ? `
-        <button onclick="state.filterCategory='';state.filterStatus=''; render()" class="text-xs text-red-500 hover:text-red-700 flex items-center justify-center gap-1 px-3 py-2 border border-red-200 rounded-lg">
+        ${state.filterCategory ? `
+        <button onclick="state.filterCategory=''; render()" class="text-xs text-red-500 hover:text-red-700 flex items-center justify-center gap-1 px-3 py-2 border border-red-200 rounded-lg">
           <i class="fas fa-times"></i>Réinitialiser
         </button>` : ''}
       </div>
@@ -920,42 +912,29 @@ function renderProceduresList() {
 }
 
 function renderProcedureCard(proc, canEdit) {
-  const statusConfig = {
-    active: { label: 'Active', class: 'bg-green-100 text-green-700', icon: 'fa-check-circle' },
-    draft: { label: 'Brouillon', class: 'bg-yellow-100 text-yellow-700', icon: 'fa-pen' },
-    archived: { label: 'Archivée', class: 'bg-gray-100 text-gray-500', icon: 'fa-archive' }
-  };
   const priorityConfig = {
     critical: { label: 'Critique', class: 'text-red-600' },
     high: { label: 'Important', class: 'text-orange-500' },
     normal: { label: 'Normal', class: 'text-blue-500' },
     low: { label: 'Faible', class: 'text-gray-400' }
   };
-  const st = statusConfig[proc.status] || statusConfig.draft;
   const pr = priorityConfig[proc.priority] || priorityConfig.normal;
+  // Description : on prend description, sinon trigger_event (ancien champ migré)
+  const descSnippet = (proc.description || proc.trigger_event || '').slice(0, 120);
 
   return `
   <div class="px-4 sm:px-5 py-3 sm:py-4 hover:bg-gray-50 transition-colors cursor-pointer priority-${proc.priority}" onclick="viewProcedure(${proc.id})">
     <div class="flex items-start gap-3">
-      <div class="w-9 h-9 sm:w-10 sm:h-10 bg-navy-50 rounded-xl flex items-center justify-center shrink-0 mt-0.5">
-        <i class="fas ${proc.trigger_icon || 'fa-bolt'} text-navy-500 text-sm"></i>
-      </div>
       <div class="flex-1 min-w-0">
         <div class="flex flex-wrap items-center gap-1.5 mb-1">
-          <h4 class="font-semibold text-navy-800 text-sm sm:text-base truncate max-w-full">${proc.title}</h4>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${st.class} shrink-0">
-            <i class="fas ${st.icon} mr-0.5"></i>${st.label}
-          </span>
+          <h4 class="font-semibold text-navy-800 text-sm sm:text-base truncate max-w-full">${escapeHtml(proc.title)}</h4>
           ${proc.priority !== 'normal' ? `<span class="text-[10px] font-medium ${pr.class} shrink-0"><i class="fas fa-flag mr-0.5"></i>${pr.label}</span>` : ''}
         </div>
-        <div class="flex items-center gap-1 mb-1">
-          <i class="fas fa-bolt text-[10px] text-brand-400"></i>
-          <p class="text-xs sm:text-sm text-navy-600 truncate">${proc.trigger_event}</p>
-        </div>
+        ${descSnippet ? `<p class="text-xs sm:text-sm text-navy-600 mb-1 line-clamp-2">${escapeHtml(descSnippet)}${(proc.description || proc.trigger_event || '').length > 120 ? '…' : ''}</p>` : ''}
         <div class="flex flex-wrap items-center gap-2 sm:gap-4 text-[11px] text-navy-400">
-          <span><i class="fas fa-list-ol mr-1"></i>${proc.step_count || 0} étapes</span>
+          <span><i class="fas fa-list-ol mr-1"></i>${proc.step_count || 0} étape${(proc.step_count || 0) > 1 ? 's' : ''}</span>
           ${proc.condition_count > 0 ? `<span class="hidden sm:inline"><i class="fas fa-code-branch mr-1"></i>${proc.condition_count} cas</span>` : ''}
-          <span class="hidden sm:inline"><i class="fas fa-code-branch mr-1"></i>v${proc.version || 1}</span>
+          <span class="hidden sm:inline">v${proc.version || 1}</span>
         </div>
       </div>
       <div class="flex items-center gap-1 shrink-0">
@@ -963,10 +942,6 @@ function renderProcedureCard(proc, canEdit) {
           <button onclick="event.stopPropagation(); showProcedureForm(${proc.id})" class="w-8 h-8 rounded-lg bg-navy-50 hover:bg-navy-100 flex items-center justify-center text-navy-400 hover:text-navy-600 transition-colors" title="Modifier">
             <i class="fas fa-pen text-xs"></i>
           </button>
-          ${proc.status === 'draft' ? `
-          <button onclick="event.stopPropagation(); changeProcedureStatus(${proc.id}, 'active')" class="w-8 h-8 rounded-lg bg-green-50 hover:bg-green-100 flex items-center justify-center text-green-500 hover:text-green-700 transition-colors" title="Activer">
-            <i class="fas fa-check text-xs"></i>
-          </button>` : ''}
         ` : ''}
         <i class="fas fa-chevron-right text-navy-300 text-xs ml-1"></i>
       </div>
@@ -993,6 +968,9 @@ function renderProcedureDetail() {
 
   const priorityBorder = { critical: 'border-red-500', high: 'border-orange-400', normal: 'border-blue-400', low: 'border-gray-300' };
 
+  // Description : on prend description, sinon trigger_event (ancien champ migré)
+  const procDescription = proc.description || proc.trigger_event || '';
+
   return `
   <div class="fade-in">
     <!-- Header -->
@@ -1003,18 +981,13 @@ function renderProcedureDetail() {
       
       <div class="bg-white rounded-xl shadow-sm border-l-4 ${priorityBorder[proc.priority] || 'border-blue-400'} p-4 sm:p-6">
         <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-          <div class="flex items-start gap-3 sm:gap-4">
-            <div class="w-12 h-12 sm:w-14 sm:h-14 bg-navy-50 rounded-xl flex items-center justify-center shrink-0">
-              <i class="fas ${proc.trigger_icon || 'fa-bolt'} text-xl sm:text-2xl text-navy-600"></i>
-            </div>
-            <div class="flex-1 min-w-0">
-              <h2 class="text-lg sm:text-xl font-bold text-navy-900 leading-tight">${proc.title}</h2>
-              ${proc.description ? `<p class="text-navy-500 text-sm mt-1">${proc.description}</p>` : ''}
-              <div class="flex flex-wrap items-center gap-2 mt-2 sm:mt-3 text-xs text-navy-400">
-                <span class="bg-navy-50 px-2 py-1 rounded">${proc.category_name || 'Sans catégorie'}</span>
-                <span>v${proc.version}</span>
-                ${proc.approved_by_name ? `<span><i class="fas fa-check-circle text-green-500 mr-1"></i>Approuvé par ${proc.approved_by_name}</span>` : ''}
-              </div>
+          <div class="flex-1 min-w-0">
+            <h2 class="text-lg sm:text-xl font-bold text-navy-900 leading-tight">${escapeHtml(proc.title)}</h2>
+            ${procDescription ? `<p class="text-navy-600 text-sm sm:text-base mt-2 leading-relaxed whitespace-pre-wrap">${formatHotelInfoContent(procDescription)}</p>` : ''}
+            <div class="flex flex-wrap items-center gap-2 mt-3 text-xs text-navy-400">
+              <span class="bg-navy-50 px-2 py-1 rounded">${proc.category_name || 'Sans catégorie'}</span>
+              <span>v${proc.version}</span>
+              ${proc.approved_by_name ? `<span><i class="fas fa-check-circle text-green-500 mr-1"></i>Approuvé par ${proc.approved_by_name}</span>` : ''}
             </div>
           </div>
           ${canEdit ? `
@@ -1027,28 +1000,14 @@ function renderProcedureDetail() {
       </div>
     </div>
 
-    <!-- Trigger -->
-    <div class="bg-gradient-to-r from-brand-50 to-yellow-50 rounded-xl border border-brand-200 p-5 mb-6">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-brand-400 rounded-xl flex items-center justify-center shadow">
-          <i class="fas fa-bolt text-white"></i>
-        </div>
-        <div>
-          <p class="text-xs font-semibold text-brand-600 uppercase tracking-wide">Déclencheur — Qu'est-ce qu'il se passe ?</p>
-          <p class="text-lg font-semibold text-navy-800 mt-0.5">${proc.trigger_event}</p>
-          ${proc.trigger_conditions ? `<p class="text-sm text-navy-500 mt-1">${proc.trigger_conditions}</p>` : ''}
-        </div>
-      </div>
-    </div>
-
     <!-- Steps - What to do -->
     <div class="mb-8">
       <div class="flex items-center gap-2 mb-4">
         <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
           <i class="fas fa-list-check text-white text-sm"></i>
         </div>
-        <h3 class="text-lg font-semibold text-navy-800">Qu'est-ce que je dois faire ?</h3>
-        <span class="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">${steps.length} étapes</span>
+        <h3 class="text-lg font-semibold text-navy-800">Étapes</h3>
+        <span class="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">${steps.length} étape${steps.length > 1 ? 's' : ''}</span>
       </div>
 
       <div class="space-y-0">
@@ -1077,50 +1036,57 @@ function renderProcedureDetail() {
 }
 
 function renderStep(step, index, total) {
-  const typeConfig = {
-    action: { icon: 'fa-hand-pointer', color: 'bg-blue-500', label: 'Action' },
-    decision: { icon: 'fa-code-branch', color: 'bg-purple-500', label: 'Décision' },
-    notification: { icon: 'fa-bell', color: 'bg-yellow-500', label: 'Notification' },
-    escalation: { icon: 'fa-arrow-up', color: 'bg-red-500', label: 'Escalade' },
-    check: { icon: 'fa-clipboard-check', color: 'bg-green-500', label: 'Vérification' }
-  };
-  const tc = typeConfig[step.step_type] || typeConfig.action;
+  const isLinked = !!step.linked_procedure_id;
+  // Style spécifique pour les sous-procédures (couleur violette)
+  const bubbleColor = isLinked ? 'bg-purple-500' : 'bg-blue-500';
+  // Contenu : on prend content, sinon fallback description (rare, pour anciennes données)
+  const stepContent = step.content || step.description || '';
 
   return `
   <div class="step-connector ${index === total - 1 ? 'last-step' : ''}">
     <div class="flex gap-4 pb-6">
       <div class="flex flex-col items-center">
-        <div class="w-10 h-10 ${tc.color} rounded-xl flex items-center justify-center text-white shadow-sm shrink-0 z-10">
+        <div class="w-10 h-10 ${bubbleColor} rounded-xl flex items-center justify-center text-white shadow-sm shrink-0 z-10">
           <span class="text-sm font-bold">${step.step_number}</span>
         </div>
       </div>
       <div class="flex-1 bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
-        <div class="flex items-center gap-2 mb-1.5">
-          <i class="fas ${tc.icon} text-xs ${tc.color.replace('bg-', 'text-')}"></i>
-          <span class="text-[10px] uppercase tracking-wider font-semibold ${tc.color.replace('bg-', 'text-')}">${tc.label}</span>
-          ${step.is_optional ? '<span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Optionnel</span>' : ''}
-          ${step.duration_minutes ? `<span class="text-[10px] text-navy-400"><i class="fas fa-clock mr-0.5"></i>${step.duration_minutes} min</span>` : ''}
-        </div>
-        <h4 class="font-semibold text-navy-800">${step.title}</h4>
-        ${step.description ? `<p class="text-sm text-navy-500 mt-1">${step.description}</p>` : ''}
-        ${step.details ? `
-        <div class="mt-3 bg-blue-50 border border-blue-100 rounded-lg p-3">
-          <p class="text-xs font-semibold text-blue-700 mb-1"><i class="fas fa-info-circle mr-1"></i>Détails</p>
-          <p class="text-sm text-blue-800">${step.details}</p>
-        </div>` : ''}
-        ${step.warning ? `
-        <div class="mt-3 bg-red-50 border border-red-100 rounded-lg p-3">
-          <p class="text-xs font-semibold text-red-700 mb-1"><i class="fas fa-exclamation-triangle mr-1"></i>Attention</p>
-          <p class="text-sm text-red-800">${step.warning}</p>
-        </div>` : ''}
-        ${step.tip ? `
-        <div class="mt-3 bg-green-50 border border-green-100 rounded-lg p-3">
-          <p class="text-xs font-semibold text-green-700 mb-1"><i class="fas fa-lightbulb mr-1"></i>Astuce</p>
-          <p class="text-sm text-green-800">${step.tip}</p>
-        </div>` : ''}
+        ${isLinked ? `
+          <!-- Sous-procédure : carte cliquable qui ouvre la procédure liée -->
+          <button type="button" onclick="openLinkedProcedure(${step.linked_procedure_id})" class="w-full text-left">
+            <div class="flex items-center gap-2 mb-1">
+              <i class="fas fa-diagram-project text-xs text-purple-500"></i>
+              <span class="text-[10px] uppercase tracking-wider font-semibold text-purple-500">Sous-procédure</span>
+              ${step.is_optional ? '<span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Optionnel</span>' : ''}
+            </div>
+            <h4 class="font-semibold text-navy-800 flex items-center gap-2">
+              ${escapeHtml(step.title)}
+              <i class="fas fa-arrow-right text-xs text-purple-400"></i>
+            </h4>
+            ${step.linked_procedure_title ? `<p class="text-sm text-purple-600 mt-1"><i class="fas fa-link mr-1 text-xs"></i>${escapeHtml(step.linked_procedure_title)}</p>` : '<p class="text-sm text-red-400 mt-1 italic">Procédure liée introuvable</p>'}
+          </button>
+        ` : `
+          <div class="flex items-center gap-2 mb-1.5">
+            ${step.is_optional ? '<span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Optionnel</span>' : ''}
+            ${step.duration_minutes ? `<span class="text-[10px] text-navy-400"><i class="fas fa-clock mr-0.5"></i>${step.duration_minutes} min</span>` : ''}
+          </div>
+          <h4 class="font-semibold text-navy-800">${escapeHtml(step.title)}</h4>
+          ${stepContent ? `<div class="text-sm text-navy-600 mt-2 leading-relaxed whitespace-pre-wrap">${formatHotelInfoContent(stepContent)}</div>` : ''}
+        `}
       </div>
     </div>
   </div>`;
+}
+
+// Ouvre une procédure liée (sous-procédure)
+async function openLinkedProcedure(procId) {
+  const data = await api(`/procedures/${procId}`);
+  if (data) {
+    state.selectedProcedure = data;
+    render();
+    // Scroll en haut pour bien voir la procédure ouverte
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 }
 
 function renderCondition(cond) {
@@ -1132,10 +1098,10 @@ function renderCondition(cond) {
       </div>
       <div>
         <p class="text-xs font-semibold text-purple-600 uppercase tracking-wide">Si en plus...</p>
-        <p class="font-semibold text-purple-900">${cond.condition_text}</p>
+        <p class="font-semibold text-purple-900">${escapeHtml(cond.condition_text)}</p>
       </div>
     </div>
-    ${cond.description ? `<p class="px-5 pt-3 text-sm text-purple-700">${cond.description}</p>` : ''}
+    ${cond.description ? `<p class="px-5 pt-3 text-sm text-purple-700">${escapeHtml(cond.description)}</p>` : ''}
     <div class="p-5">
       ${(cond.steps || []).length === 0 ? '<p class="text-sm text-purple-400">Aucune étape spécifique</p>' :
         `<div class="space-y-0">
@@ -1183,11 +1149,9 @@ function renderSearchResults(returnString = false) {
   if (!query) return '';
   
   const results = state.procedures.filter(p => 
-    p.status === 'active' && (
-      p.title.toLowerCase().includes(query) ||
-      p.trigger_event.toLowerCase().includes(query) ||
-      (p.description || '').toLowerCase().includes(query)
-    )
+    p.title.toLowerCase().includes(query) ||
+    (p.trigger_event || '').toLowerCase().includes(query) ||
+    (p.description || '').toLowerCase().includes(query)
   );
 
   const html = results.length === 0 ? `
@@ -1199,25 +1163,24 @@ function renderSearchResults(returnString = false) {
   ` : `
     <div class="space-y-3">
       <p class="text-sm text-navy-400 mb-2">${results.length} résultat(s)</p>
-      ${results.map(proc => `
+      ${results.map(proc => {
+        const descSnippet = (proc.description || proc.trigger_event || '').slice(0, 140);
+        return `
         <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md cursor-pointer transition-all priority-${proc.priority}" onclick="viewProcedure(${proc.id})">
           <div class="flex items-start gap-3">
-            <div class="w-10 h-10 bg-brand-50 rounded-xl flex items-center justify-center shrink-0">
-              <i class="fas ${proc.trigger_icon || 'fa-bolt'} text-brand-500"></i>
-            </div>
-            <div class="flex-1">
-              <h4 class="font-semibold text-navy-800">${proc.title}</h4>
-              <p class="text-sm text-navy-500 mt-0.5"><i class="fas fa-bolt text-brand-400 mr-1 text-xs"></i>${proc.trigger_event}</p>
+            <div class="flex-1 min-w-0">
+              <h4 class="font-semibold text-navy-800">${escapeHtml(proc.title)}</h4>
+              ${descSnippet ? `<p class="text-sm text-navy-500 mt-1 line-clamp-2">${escapeHtml(descSnippet)}${(proc.description || proc.trigger_event || '').length > 140 ? '…' : ''}</p>` : ''}
               <div class="flex gap-3 mt-2 text-[11px] text-navy-400">
                 <span>${proc.category_name || 'Sans catégorie'}</span>
-                <span>${proc.step_count} étapes</span>
+                <span>${proc.step_count} étape${proc.step_count > 1 ? 's' : ''}</span>
                 ${proc.condition_count > 0 ? `<span>${proc.condition_count} cas spécifiques</span>` : ''}
               </div>
             </div>
             <i class="fas fa-chevron-right text-navy-300 mt-2"></i>
           </div>
-        </div>
-      `).join('')}
+        </div>`;
+      }).join('')}
     </div>`;
 
   if (returnString) return html;
@@ -2096,11 +2059,7 @@ function renderTemplatesView() {
               ${t.category_name ? `<span class="text-[10px] bg-navy-50 text-navy-500 px-1.5 py-0.5 rounded">${t.category_name}</span>` : ''}
             </div>
           </div>
-          ${t.description ? `<p class="text-sm text-navy-500 mb-3">${t.description}</p>` : ''}
-          <div class="bg-navy-50 rounded-lg p-3 mb-3">
-            <p class="text-xs text-navy-400 mb-1"><i class="fas fa-bolt mr-1 text-brand-400"></i>Déclencheur</p>
-            <p class="text-sm text-navy-700">${t.trigger_event}</p>
-          </div>
+          ${t.description ? `<p class="text-sm text-navy-500 mb-3 whitespace-pre-wrap">${escapeHtml(t.description)}</p>` : (t.trigger_event ? `<p class="text-sm text-navy-500 mb-3 whitespace-pre-wrap">${escapeHtml(t.trigger_event)}</p>` : '')}
           <div class="flex items-center justify-between">
             <span class="text-xs text-navy-400"><i class="fas fa-list mr-1"></i>${steps.length} étapes</span>
             <button onclick="deleteTemplate(${t.id})" class="text-xs text-red-400 hover:text-red-600 transition-colors">
@@ -2779,24 +2738,22 @@ async function showProcedureForm(procedureId = null) {
     if (data) { proc = data.procedure; steps = data.steps; conditions = data.conditions; }
   }
 
+  // Tracker la procédure courante pour exclure de la liste des sous-procédures dans stepFieldHTML
+  currentEditingProcId = procedureId;
+
   const content = `
   <form onsubmit="event.preventDefault(); saveProcedure(${procedureId || 'null'})">
     <div class="space-y-4">
       <div class="space-y-3">
         <div>
           <label class="block text-sm font-medium text-navy-600 mb-1">Titre de la procédure *</label>
-          <input id="proc-title" type="text" required value="${proc?.title || ''}" placeholder="Ex: Check-in d'un client"
+          <input id="proc-title" type="text" required value="${proc?.title || ''}" placeholder="Ex: Check-in d'un client" data-proc-id="${procedureId || ''}"
             class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
         </div>
         <div>
-          <label class="block text-sm font-medium text-navy-600 mb-1">Description</label>
-          <textarea id="proc-desc" rows="3" oninput="autoResizeTextarea(this)" placeholder="Description courte de la procédure"
-            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">${proc?.description || ''}</textarea>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-navy-600 mb-1"><i class="fas fa-bolt text-brand-400 mr-1"></i>Déclencheur — Qu'est-ce qu'il se passe ? *</label>
-          <input id="proc-trigger" type="text" required value="${proc?.trigger_event || ''}" placeholder="Ex: Un client arrive à la réception pour s'enregistrer"
-            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
+          <label class="block text-sm font-medium text-navy-600 mb-1">Description / Contexte</label>
+          <textarea id="proc-desc" rows="3" oninput="autoResizeTextarea(this)" placeholder="Quand est-ce qu'on suit cette procédure ? Pourquoi ? Ce qu'il faut savoir avant de commencer..."
+            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">${proc?.description || proc?.trigger_event || ''}</textarea>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -2813,19 +2770,6 @@ async function showProcedureForm(procedureId = null) {
               <option value="normal" ${!proc || proc?.priority === 'normal' ? 'selected' : ''}>Normal</option>
               <option value="high" ${proc?.priority === 'high' ? 'selected' : ''}>Important</option>
               <option value="critical" ${proc?.priority === 'critical' ? 'selected' : ''}>Critique</option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-navy-600 mb-1">Icône du déclencheur</label>
-            <input id="proc-icon" type="text" value="${proc?.trigger_icon || 'fa-bolt'}" placeholder="fa-bolt"
-              class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-navy-600 mb-1">Statut</label>
-            <select id="proc-status" class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 bg-white">
-              <option value="draft" ${!proc || proc?.status === 'draft' ? 'selected' : ''}>Brouillon</option>
-              <option value="active" ${proc?.status === 'active' ? 'selected' : ''}>Active</option>
-              <option value="archived" ${proc?.status === 'archived' ? 'selected' : ''}>Archivée</option>
             </select>
           </div>
         </div>
@@ -2868,38 +2812,82 @@ async function showProcedureForm(procedureId = null) {
 let stepCounter = 0;
 let conditionCounter = 0;
 
+// Variable globale pour tracker la procédure actuellement en édition
+// (utilisée par stepFieldHTML pour exclure la procédure courante de la liste des sous-procédures)
+let currentEditingProcId = null;
+
 function stepFieldHTML(index, step = null) {
   const id = stepCounter++;
+  // Liste des procédures dispo pour la sous-procédure (on exclut celle qu'on édite)
+  const availableProcedures = (state.procedures || []).filter(p => !currentEditingProcId || String(p.id) !== String(currentEditingProcId));
+  const isLinked = step && step.linked_procedure_id;
+  const linkedId = step?.linked_procedure_id || '';
+
   return `
   <div class="bg-navy-50 rounded-lg p-3 sm:p-4 step-field" data-step-id="${id}">
     <div class="flex items-center gap-2 mb-3 flex-wrap">
       <span class="text-sm font-bold text-navy-500">Étape ${index + 1}</span>
-      <select class="step-type form-input-mobile text-sm border border-navy-200 rounded px-2 py-1.5 bg-white">
-        <option value="action" ${step?.step_type === 'action' || !step ? 'selected' : ''}>Action</option>
-        <option value="check" ${step?.step_type === 'check' ? 'selected' : ''}>Vérification</option>
-        <option value="notification" ${step?.step_type === 'notification' ? 'selected' : ''}>Notification</option>
-        <option value="escalation" ${step?.step_type === 'escalation' ? 'selected' : ''}>Escalade</option>
-        <option value="decision" ${step?.step_type === 'decision' ? 'selected' : ''}>Décision</option>
-      </select>
       <button type="button" onclick="this.closest('.step-field').remove()" class="ml-auto text-red-400 hover:text-red-600 text-sm w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center"><i class="fas fa-trash"></i></button>
     </div>
+
+    <!-- Type d'étape : simple ou sous-procédure -->
+    <div class="flex gap-2 mb-3 p-1 bg-white rounded-lg border border-navy-200">
+      <label class="flex-1 cursor-pointer">
+        <input type="radio" name="step-kind-${id}" class="step-kind sr-only" value="simple" ${!isLinked ? 'checked' : ''} onchange="toggleStepKind(this)">
+        <div class="text-center text-sm font-medium px-3 py-2 rounded-md transition-colors ${!isLinked ? 'bg-brand-400 text-white' : 'text-navy-500 hover:bg-navy-50'}">
+          <i class="fas fa-pen-to-square mr-1.5"></i>Étape simple
+        </div>
+      </label>
+      <label class="flex-1 cursor-pointer">
+        <input type="radio" name="step-kind-${id}" class="step-kind sr-only" value="linked" ${isLinked ? 'checked' : ''} onchange="toggleStepKind(this)">
+        <div class="text-center text-sm font-medium px-3 py-2 rounded-md transition-colors ${isLinked ? 'bg-purple-500 text-white' : 'text-navy-500 hover:bg-navy-50'}">
+          <i class="fas fa-diagram-project mr-1.5"></i>Sous-procédure
+        </div>
+      </label>
+    </div>
+
     <label class="block text-xs font-medium text-navy-500 mb-1">Titre *</label>
-    <input type="text" class="step-title form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-3" placeholder="Titre de l'étape" value="${step?.title || ''}" required>
-    <label class="block text-xs font-medium text-navy-500 mb-1">Description</label>
-    <textarea class="step-desc form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-3" rows="3" oninput="autoResizeTextarea(this)" placeholder="Description courte">${step?.description || ''}</textarea>
-    <label class="block text-xs font-medium text-navy-500 mb-1">Détails / Instructions</label>
-    <textarea class="step-details form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-3" rows="4" oninput="autoResizeTextarea(this)" placeholder="Détails complets, instructions, script à dire...">${step?.details || ''}</textarea>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-      <div>
-        <label class="block text-xs font-medium text-amber-600 mb-1">⚠️ Attention</label>
-        <input type="text" class="step-warning form-input-mobile w-full border border-amber-200 rounded-lg px-3 py-2.5 text-base bg-amber-50/30" placeholder="Point critique à ne pas oublier" value="${step?.warning || ''}">
-      </div>
-      <div>
-        <label class="block text-xs font-medium text-emerald-600 mb-1">💡 Astuce</label>
-        <input type="text" class="step-tip form-input-mobile w-full border border-emerald-200 rounded-lg px-3 py-2.5 text-base bg-emerald-50/30" placeholder="Conseil ou bonne pratique" value="${step?.tip || ''}">
-      </div>
+    <input type="text" class="step-title form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-3" placeholder="Ex: Vérifier l'identité du client" value="${step?.title || ''}" required>
+
+    <!-- Bloc étape simple -->
+    <div class="step-simple-block ${isLinked ? 'hidden' : ''}">
+      <label class="block text-xs font-medium text-navy-500 mb-1">Contenu / Instructions</label>
+      <textarea class="step-content form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base" rows="5" oninput="autoResizeTextarea(this)" placeholder="Détails complets de l'étape : ce qu'il faut faire, dire, vérifier...&#10;&#10;Astuces : utilisez **gras** pour mettre en valeur, • pour des puces.">${step?.content || ''}</textarea>
+      <p class="text-xs text-navy-400 mt-1">Vous pouvez utiliser **gras** et des puces (• ou -)</p>
+    </div>
+
+    <!-- Bloc sous-procédure -->
+    <div class="step-linked-block ${isLinked ? '' : 'hidden'}">
+      <label class="block text-xs font-medium text-purple-600 mb-1"><i class="fas fa-diagram-project mr-1"></i>Procédure liée</label>
+      <select class="step-linked-id form-input-mobile w-full border border-purple-200 rounded-lg px-3 py-2.5 text-base bg-white">
+        <option value="">— Choisir une procédure —</option>
+        ${availableProcedures.map(p => `<option value="${p.id}" ${String(p.id) === String(linkedId) ? 'selected' : ''}>${escapeHtml(p.title)}</option>`).join('')}
+      </select>
+      <p class="text-xs text-navy-400 mt-1">Cette étape ouvrira la procédure sélectionnée en sous-vue.</p>
     </div>
   </div>`;
+}
+
+// Toggle UI des deux variantes d'étape (simple / sous-procédure)
+function toggleStepKind(radio) {
+  const field = radio.closest('.step-field');
+  if (!field) return;
+  const kind = radio.value;
+  const simpleBlock = field.querySelector('.step-simple-block');
+  const linkedBlock = field.querySelector('.step-linked-block');
+  if (simpleBlock) simpleBlock.classList.toggle('hidden', kind !== 'simple');
+  if (linkedBlock) linkedBlock.classList.toggle('hidden', kind !== 'linked');
+  // Mise à jour visuelle des labels (couleur active)
+  field.querySelectorAll('.step-kind').forEach(r => {
+    const wrapper = r.parentElement.querySelector('div');
+    if (!wrapper) return;
+    const isActive = r.checked;
+    if (r.value === 'simple') {
+      wrapper.className = `text-center text-sm font-medium px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-brand-400 text-white' : 'text-navy-500 hover:bg-navy-50'}`;
+    } else {
+      wrapper.className = `text-center text-sm font-medium px-3 py-2 rounded-md transition-colors ${isActive ? 'bg-purple-500 text-white' : 'text-navy-500 hover:bg-navy-50'}`;
+    }
+  });
 }
 
 function conditionFieldHTML(index, cond = null) {
@@ -2934,7 +2922,7 @@ function condStepFieldHTML(index, step = null) {
       <button type="button" onclick="this.closest('.cond-step-field').remove()" class="ml-auto text-red-400 hover:text-red-600 w-7 h-7 rounded hover:bg-red-50 flex items-center justify-center"><i class="fas fa-times text-sm"></i></button>
     </div>
     <input type="text" class="cstep-title form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-2" placeholder="Titre de l'étape" value="${step?.title || ''}">
-    <textarea class="cstep-desc form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base" rows="2" oninput="autoResizeTextarea(this)" placeholder="Description">${step?.description || ''}</textarea>
+    <textarea class="cstep-content form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base" rows="3" oninput="autoResizeTextarea(this)" placeholder="Contenu / instructions">${step?.content || step?.description || ''}</textarea>
   </div>`;
 }
 
@@ -2961,14 +2949,14 @@ async function saveProcedure(existingId) {
   document.querySelectorAll('.step-field').forEach((el, i) => {
     const title = el.querySelector('.step-title').value.trim();
     if (!title) return;
+    const kind = el.querySelector('.step-kind:checked')?.value || 'simple';
+    const linkedId = el.querySelector('.step-linked-id')?.value;
+    const isLinked = kind === 'linked' && linkedId;
     steps.push({
       step_number: i + 1,
       title,
-      description: el.querySelector('.step-desc').value.trim(),
-      step_type: el.querySelector('.step-type').value,
-      details: el.querySelector('.step-details').value.trim(),
-      warning: el.querySelector('.step-warning').value.trim(),
-      tip: el.querySelector('.step-tip').value.trim()
+      content: isLinked ? '' : (el.querySelector('.step-content')?.value.trim() || ''),
+      linked_procedure_id: isLinked ? parseInt(linkedId) : null
     });
   });
 
@@ -2980,19 +2968,19 @@ async function saveProcedure(existingId) {
     el.querySelectorAll('.cond-step-field').forEach((sel, j) => {
       const title = sel.querySelector('.cstep-title').value.trim();
       if (!title) return;
-      condSteps.push({ step_number: j + 1, title, description: sel.querySelector('.cstep-desc').value.trim() });
+      condSteps.push({ step_number: j + 1, title, content: sel.querySelector('.cstep-content').value.trim() });
     });
     conditions.push({ condition_text: condText, description: el.querySelector('.cond-desc').value.trim(), sort_order: i, steps: condSteps });
   });
 
+  const desc = document.getElementById('proc-desc').value.trim();
   const body = {
     title: document.getElementById('proc-title').value.trim(),
-    description: document.getElementById('proc-desc').value.trim(),
-    trigger_event: document.getElementById('proc-trigger').value.trim(),
-    trigger_icon: document.getElementById('proc-icon').value.trim() || 'fa-bolt',
+    description: desc,
+    // trigger_event toujours requis côté DB : on réutilise la description comme fallback
+    trigger_event: desc || document.getElementById('proc-title').value.trim(),
     category_id: document.getElementById('proc-category').value || null,
     priority: document.getElementById('proc-priority').value,
-    status: document.getElementById('proc-status').value,
     steps,
     conditions
   };
@@ -3197,11 +3185,6 @@ function showTemplateForm() {
         <input id="tpl-category" type="text" placeholder="Ex: Réception" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
-        <label class="block text-sm font-medium text-navy-600 mb-1">Déclencheur *</label>
-        <input id="tpl-trigger" type="text" required placeholder="Qu'est-ce qu'il se passe ?"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
-      </div>
-      <div>
         <div class="flex items-center justify-between mb-2">
           <label class="text-sm font-medium text-navy-600">Étapes</label>
           <button type="button" onclick="addTplStep()" class="text-xs text-blue-500 hover:text-blue-700"><i class="fas fa-plus mr-1"></i>Ajouter</button>
@@ -3241,11 +3224,13 @@ async function createTemplate() {
     steps.push({ step_number: i + 1, title, description: el.querySelector('.tpl-step-desc').value.trim(), step_type: 'action' });
   });
 
+  const desc = document.getElementById('tpl-desc').value.trim();
   const data = {
     name: document.getElementById('tpl-name').value.trim(),
-    description: document.getElementById('tpl-desc').value.trim(),
+    description: desc,
     category_name: document.getElementById('tpl-category').value.trim(),
-    trigger_event: document.getElementById('tpl-trigger').value.trim(),
+    // trigger_event toujours requis côté DB : on réutilise la description ou le nom
+    trigger_event: desc || document.getElementById('tpl-name').value.trim(),
     steps
   };
   const result = await api('/templates', { method: 'POST', body: JSON.stringify(data) });

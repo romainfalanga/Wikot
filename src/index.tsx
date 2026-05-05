@@ -1040,7 +1040,7 @@ app.get('/api/hotel-info/search', authMiddleware, async (c) => {
 // POST nouvelle catégorie (admin seulement)
 app.post('/api/hotel-info/categories', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const hotelId = user.role === 'super_admin' ? parseInt(c.req.query('hotel_id') || '0') : user.hotel_id
   if (!hotelId) return c.json({ error: 'Aucun hôtel' }, 400)
 
@@ -1058,7 +1058,7 @@ app.post('/api/hotel-info/categories', authMiddleware, async (c) => {
 // PUT modifier catégorie
 app.put('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
   const { name, icon, color, sort_order } = await c.req.json()
 
@@ -1074,17 +1074,17 @@ app.put('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
 // DELETE catégorie (les items deviennent sans catégorie)
 app.delete('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
 
   await c.env.DB.prepare(`DELETE FROM hotel_info_categories WHERE id = ?`).bind(id).run()
   return c.json({ success: true })
 })
 
-// POST nouvel item (admin seulement)
+// POST nouvel item (admin ou employé éditeur)
 app.post('/api/hotel-info/items', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const hotelId = user.role === 'super_admin' ? parseInt(c.req.query('hotel_id') || '0') : user.hotel_id
   if (!hotelId) return c.json({ error: 'Aucun hôtel' }, 400)
 
@@ -1102,7 +1102,7 @@ app.post('/api/hotel-info/items', authMiddleware, async (c) => {
 // PUT modifier item
 app.put('/api/hotel-info/items/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
   const { category_id, title, content, sort_order } = await c.req.json()
 
@@ -1119,7 +1119,7 @@ app.put('/api/hotel-info/items/:id', authMiddleware, async (c) => {
 // DELETE item
 app.delete('/api/hotel-info/items/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
 
   await c.env.DB.prepare(`DELETE FROM hotel_info_items WHERE id = ?`).bind(id).run()

@@ -1591,9 +1591,7 @@ function renderHotelInfoView() {
     </div>`;
   }
 
-  const isAdmin = state.user && state.user.role === 'admin';
-  const isSuperAdmin = state.user && state.user.role === 'super_admin';
-  const canEditInfo = isAdmin || isSuperAdmin;
+  const canEditInfo = canEditHotelInfo();
   const cats = state.hotelInfoCategories || [];
   const items = state.hotelInfoItems || [];
   const q = (state.hotelInfoSearchQuery || '').trim().toLowerCase();
@@ -1646,8 +1644,17 @@ function renderHotelInfoView() {
   </div>`;
 }
 
+// Helper centralisé : qui peut éditer les infos hôtel ?
+// Admin, super_admin ET employés éditeurs (can_edit_procedures = 1)
+function canEditHotelInfo() {
+  if (!state.user) return false;
+  if (state.user.role === 'admin' || state.user.role === 'super_admin') return true;
+  if (state.user.role === 'employee' && state.user.can_edit_procedures) return true;
+  return false;
+}
+
 function renderHotelInfoBody() {
-  // Refresh seulement le corps sans tout re-rendre (recherche live, ouverture/fermeture catégories)
+  // Refresh seulement le corps sans tout re-rendre (recherche live)
   const body = document.getElementById('hotel-info-body');
   if (!body) { render(); return; }
   const cats = state.hotelInfoCategories || [];
@@ -1656,8 +1663,7 @@ function renderHotelInfoBody() {
   const filteredItems = q
     ? items.filter(it => (it.title || '').toLowerCase().includes(q) || (it.content || '').toLowerCase().includes(q))
     : items;
-  const canEditInfo = state.user && (state.user.role === 'admin' || state.user.role === 'super_admin');
-  body.innerHTML = renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo);
+  body.innerHTML = renderHotelInfoBodyHTML(cats, filteredItems, q, canEditHotelInfo());
 }
 
 function renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo) {
@@ -1706,39 +1712,50 @@ function renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo) {
       const catItems = itemsByCat[cat.id] || [];
       const isOpen = state.hotelInfoActiveCategory === cat.id;
       return `
-      <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <button onclick="toggleHotelInfoCategory(${cat.id})" class="w-full flex items-center gap-3 px-4 sm:px-5 py-4 hover:bg-navy-50 transition-colors text-left">
-          <div class="w-10 h-10 rounded-lg flex items-center justify-center text-white shrink-0" style="background:${cat.color || '#3B82F6'}">
-            <i class="fas ${cat.icon || 'fa-circle-info'}"></i>
-          </div>
-          <div class="flex-1 min-w-0">
-            <h3 class="font-semibold text-navy-800 text-sm sm:text-base">${escapeHtml(cat.name)}</h3>
-            <p class="text-xs text-navy-500">${catItems.length} info${catItems.length > 1 ? 's' : ''}</p>
-          </div>
-          ${canEditInfo ? `
-            <button onclick="event.stopPropagation(); showHotelInfoCategoryModal(${cat.id})" title="Renommer la catégorie"
-              class="w-8 h-8 rounded-lg hover:bg-white text-navy-400 hover:text-navy-700 flex items-center justify-center">
-              <i class="fas fa-pen text-xs"></i>
+      <div id="info-cat-${cat.id}" class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <!-- Header de la catégorie : zone clickable à gauche, actions à droite -->
+        <div class="flex items-stretch">
+          <!-- Zone clickable : icône + nom + nb infos -->
+          <button type="button" onclick="toggleHotelInfoCategory(${cat.id})"
+            class="flex-1 min-w-0 flex items-center gap-3 px-4 sm:px-5 py-4 hover:bg-navy-50 transition-colors text-left">
+            <div class="w-10 h-10 rounded-lg flex items-center justify-center text-white shrink-0" style="background:${cat.color || '#3B82F6'}">
+              <i class="fas ${cat.icon || 'fa-circle-info'}"></i>
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-navy-800 text-sm sm:text-base truncate">${escapeHtml(cat.name)}</h3>
+              <p class="text-xs text-navy-500">${catItems.length} info${catItems.length > 1 ? 's' : ''}</p>
+            </div>
+          </button>
+          <!-- Zone d'actions à droite : édition / suppression / chevron -->
+          <div class="flex items-center gap-1 pr-3 sm:pr-4 shrink-0">
+            ${canEditInfo ? `
+              <button type="button" onclick="showHotelInfoCategoryModal(${cat.id})" title="Renommer la catégorie"
+                class="w-9 h-9 rounded-lg hover:bg-navy-100 text-navy-400 hover:text-navy-700 flex items-center justify-center transition-colors">
+                <i class="fas fa-pen text-sm"></i>
+              </button>
+              <button type="button" onclick="deleteHotelInfoCategory(${cat.id})" title="Supprimer"
+                class="w-9 h-9 rounded-lg hover:bg-red-50 text-navy-400 hover:text-red-500 flex items-center justify-center transition-colors">
+                <i class="fas fa-trash text-sm"></i>
+              </button>
+              <div class="w-px h-6 bg-gray-200 mx-1"></div>
+            ` : ''}
+            <button type="button" onclick="toggleHotelInfoCategory(${cat.id})" title="Ouvrir / fermer"
+              class="w-9 h-9 rounded-lg hover:bg-navy-100 text-navy-500 hover:text-navy-800 flex items-center justify-center transition-colors">
+              <i id="info-cat-chevron-${cat.id}" class="fas fa-chevron-${isOpen ? 'up' : 'down'} text-sm transition-transform"></i>
             </button>
-            <button onclick="event.stopPropagation(); deleteHotelInfoCategory(${cat.id})" title="Supprimer"
-              class="w-8 h-8 rounded-lg hover:bg-white text-navy-400 hover:text-red-500 flex items-center justify-center">
-              <i class="fas fa-trash text-xs"></i>
+          </div>
+        </div>
+        <!-- Contenu (toujours rendu, juste caché quand fermé pour éviter le scroll-jump) -->
+        <div id="info-cat-content-${cat.id}" class="${isOpen ? '' : 'hidden'} border-t border-gray-100 p-3 sm:p-4 space-y-2 bg-gray-50">
+          ${catItems.length === 0 ? `
+            <p class="text-sm text-navy-400 italic px-2 py-3">Aucune info dans cette catégorie.</p>
+          ` : catItems.map(it => renderHotelInfoItemCard(it, cat, canEditInfo, false)).join('')}
+          ${canEditInfo ? `
+            <button onclick="showHotelInfoItemModal(null, ${cat.id})" class="w-full mt-2 px-3 py-2 border-2 border-dashed border-navy-200 hover:border-brand-400 hover:bg-brand-50 text-navy-500 hover:text-brand-600 rounded-lg text-sm font-medium transition-colors">
+              <i class="fas fa-plus mr-1"></i>Ajouter une info dans « ${escapeHtml(cat.name)} »
             </button>
           ` : ''}
-          <i class="fas fa-chevron-${isOpen ? 'up' : 'down'} text-navy-400 text-sm ml-1"></i>
-        </button>
-        ${isOpen ? `
-          <div class="border-t border-gray-100 p-3 sm:p-4 space-y-2 bg-gray-50">
-            ${catItems.length === 0 ? `
-              <p class="text-sm text-navy-400 italic px-2 py-3">Aucune info dans cette catégorie.</p>
-            ` : catItems.map(it => renderHotelInfoItemCard(it, cat, canEditInfo, false)).join('')}
-            ${canEditInfo ? `
-              <button onclick="showHotelInfoItemModal(null, ${cat.id})" class="w-full mt-2 px-3 py-2 border-2 border-dashed border-navy-200 hover:border-brand-400 hover:bg-brand-50 text-navy-500 hover:text-brand-600 rounded-lg text-sm font-medium transition-colors">
-                <i class="fas fa-plus mr-1"></i>Ajouter une info dans « ${escapeHtml(cat.name)} »
-              </button>
-            ` : ''}
-          </div>
-        ` : ''}
+        </div>
       </div>`;
     }).join('')}
 
@@ -1796,9 +1813,21 @@ function formatHotelInfoContent(text) {
   return html;
 }
 
+// Toggle par DOM-only pour éviter le scroll jump (pas de re-render)
 function toggleHotelInfoCategory(catId) {
-  state.hotelInfoActiveCategory = state.hotelInfoActiveCategory === catId ? null : catId;
-  renderHotelInfoBody();
+  const content = document.getElementById(`info-cat-content-${catId}`);
+  const chevron = document.getElementById(`info-cat-chevron-${catId}`);
+  if (!content || !chevron) {
+    // Fallback (recherche active, etc.)
+    state.hotelInfoActiveCategory = state.hotelInfoActiveCategory === catId ? null : catId;
+    renderHotelInfoBody();
+    return;
+  }
+  const willOpen = content.classList.contains('hidden');
+  content.classList.toggle('hidden');
+  chevron.classList.toggle('fa-chevron-down', !willOpen);
+  chevron.classList.toggle('fa-chevron-up', willOpen);
+  state.hotelInfoActiveCategory = willOpen ? catId : null;
 }
 
 // Modaux édition catégorie
@@ -1813,18 +1842,11 @@ function showHotelInfoCategoryModal(catId = null) {
           placeholder="Ex: Restauration, Loisirs..."
           class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
       </div>
-      <div class="grid grid-cols-2 gap-3 mb-4">
-        <div>
-          <label class="block text-sm font-medium text-navy-600 mb-1.5">Icône (Font Awesome)</label>
-          <input id="info-cat-icon" type="text" value="${cat ? cat.icon || 'fa-circle-info' : 'fa-circle-info'}"
-            placeholder="fa-circle-info"
-            class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-navy-600 mb-1.5">Couleur</label>
-          <input id="info-cat-color" type="color" value="${cat ? cat.color || '#3B82F6' : '#3B82F6'}"
-            class="w-full h-11 border border-navy-200 rounded-lg cursor-pointer">
-        </div>
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Couleur</label>
+        <input id="info-cat-color" type="color" value="${cat ? cat.color || '#3B82F6' : '#3B82F6'}"
+          class="w-full h-11 border border-navy-200 rounded-lg cursor-pointer">
+        <p class="text-xs text-navy-400 mt-1">Couleur d'identification de la catégorie.</p>
       </div>
       <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
@@ -1836,12 +1858,13 @@ function showHotelInfoCategoryModal(catId = null) {
 
 async function submitHotelInfoCategory(catId) {
   const name = document.getElementById('info-cat-name').value.trim();
-  const icon = document.getElementById('info-cat-icon').value.trim() || 'fa-circle-info';
   const color = document.getElementById('info-cat-color').value || '#3B82F6';
   if (!name) return;
 
   const path = catId ? `/hotel-info/categories/${catId}` : '/hotel-info/categories';
   const method = catId ? 'PUT' : 'POST';
+  // Icône par défaut fixe (pas demandée à l'utilisateur)
+  const icon = 'fa-circle-info';
   const data = await api(path, { method, body: JSON.stringify({ name, icon, color }) });
   if (data) {
     closeModal();

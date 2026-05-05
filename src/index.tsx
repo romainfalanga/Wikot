@@ -1253,19 +1253,22 @@ async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName
 Tu reçois une question d'employé. Tu identifies LA procédure ou L'information de l'hôtel la plus pertinente, et tu la retournes via l'outil \`select_answer\`. **Tu NE rédiges JAMAIS de texte de réponse.** L'interface affiche directement la carte de la ressource sélectionnée.
 
 ## Protocole strict (obligatoire à chaque message)
-1. Appelle \`search_procedures\` ET/OU \`search_hotel_info\` avec des mots-clés issus de la question.
-2. Si plusieurs résultats, appelle \`get_procedure\` ou \`get_hotel_info_item\` pour comparer et choisir le plus pertinent.
-3. Termine TOUJOURS par UN SEUL appel à \`select_answer\` avec :
-   - \`type: "procedure"\` + \`id\` → si une procédure répond à la question
-   - \`type: "info_item"\` + \`id\` → si une information répond à la question
-   - \`type: "none"\` → si aucune procédure ni information existante ne correspond
+1. Appelle les outils de recherche pertinents :
+   - \`search_procedures\` (procédures entières) ET/OU \`search_procedure_steps\` (étapes individuelles) si la question évoque une action / un processus.
+   - \`search_hotel_info\` (infos précises) ET/OU \`list_info_categories\` (thèmes/catégories) si la question évoque une information de l'hôtel.
+2. Si plusieurs résultats, appelle \`get_procedure\` ou \`get_hotel_info_item\` pour comparer.
+3. Termine TOUJOURS par UN SEUL appel à \`select_answer\` à la BONNE GRANULARITÉ :
+   - \`type: "procedure"\` + \`id\` → la question demande la procédure ENTIÈRE (« Comment je fais un check-in ? »).
+   - \`type: "procedure_step"\` + \`procedure_id\` + \`step_number\` → la question demande UNE étape précise dans une procédure (« Comment vérifier la réservation pendant le check-in ? », « Comment vérifier l'identité d'un client ? »). Si l'étape pointe vers une sous-procédure, ce type affichera la sous-procédure complète.
+   - \`type: "info_item"\` + \`id\` → la question demande UNE information précise (« Horaires de la piscine », « Code Wi-Fi »).
+   - \`type: "info_category"\` + \`id\` → la question demande TOUT un thème regroupé en catégorie (« Quels sont les loisirs et activités ? », « Donne-moi tous les horaires »).
+   - \`type: "none"\` → aucune ressource existante ne correspond, OU question hors-sujet (« bonjour »), OU demande de création/modification.
 
 ## Règles ABSOLUES
-- **AUCUN texte de réponse écrit par toi.** Le seul output que tu produis pour l'utilisateur est l'appel à \`select_answer\`. Pas de phrase de politesse, pas d'introduction, pas de conclusion.
-- **UNE SEULE ressource sélectionnée** (la plus pertinente). Pas de liste, pas de comparatif.
+- **AUCUN texte de réponse écrit par toi.** Le seul output que tu produis est l'appel à \`select_answer\`. Pas de politesse, pas d'introduction.
+- **GRANULARITÉ MAXIMALE** : choisis toujours le type le plus précis qui répond pleinement. Si l'employé demande une seule action, ne renvoie pas la procédure entière → renvoie \`procedure_step\`. Si l'employé demande un thème large, renvoie \`info_category\`, pas un seul \`info_item\`.
+- **UNE SEULE ressource sélectionnée** (la plus pertinente).
 - Si la question concerne une création/modification : sélectionne \`type: "none"\` (Wikot ne fait que de la lecture).
-- Si la question est vague ou hors-sujet (ex : « bonjour ») : sélectionne \`type: "none"\`.
-- Si une sous-procédure répond mieux qu'une procédure mère, choisis la sous-procédure.
 
 ## Arborescence actuelle de l'hôtel
 ${arborescence}
@@ -1400,6 +1403,26 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
     {
       type: 'function',
       function: {
+        name: 'search_procedure_steps',
+        description: 'Recherche dans les ÉTAPES individuelles des procédures (par titre ou contenu d\'étape). Utile quand l\'utilisateur demande UNE action précise au sein d\'une procédure (ex: « Comment vérifier la réservation lors d\'un check-in »). Retourne {procedure_id, procedure_title, step_id, step_number, step_title, step_content, linked_procedure_id, linked_title}.',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string', description: 'Termes de recherche pour les étapes' } },
+          required: ['query']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'list_info_categories',
+        description: 'Liste les catégories d\'informations avec, pour chacune, la liste des informations qu\'elle contient. Utile quand l\'utilisateur demande TOUTES les informations d\'un thème (ex: « les loisirs et activités », « les horaires »). Retourne pour chaque catégorie {id, name, color, icon, items: [{id, title}]}.',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function',
+      function: {
         name: 'add_reference',
         description: '[Mode max uniquement] Ajoute un bouton de sourcing pour permettre à l\'utilisateur de voir la procédure ou l\'information complète.',
         parameters: {
@@ -1425,12 +1448,23 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
       type: 'function',
       function: {
         name: 'select_answer',
-        description: 'Sélectionne LA procédure ou L\'information la plus pertinente pour répondre à la question. UTILISE-LE OBLIGATOIREMENT à chaque message après tes recherches. type="none" si aucune ressource ne correspond.',
+        description: `Sélectionne LA réponse la plus pertinente, à la BONNE GRANULARITÉ. UTILISE-LE OBLIGATOIREMENT à chaque message après tes recherches.
+
+Types disponibles :
+- "procedure" + id : la question porte sur la procédure entière (ex: « Comment je fais un check-in ? »)
+- "procedure_step" + procedure_id + step_number : la question porte sur UNE étape précise d'une procédure (ex: « Comment vérifier la réservation pendant le check-in ? »). Si l'étape est liée à une sous-procédure, renvoie ce type pour afficher uniquement la sous-procédure dans son contexte.
+- "info_item" + id : la question porte sur UNE information précise (ex: « Horaires de la piscine »)
+- "info_category" + category_id : la question porte sur TOUT un thème regroupé en catégorie (ex: « Les loisirs et activités », « Tous les horaires »)
+- "none" : aucune ressource ne correspond.
+
+RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond pleinement à la question. Si l'employé demande une seule étape, ne renvoie pas la procédure entière. Si l'employé demande un thème large, renvoie la catégorie complète.`,
         parameters: {
           type: 'object',
           properties: {
-            type: { type: 'string', enum: ['procedure', 'info_item', 'none'], description: 'procedure / info_item / none (aucune ressource pertinente)' },
-            id: { type: 'integer', description: 'ID de la ressource (omettre si type=none)' }
+            type: { type: 'string', enum: ['procedure', 'procedure_step', 'info_item', 'info_category', 'none'] },
+            id: { type: 'integer', description: 'ID de la procédure (type=procedure) ou de l\'info (type=info_item) ou de la catégorie (type=info_category)' },
+            procedure_id: { type: 'integer', description: '[type=procedure_step] ID de la procédure parente' },
+            step_number: { type: 'integer', description: '[type=procedure_step] numéro de l\'étape (1, 2, 3…)' }
           },
           required: ['type']
         }
@@ -1602,6 +1636,40 @@ async function executeReadTool(db: D1Database, hotelId: number, toolName: string
       const procCats = await db.prepare('SELECT id, name FROM categories WHERE hotel_id = ? ORDER BY name').bind(hotelId).all()
       const infoCats = await db.prepare('SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY name').bind(hotelId).all()
       return { procedure_categories: procCats.results, info_categories: infoCats.results }
+    }
+    case 'search_procedure_steps': {
+      const q = `%${args.query}%`
+      const r = await db.prepare(`
+        SELECT s.id as step_id, s.step_number, s.title as step_title, s.content as step_content,
+               s.linked_procedure_id, lp.title as linked_title,
+               p.id as procedure_id, p.title as procedure_title
+        FROM steps s
+        JOIN procedures p ON p.id = s.procedure_id
+        LEFT JOIN procedures lp ON lp.id = s.linked_procedure_id
+        WHERE p.hotel_id = ? AND (s.title LIKE ? OR s.content LIKE ?)
+        ORDER BY p.title, s.step_number LIMIT 30
+      `).bind(hotelId, q, q).all()
+      return { results: r.results }
+    }
+    case 'list_info_categories': {
+      const cats = await db.prepare(`
+        SELECT id, name, color, icon FROM hotel_info_categories
+        WHERE hotel_id = ? ORDER BY name
+      `).bind(hotelId).all()
+      const items = await db.prepare(`
+        SELECT id, title, category_id FROM hotel_info_items
+        WHERE hotel_id = ? ORDER BY title
+      `).bind(hotelId).all()
+      const itemsByCat: Record<number, any[]> = {}
+      for (const it of (items.results as any[])) {
+        if (!itemsByCat[it.category_id]) itemsByCat[it.category_id] = []
+        itemsByCat[it.category_id].push({ id: it.id, title: it.title })
+      }
+      const result = (cats.results as any[]).map(c => ({
+        id: c.id, name: c.name, color: c.color, icon: c.icon,
+        items: itemsByCat[c.id] || []
+      }))
+      return { categories: result }
     }
     case 'add_reference': {
       // C'est un "side-effect" tool : on retourne juste une confirmation, le frontend gérera l'affichage
@@ -1803,7 +1871,7 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const seenProcedureIds = new Set<number>()
   const seenInfoItemIds = new Set<number>()
   // Sélection finale du mode standard (Wikot = sélecteur de cartes)
-  let selectedAnswer: { type: 'procedure' | 'info_item' | 'none'; id?: number } | null = null
+  let selectedAnswer: { type: 'procedure' | 'procedure_step' | 'info_item' | 'info_category' | 'none'; id?: number; procedure_id?: number; step_number?: number } | null = null
   let assistantText = ''
   let lastToolCalls: any[] | null = null
 
@@ -1838,7 +1906,7 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
       try { fnArgs = JSON.parse(tc.function?.arguments || '{}') } catch {}
 
       // Tools de lecture
-      if (['search_procedures', 'get_procedure', 'search_hotel_info', 'get_hotel_info_item', 'list_categories', 'add_reference'].includes(fnName)) {
+      if (['search_procedures', 'get_procedure', 'search_hotel_info', 'get_hotel_info_item', 'list_categories', 'search_procedure_steps', 'list_info_categories', 'add_reference'].includes(fnName)) {
         const result = await executeReadTool(c.env.DB, user.hotel_id, fnName, fnArgs)
         if (fnName === 'add_reference') {
           referencesCollected.push({ type: fnArgs.type, id: fnArgs.id })
@@ -1859,10 +1927,16 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
       else if (fnName === 'select_answer') {
         const t = fnArgs.type
         const aId = typeof fnArgs.id === 'number' ? fnArgs.id : (fnArgs.id ? parseInt(fnArgs.id) : undefined)
+        const pId = typeof fnArgs.procedure_id === 'number' ? fnArgs.procedure_id : (fnArgs.procedure_id ? parseInt(fnArgs.procedure_id) : undefined)
+        const sNum = typeof fnArgs.step_number === 'number' ? fnArgs.step_number : (fnArgs.step_number ? parseInt(fnArgs.step_number) : undefined)
         if (t === 'procedure' && aId) {
           selectedAnswer = { type: 'procedure', id: aId }
+        } else if (t === 'procedure_step' && pId && sNum) {
+          selectedAnswer = { type: 'procedure_step', procedure_id: pId, step_number: sNum }
         } else if (t === 'info_item' && aId) {
           selectedAnswer = { type: 'info_item', id: aId }
+        } else if (t === 'info_category' && aId) {
+          selectedAnswer = { type: 'info_category', id: aId }
         } else {
           selectedAnswer = { type: 'none' }
         }
@@ -1944,6 +2018,50 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
       } else {
         answerCard = { kind: 'not_found' }
       }
+    } else if (selectedAnswer.type === 'procedure_step' && selectedAnswer.procedure_id && selectedAnswer.step_number) {
+      // Carte d'UNE étape précise d'une procédure (ex: « comment vérifier la réservation »)
+      const p = await c.env.DB.prepare(`
+        SELECT p.id, p.title, p.trigger_event,
+               c.name as category_name, c.color as category_color, c.icon as category_icon
+        FROM procedures p
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.id = ? AND p.hotel_id = ?
+      `).bind(selectedAnswer.procedure_id, user.hotel_id).first() as any
+      const stepRow = await c.env.DB.prepare(`
+        SELECT s.id, s.step_number, s.title, s.content, s.linked_procedure_id, lp.title as linked_title
+        FROM steps s
+        LEFT JOIN procedures lp ON lp.id = s.linked_procedure_id
+        WHERE s.procedure_id = ? AND s.step_number = ?
+      `).bind(selectedAnswer.procedure_id, selectedAnswer.step_number).first() as any
+      if (p && stepRow) {
+        let linkedSteps: any[] = []
+        let linkedTrigger: string | null = null
+        let linkedDescription: string | null = null
+        if (stepRow.linked_procedure_id) {
+          const lp = await c.env.DB.prepare('SELECT trigger_event, description FROM procedures WHERE id = ?')
+            .bind(stepRow.linked_procedure_id).first() as any
+          linkedTrigger = lp?.trigger_event || null
+          linkedDescription = lp?.description || null
+          const subRes = await c.env.DB.prepare(`
+            SELECT step_number, title, content FROM steps
+            WHERE procedure_id = ? ORDER BY step_number
+          `).bind(stepRow.linked_procedure_id).all()
+          linkedSteps = subRes.results as any[]
+        }
+        answerCard = {
+          kind: 'procedure_step',
+          parent_id: p.id, parent_title: p.title, parent_trigger_event: p.trigger_event,
+          category_name: p.category_name, category_color: p.category_color, category_icon: p.category_icon,
+          step: {
+            id: stepRow.id, step_number: stepRow.step_number, title: stepRow.title, content: stepRow.content,
+            linked_procedure_id: stepRow.linked_procedure_id, linked_title: stepRow.linked_title,
+            linked_trigger_event: linkedTrigger, linked_description: linkedDescription,
+            linked_steps: linkedSteps
+          }
+        }
+      } else {
+        answerCard = { kind: 'not_found' }
+      }
     } else if (selectedAnswer.type === 'info_item' && selectedAnswer.id) {
       const i = await c.env.DB.prepare(`
         SELECT i.id, i.title, i.content, i.category_id,
@@ -1957,6 +2075,28 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
           kind: 'info_item',
           id: i.id, title: i.title, content: i.content, category_id: i.category_id,
           category_name: i.category_name, category_color: i.category_color, category_icon: i.category_icon
+        }
+      } else {
+        answerCard = { kind: 'not_found' }
+      }
+    } else if (selectedAnswer.type === 'info_category' && selectedAnswer.id) {
+      // Carte qui regroupe TOUTES les infos d'une catégorie (ex: « les loisirs et activités »)
+      const cat = await c.env.DB.prepare(`
+        SELECT id, name, color, icon FROM hotel_info_categories
+        WHERE id = ? AND hotel_id = ?
+      `).bind(selectedAnswer.id, user.hotel_id).first() as any
+      if (cat) {
+        const itemsRes = await c.env.DB.prepare(`
+          SELECT id, title, content FROM hotel_info_items
+          WHERE category_id = ? AND hotel_id = ? ORDER BY title
+        `).bind(cat.id, user.hotel_id).all()
+        const items = (itemsRes.results as any[]).map(it => ({
+          id: it.id, title: it.title, content: it.content
+        }))
+        answerCard = {
+          kind: 'info_category',
+          id: cat.id, name: cat.name, color: cat.color, icon: cat.icon,
+          item_count: items.length, items
         }
       } else {
         answerCard = { kind: 'not_found' }

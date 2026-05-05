@@ -2378,10 +2378,12 @@ function renderWikotMessage(msg, mode) {
   `;
 }
 
-// Carte de réponse Wikot (mode standard) : 3 types possibles
-//   - procedure : carte procédure (titre + déclencheur + nb étapes + bouton)
-//   - info_item : carte info (titre + contenu complet + bouton vers l'emplacement)
-//   - not_found : message préfait "aucune information ni procédure ne correspond"
+// Carte de réponse Wikot (mode standard) : 5 types possibles
+//   - procedure        : procédure entière (titre + déclencheur + toutes les étapes)
+//   - procedure_step   : UNE étape précise (avec sous-procédure complète si liée)
+//   - info_item        : UNE information précise (titre + contenu complet)
+//   - info_category    : TOUTES les infos d'une catégorie (ex: "Loisirs et activités")
+//   - not_found        : message préfait "aucune information ni procédure ne correspond"
 function renderWikotAnswerCard(card) {
   if (!card || card.kind === 'not_found') {
     return `
@@ -2419,6 +2421,75 @@ function renderWikotAnswerCard(card) {
     `;
   }
 
+  // Carte d'UNE étape précise dans une procédure (granularité étape)
+  // Si l'étape est liée à une sous-procédure : on affiche la sous-procédure entière en bloc principal
+  if (card.kind === 'procedure_step' && card.step) {
+    const st = card.step;
+    const linkedSteps = Array.isArray(st.linked_steps) ? st.linked_steps : [];
+    const hasLinked = st.linked_procedure_id && (linkedSteps.length > 0 || st.linked_title);
+
+    // Cas 1 : l'étape pointe vers une sous-procédure → on déploie la sous-procédure entière
+    if (hasLinked) {
+      return `
+        <div class="bg-white border-2 border-brand-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
+          <div class="px-4 py-2.5 bg-gradient-to-r from-brand-500 to-purple-500 text-white flex items-center gap-2">
+            <i class="fas fa-diagram-project text-sm"></i>
+            <span class="text-xs font-semibold uppercase tracking-wide">Sous-procédure</span>
+            ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
+          </div>
+          <div class="px-4 py-3 space-y-2 border-b border-gray-100">
+            <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(st.linked_title || st.title)}</h3>
+            ${st.linked_trigger_event ? `<div class="text-xs text-navy-600 flex items-start gap-1.5"><i class="fas fa-bolt text-amber-500 mt-0.5"></i><span>${escapeHtml(st.linked_trigger_event)}</span></div>` : ''}
+            ${st.linked_description ? `<p class="text-sm text-navy-700 whitespace-pre-wrap leading-relaxed">${formatHotelInfoContent(st.linked_description)}</p>` : ''}
+            <p class="text-[11px] text-navy-500 italic">Étape ${st.step_number} de la procédure « ${escapeHtml(card.parent_title || '')} »</p>
+          </div>
+          ${linkedSteps.length > 0 ? `
+            <ol class="px-3 sm:px-4 py-3 space-y-2.5">
+              ${linkedSteps.map(ls => `
+                <li class="bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
+                  <div class="flex items-start gap-3">
+                    <div class="flex-shrink-0 w-7 h-7 rounded-full bg-gradient-to-br from-brand-400 to-purple-500 text-white text-xs font-bold flex items-center justify-center">${ls.step_number || ''}</div>
+                    <div class="min-w-0 flex-1">
+                      <h4 class="font-semibold text-navy-900 text-sm leading-snug">${escapeHtml(ls.title || '')}</h4>
+                      ${ls.content ? `<div class="text-xs text-navy-700 mt-1.5 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(ls.content)}</div>` : ''}
+                    </div>
+                  </div>
+                </li>
+              `).join('')}
+            </ol>
+          ` : ''}
+        </div>
+      `;
+    }
+
+    // Cas 2 : étape simple → on affiche juste cette étape, dans son contexte
+    return `
+      <div class="bg-white border-2 border-brand-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
+        <div class="px-4 py-2.5 bg-gradient-to-r from-brand-500 to-purple-500 text-white flex items-center gap-2">
+          <i class="fas fa-list-check text-sm"></i>
+          <span class="text-xs font-semibold uppercase tracking-wide">Étape de procédure</span>
+          ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
+        </div>
+        <div class="px-4 py-3 space-y-1 border-b border-gray-100 bg-gray-50">
+          <p class="text-[11px] text-navy-500 uppercase tracking-wide font-semibold">Procédure parente</p>
+          <p class="text-sm font-semibold text-navy-800">${escapeHtml(card.parent_title || '')}</p>
+          ${card.parent_trigger_event ? `<p class="text-xs text-navy-600"><i class="fas fa-bolt text-amber-500 mr-1"></i>${escapeHtml(card.parent_trigger_event)}</p>` : ''}
+        </div>
+        <div class="px-3 sm:px-4 py-3">
+          <div class="bg-white border-2 border-brand-100 rounded-xl p-3 shadow-sm">
+            <div class="flex items-start gap-3">
+              <div class="flex-shrink-0 w-9 h-9 rounded-full bg-gradient-to-br from-brand-500 to-purple-500 text-white text-sm font-bold flex items-center justify-center">${st.step_number || ''}</div>
+              <div class="min-w-0 flex-1">
+                <h4 class="font-bold text-navy-900 text-sm leading-snug">${escapeHtml(st.title || '')}</h4>
+                ${st.content ? `<div class="text-sm text-navy-700 mt-1.5 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(st.content)}</div>` : '<p class="text-xs text-navy-400 italic mt-1">Pas de contenu détaillé pour cette étape.</p>'}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   if (card.kind === 'info_item') {
     const catColor = card.category_color || '#3B82F6';
     return `
@@ -2434,6 +2505,37 @@ function renderWikotAnswerCard(card) {
           <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.title)}</h3>
           ${card.content ? `<div class="text-sm text-navy-700 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(card.content)}</div>` : '<p class="text-sm text-navy-400 italic">Aucun contenu.</p>'}
         </div>
+      </div>
+    `;
+  }
+
+  // Carte de catégorie d'infos : TOUTES les infos du thème, dépliées
+  if (card.kind === 'info_category') {
+    const catColor = card.color || '#3B82F6';
+    const items = Array.isArray(card.items) ? card.items : [];
+    return `
+      <div class="bg-white border-2 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden" style="border-color:${catColor}40">
+        <div class="px-4 py-2.5 text-white flex items-center gap-2" style="background:${catColor}">
+          <i class="fas ${card.icon || 'fa-folder-open'} text-sm"></i>
+          <span class="text-xs font-semibold uppercase tracking-wide">Catégorie d'informations</span>
+          <span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${items.length} info${items.length > 1 ? 's' : ''}</span>
+        </div>
+        <div class="px-4 py-3 border-b border-gray-100">
+          <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.name || '')}</h3>
+        </div>
+        ${items.length > 0 ? `
+          <div class="px-3 sm:px-4 py-3 space-y-2.5">
+            ${items.map(it => `
+              <div class="bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
+                <h4 class="font-semibold text-navy-900 text-sm leading-snug mb-1.5 flex items-center gap-2">
+                  <span class="inline-block w-2 h-2 rounded-full" style="background:${catColor}"></span>
+                  ${escapeHtml(it.title || '')}
+                </h4>
+                ${it.content ? `<div class="text-sm text-navy-700 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(it.content)}</div>` : '<p class="text-xs text-navy-400 italic">Aucun contenu.</p>'}
+              </div>
+            `).join('')}
+          </div>
+        ` : '<p class="px-4 py-3 text-sm text-navy-400 italic">Aucune information dans cette catégorie.</p>'}
       </div>
     `;
   }

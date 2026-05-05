@@ -307,10 +307,11 @@ app.get('/api/procedures', authMiddleware, async (c) => {
   const includeSubprocedures = c.req.query('include_subprocedures') === '1' // explicite, pour le détail
 
   // FILTRAGE DES SOUS-PROCÉDURES :
-  // Une procédure est considérée "sous-procédure" si elle est référencée
-  // via linked_procedure_id depuis au moins une étape d'une AUTRE procédure
-  // du même hôtel. Ces sous-procédures ne doivent PAS apparaître dans la
-  // liste principale, seulement comme étapes liées à leur procédure mère.
+  // On utilise désormais le flag explicite procedures.is_subprocedure (cf. migration 0010).
+  // - is_subprocedure=0 → procédure principale (visible dans la liste)
+  // - is_subprocedure=1 → sous-procédure (cachée de la liste, accessible via le step parent)
+  // Pour récupérer aussi les sous-procédures (par exemple pour le picker du modal),
+  // utiliser ?include_subprocedures=1.
   let query = `SELECT p.*, c.name as category_name, c.icon as category_icon, c.color as category_color, 
     u1.name as created_by_name, u2.name as approved_by_name,
     (SELECT COUNT(*) FROM steps WHERE procedure_id = p.id) as step_count,
@@ -323,23 +324,7 @@ app.get('/api/procedures', authMiddleware, async (c) => {
   const params: any[] = [hotelId]
 
   if (!includeSubprocedures) {
-    query += ` AND p.id NOT IN (
-      SELECT DISTINCT s.linked_procedure_id
-      FROM steps s
-      JOIN procedures parent ON parent.id = s.procedure_id
-      WHERE s.linked_procedure_id IS NOT NULL
-        AND parent.hotel_id = ?
-        AND parent.id <> p.id
-      UNION
-      SELECT DISTINCT cs.linked_procedure_id
-      FROM condition_steps cs
-      JOIN conditions cd ON cd.id = cs.condition_id
-      JOIN procedures parent ON parent.id = cd.procedure_id
-      WHERE cs.linked_procedure_id IS NOT NULL
-        AND parent.hotel_id = ?
-        AND parent.id <> p.id
-    )`
-    params.push(hotelId, hotelId)
+    query += ` AND p.is_subprocedure = 0`
   }
 
   if (categoryId) { query += ' AND p.category_id = ?'; params.push(categoryId) }
@@ -400,10 +385,13 @@ app.post('/api/procedures', authMiddleware, async (c) => {
   // Note : trigger_icon (anciennement supprimé de l'UI) a default 'fa-bolt' en DB
   // Note : status (anciennement supprimé de l'UI) → on force 'active' (toutes les procédures sont actives)
   // priority forcé à 'normal' (champ supprimé de l'UI mais conservé en DB)
+  // is_subprocedure : 0 par défaut, 1 si on crée explicitement une sous-procédure
+  // depuis le modal "Lier à une nouvelle sous-procédure"
+  const isSubproc = body.is_subprocedure ? 1 : 0
   const result = await c.env.DB.prepare(
-    `INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, trigger_conditions, priority, status, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, 'normal', 'active', ?)`
-  ).bind(hotelId, body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_conditions || null, user.id).run()
+    `INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, trigger_conditions, priority, status, is_subprocedure, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, 'normal', 'active', ?, ?)`
+  ).bind(hotelId, body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_conditions || null, isSubproc, user.id).run()
 
   const procId = result.meta.last_row_id
 
@@ -436,6 +424,9 @@ app.post('/api/procedures', authMiddleware, async (c) => {
     }
   }
 
+  // Synchronisation auto : toute procédure liée via une étape devient sous-procédure
+  await syncSubprocedureFlags(c.env.DB, procId as number, hotelId)
+
   // Changelog
   await c.env.DB.prepare(
     `INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary, is_read_required) VALUES (?, ?, ?, 'created', ?, 0)`
@@ -443,6 +434,27 @@ app.post('/api/procedures', authMiddleware, async (c) => {
 
   return c.json({ id: procId })
 })
+
+// Helper : marque comme sous-procédure (is_subprocedure=1) toute procédure
+// référencée par une étape (steps ou condition_steps) du parent donné, à
+// condition qu'elle appartienne au même hôtel et soit ≠ du parent lui-même.
+// Permet de garantir la cohérence après chaque POST/PUT d'une procédure.
+async function syncSubprocedureFlags(db: D1Database, parentProcId: number, hotelId: any) {
+  await db.prepare(`
+    UPDATE procedures
+    SET is_subprocedure = 1
+    WHERE hotel_id = ?
+      AND id <> ?
+      AND id IN (
+        SELECT linked_procedure_id FROM steps
+          WHERE procedure_id = ? AND linked_procedure_id IS NOT NULL
+        UNION
+        SELECT cs.linked_procedure_id FROM condition_steps cs
+          JOIN conditions cd ON cd.id = cs.condition_id
+          WHERE cd.procedure_id = ? AND cs.linked_procedure_id IS NOT NULL
+      )
+  `).bind(hotelId, parentProcId, parentProcId, parentProcId).run()
+}
 
 app.put('/api/procedures/:id', authMiddleware, async (c) => {
   const user = c.get('user')
@@ -490,8 +502,13 @@ app.put('/api/procedures/:id', authMiddleware, async (c) => {
     }
   }
 
-  // Changelog
+  // Synchronisation auto : toute procédure liée via une étape de CE parent
+  // devient sous-procédure (is_subprocedure=1). Garantit qu'une modif du
+  // parent ne fait jamais "remonter" une sous-procédure dans la liste.
   const proc = await c.env.DB.prepare('SELECT hotel_id, title FROM procedures WHERE id = ?').bind(id).first() as any
+  await syncSubprocedureFlags(c.env.DB, Number(id), proc.hotel_id)
+
+  // Changelog
   await c.env.DB.prepare(
     `INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary, is_read_required) VALUES (?, ?, ?, 'updated', ?, ?)`
   ).bind(proc.hotel_id, id, user.id, `Procédure "${proc.title}" mise à jour`, body.is_read_required ? 1 : 0).run()
@@ -1477,7 +1494,7 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
       type: 'function',
       function: {
         name: 'propose_create_procedure',
-        description: 'Propose la création d\'une nouvelle procédure. L\'utilisateur devra valider avant que la procédure soit réellement créée.',
+        description: 'Propose la création d\'une nouvelle procédure. L\'utilisateur devra valider avant que la procédure soit réellement créée. Pour créer une sous-procédure (qui n\'apparaîtra pas dans la liste principale), passe is_subprocedure=true.',
         parameters: {
           type: 'object',
           properties: {
@@ -1485,15 +1502,17 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
             trigger_event: { type: 'string', description: 'Quand cette procédure se déclenche' },
             description: { type: 'string' },
             category_id: { type: 'integer', description: 'ID de la catégorie (optionnel)' },
+            is_subprocedure: { type: 'boolean', description: 'true si c\'est une sous-procédure (cachée de la liste principale, accessible uniquement via une étape parent)' },
             steps: {
               type: 'array',
               items: {
                 type: 'object',
                 properties: {
                   title: { type: 'string' },
-                  content: { type: 'string', description: 'Contenu détaillé de l\'étape (peut contenir **gras** et listes • à puces)' }
+                  content: { type: 'string', description: 'Contenu détaillé de l\'étape (peut contenir **gras** et listes • à puces). Vide si l\'étape pointe vers une sous-procédure.' },
+                  linked_procedure_id: { type: 'integer', description: 'ID d\'une sous-procédure existante à lier à cette étape (optionnel)' }
                 },
-                required: ['title', 'content']
+                required: ['title']
               }
             }
           },
@@ -1505,7 +1524,7 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
       type: 'function',
       function: {
         name: 'propose_update_procedure',
-        description: 'Propose la modification d\'une procédure existante. L\'utilisateur verra un diff avant/après et devra valider.',
+        description: 'Propose la modification d\'une procédure existante. L\'utilisateur verra un diff avant/après et devra valider. IMPORTANT : si la procédure existante avait des étapes liées à des sous-procédures (linked_procedure_id), tu DOIS les renvoyer dans steps[] sinon le lien sera perdu.',
         parameters: {
           type: 'object',
           properties: {
@@ -1520,7 +1539,8 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
                 type: 'object',
                 properties: {
                   title: { type: 'string' },
-                  content: { type: 'string' }
+                  content: { type: 'string' },
+                  linked_procedure_id: { type: 'integer', description: 'ID d\'une sous-procédure liée (à conserver tel quel si l\'étape était déjà liée)' }
                 }
               }
             }
@@ -2109,20 +2129,26 @@ app.post('/api/wikot/actions/:id/accept', authMiddleware, async (c) => {
     switch (action.action_type) {
       case 'create_procedure': {
         if (!wikotUserCanEditProcedures(user)) throw new Error('Permission refusée')
+        // is_subprocedure : permet à Back Wikot de créer directement des sous-procédures
+        const isSub = payload.is_subprocedure ? 1 : 0
         const r = await c.env.DB.prepare(`
-          INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, priority, status, created_by)
-          VALUES (?, ?, ?, ?, ?, 'normal', 'active', ?)
-        `).bind(hotelId, payload.category_id || null, payload.title, payload.description || null, payload.trigger_event, user.id).run()
+          INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, priority, status, is_subprocedure, created_by)
+          VALUES (?, ?, ?, ?, ?, 'normal', 'active', ?, ?)
+        `).bind(hotelId, payload.category_id || null, payload.title, payload.description || null, payload.trigger_event, isSub, user.id).run()
         resultId = r.meta.last_row_id as number
         if (payload.steps && Array.isArray(payload.steps)) {
           for (let i = 0; i < payload.steps.length; i++) {
             const s = payload.steps[i]
+            // BUG FIX : on persiste linked_procedure_id pour que les sous-procédures
+            // proposées par Back Wikot ne soient pas perdues à la validation.
             await c.env.DB.prepare(`
-              INSERT INTO steps (procedure_id, step_number, title, content, step_type)
-              VALUES (?, ?, ?, ?, 'action')
-            `).bind(resultId, i + 1, s.title, s.content || null).run()
+              INSERT INTO steps (procedure_id, step_number, title, content, linked_procedure_id, step_type)
+              VALUES (?, ?, ?, ?, ?, 'action')
+            `).bind(resultId, i + 1, s.title, s.content || null, s.linked_procedure_id || null).run()
           }
         }
+        // Synchro auto : les enfants liés deviennent sous-procédures
+        await syncSubprocedureFlags(c.env.DB, resultId, hotelId)
         await c.env.DB.prepare(`INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary) VALUES (?, ?, ?, 'created', ?)`)
           .bind(hotelId, resultId, user.id, `Procédure "${payload.title}" créée par Wikot`).run()
         break
@@ -2145,10 +2171,14 @@ app.post('/api/wikot/actions/:id/accept', authMiddleware, async (c) => {
           await c.env.DB.prepare('DELETE FROM steps WHERE procedure_id = ?').bind(procId).run()
           for (let i = 0; i < payload.steps.length; i++) {
             const s = payload.steps[i]
-            await c.env.DB.prepare(`INSERT INTO steps (procedure_id, step_number, title, content, step_type) VALUES (?, ?, ?, ?, 'action')`)
-              .bind(procId, i + 1, s.title, s.content || null).run()
+            // BUG FIX : on persiste linked_procedure_id (sinon une simple modif
+            // efface le lien parent → sous-procédure, qui réapparaît dans la liste)
+            await c.env.DB.prepare(`INSERT INTO steps (procedure_id, step_number, title, content, linked_procedure_id, step_type) VALUES (?, ?, ?, ?, ?, 'action')`)
+              .bind(procId, i + 1, s.title, s.content || null, s.linked_procedure_id || null).run()
           }
         }
+        // Synchro auto : reverrouille les enfants comme sous-procédures
+        await syncSubprocedureFlags(c.env.DB, procId, hotelId)
         resultId = procId
         await c.env.DB.prepare(`INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary) VALUES (?, ?, ?, 'updated', ?)`)
           .bind(hotelId, procId, user.id, `Procédure modifiée par Wikot`).run()

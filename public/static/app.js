@@ -120,6 +120,8 @@ async function login(email, password) {
     localStorage.setItem('wikot_user', JSON.stringify(data.user));
     showToast(`Bienvenue ${data.user.name} !`, 'success');
     await loadData();
+    // Ancrage de l'historique sur la vue de départ après login
+    replaceHistory(state.currentView);
     render();
     ensureChatGlobalPolling();
     ensureProfilePolling();
@@ -304,16 +306,25 @@ async function loadData() {
   }
 
   // Admin / Employee : chargement complet
-  const [statsData, categoriesData, proceduresData, changelogData] = await Promise.all([
+  // /procedures      → uniquement les procédures principales (is_subprocedure=0)
+  // /procedures?include_subprocedures=1 → toutes (utile pour le picker du modal)
+  const subParam = hotelParam ? `${hotelParam}&include_subprocedures=1` : '?include_subprocedures=1';
+  const [statsData, categoriesData, proceduresData, allProcsData, changelogData] = await Promise.all([
     api(`/stats${hotelParam}`),
     api(`/categories${hotelParam}`),
     api(`/procedures${hotelParam}`),
+    api(`/procedures${subParam}`),
     api(`/changelog${hotelParam}`)
   ]);
 
   if (statsData) state.stats = statsData;
   if (categoriesData) state.categories = categoriesData.categories || [];
   if (proceduresData) state.procedures = proceduresData.procedures || [];
+  // state.subprocedures contient uniquement les procédures marquées is_subprocedure=1
+  if (allProcsData) {
+    const all = allProcsData.procedures || [];
+    state.subprocedures = all.filter(p => p.is_subprocedure === 1 || p.is_subprocedure === true);
+  }
   if (changelogData) {
     state.changelog = changelogData.changelog || [];
     state.unreadRequired = changelogData.unread_required || 0;
@@ -685,6 +696,10 @@ function navigate(view) {
     state.selectedChannelId = null;
     state.chatMessages = [];
   }
+  // Ne push une entrée d'historique que si la vue change vraiment
+  if (state.currentView !== view) {
+    pushHistory(view);
+  }
   state.currentView = view;
   state.selectedProcedure = null;
 
@@ -988,9 +1003,13 @@ function renderProcedureCard(proc, canEdit) {
 // PROCEDURE DETAIL VIEW
 // ============================================
 async function viewProcedure(id) {
-  const data = await api(`/procedures/${id}`);
+  // include_subprocedures=1 pour pouvoir charger n'importe quelle procédure,
+  // y compris les sous-procédures, depuis Wikot ou un step parent.
+  const data = await api(`/procedures/${id}?include_subprocedures=1`);
   if (data) {
     state.selectedProcedure = data;
+    // Push une entrée d'historique pour que "Retour" ramène à la vue précédente
+    pushHistory('procedure-detail', { procedureId: id });
     state.currentView = 'procedure-detail';
     render();
   }
@@ -3649,10 +3668,12 @@ let currentEditingProcId = null;
 
 function stepFieldHTML(index, step = null) {
   const id = stepCounter++;
-  // Liste des procédures dispo pour la sous-procédure (on exclut celle qu'on édite)
-  const availableProcedures = (state.procedures || []).filter(p => !currentEditingProcId || String(p.id) !== String(currentEditingProcId));
+  // Pool des sous-procédures déjà existantes (chargées via include_subprocedures=1)
+  // On exclut la procédure actuellement en édition pour éviter la self-référence.
+  const availableSubprocs = (state.subprocedures || []).filter(p => !currentEditingProcId || String(p.id) !== String(currentEditingProcId));
   const isLinked = step && step.linked_procedure_id;
   const linkedId = step?.linked_procedure_id || '';
+  const linkedTitle = step?.linked_procedure_title || '';
 
   return `
   <div class="bg-navy-50 rounded-lg p-3 sm:p-4 step-field" data-step-id="${id}">
@@ -3687,16 +3708,198 @@ function stepFieldHTML(index, step = null) {
       <p class="text-xs text-navy-400 mt-1">Vous pouvez utiliser **gras** et des puces (• ou -)</p>
     </div>
 
-    <!-- Bloc sous-procédure -->
+    <!-- Bloc sous-procédure : 2 options -->
     <div class="step-linked-block ${isLinked ? '' : 'hidden'}">
-      <label class="block text-xs font-medium text-purple-600 mb-1"><i class="fas fa-diagram-project mr-1"></i>Procédure liée</label>
-      <select class="step-linked-id form-input-mobile w-full border border-purple-200 rounded-lg px-3 py-2.5 text-base bg-white">
-        <option value="">— Choisir une procédure —</option>
-        ${availableProcedures.map(p => `<option value="${p.id}" ${String(p.id) === String(linkedId) ? 'selected' : ''}>${escapeHtml(p.title)}</option>`).join('')}
+      <p class="text-xs text-purple-700 bg-purple-50 border border-purple-100 rounded-lg px-3 py-2 mb-3">
+        <i class="fas fa-info-circle mr-1"></i>Une sous-procédure n'apparaît <b>pas</b> dans la liste principale des procédures. Elle est seulement accessible via cette étape parent.
+      </p>
+
+      <label class="block text-xs font-medium text-purple-600 mb-1">Lier à une sous-procédure existante</label>
+      <select class="step-linked-id form-input-mobile w-full border border-purple-200 rounded-lg px-3 py-2.5 text-base bg-white mb-2" onchange="onStepLinkedChange(this)">
+        <option value="">— Aucune sélectionnée —</option>
+        ${availableSubprocs.map(p => `<option value="${p.id}" ${String(p.id) === String(linkedId) ? 'selected' : ''}>${escapeHtml(p.title)}</option>`).join('')}
       </select>
-      <p class="text-xs text-navy-400 mt-1">Cette étape ouvrira la procédure sélectionnée en sous-vue.</p>
+
+      <div class="flex items-center gap-2 my-3">
+        <div class="flex-1 h-px bg-purple-200"></div>
+        <span class="text-[11px] uppercase font-semibold text-purple-400 tracking-wide">ou</span>
+        <div class="flex-1 h-px bg-purple-200"></div>
+      </div>
+
+      <button type="button" onclick="openInlineSubprocCreator(this)"
+        class="w-full flex items-center justify-center gap-2 bg-white border-2 border-dashed border-purple-300 hover:border-purple-500 hover:bg-purple-50 text-purple-600 hover:text-purple-700 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors">
+        <i class="fas fa-plus-circle"></i>Créer une nouvelle sous-procédure ici
+      </button>
+
+      <!-- Indicateur visuel quand une sous-proc fraîchement créée a été assignée -->
+      <div class="step-linked-info hidden mt-2 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+        <i class="fas fa-check-circle mr-1"></i><span class="step-linked-info-text"></span>
+      </div>
     </div>
   </div>`;
+}
+
+// Quand l'utilisateur sélectionne une sous-proc existante, masquer l'indicateur "fraîchement créée"
+function onStepLinkedChange(select) {
+  const field = select.closest('.step-field');
+  if (!field) return;
+  const info = field.querySelector('.step-linked-info');
+  if (info) info.classList.add('hidden');
+}
+
+// Ouvre un mini-modal pour créer une sous-procédure à la volée, depuis une étape parent
+async function openInlineSubprocCreator(btn) {
+  const stepField = btn.closest('.step-field');
+  if (!stepField) return;
+  const parentTitle = (document.getElementById('proc-title')?.value || '').trim() || 'la procédure parent';
+
+  // Mini-form HTML construit dans une modale superposée
+  const overlayId = 'subproc-creator-overlay';
+  // Évite les doublons
+  document.getElementById(overlayId)?.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = overlayId;
+  overlay.className = 'fixed inset-0 z-[60] bg-black/50 flex items-center justify-center p-4 overflow-y-auto';
+  overlay.innerHTML = `
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-5 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center gap-2 mb-3">
+        <div class="w-8 h-8 rounded-lg bg-purple-100 text-purple-600 flex items-center justify-center"><i class="fas fa-diagram-project"></i></div>
+        <h3 class="font-bold text-navy-900">Nouvelle sous-procédure</h3>
+        <button type="button" onclick="document.getElementById('${overlayId}').remove()" class="ml-auto w-8 h-8 rounded-lg hover:bg-navy-50 text-navy-400"><i class="fas fa-times"></i></button>
+      </div>
+      <p class="text-xs text-navy-500 mb-4">Cette sous-procédure sera rattachée à <b>${escapeHtml(parentTitle)}</b> et ne s'affichera <b>pas</b> dans la liste principale.</p>
+
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-semibold text-navy-600 mb-1">Titre *</label>
+          <input id="sp-title" type="text" required placeholder="Ex: Vérification d'identité du client" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-400">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-navy-600 mb-1">Déclencheur *</label>
+          <input id="sp-trigger" type="text" required placeholder="Ex: Quand on doit vérifier l'identité d'un client à la réception" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-400">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-navy-600 mb-1">Description (optionnel)</label>
+          <textarea id="sp-desc" rows="2" oninput="autoResizeTextarea(this)" placeholder="Contexte, objectif..." class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-400"></textarea>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-xs font-semibold text-navy-600">Étapes *</label>
+            <button type="button" onclick="addInlineSubprocStep()" class="text-xs text-purple-500 hover:text-purple-700"><i class="fas fa-plus mr-1"></i>Ajouter</button>
+          </div>
+          <div id="sp-steps" class="space-y-2">
+            ${inlineSubprocStepHTML(0)}
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 pt-4 mt-3 border-t border-gray-100">
+        <button type="button" onclick="document.getElementById('${overlayId}').remove()" class="px-4 py-2 text-sm text-navy-500 hover:bg-navy-50 rounded-lg">Annuler</button>
+        <button type="button" onclick="saveInlineSubproc('${stepField.dataset.stepId}')" class="bg-purple-500 hover:bg-purple-600 text-white px-5 py-2 rounded-lg text-sm font-semibold">
+          <i class="fas fa-check mr-1"></i>Créer et lier
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  setTimeout(() => document.getElementById('sp-title')?.focus(), 50);
+}
+
+function inlineSubprocStepHTML(idx) {
+  return `
+    <div class="sp-step-row bg-purple-50/40 rounded-lg p-2 border border-purple-100">
+      <div class="flex items-center gap-2 mb-1.5">
+        <span class="text-[11px] font-bold text-purple-600">Étape ${idx + 1}</span>
+        <button type="button" onclick="this.closest('.sp-step-row').remove()" class="ml-auto text-red-400 hover:text-red-600 w-6 h-6 rounded hover:bg-red-50 flex items-center justify-center"><i class="fas fa-times text-xs"></i></button>
+      </div>
+      <input type="text" class="sp-step-title w-full border border-purple-200 rounded-md px-2 py-1.5 text-sm mb-1.5" placeholder="Titre de l'étape">
+      <textarea class="sp-step-content w-full border border-purple-200 rounded-md px-2 py-1.5 text-sm" rows="2" oninput="autoResizeTextarea(this)" placeholder="Contenu de l'étape"></textarea>
+    </div>
+  `;
+}
+
+function addInlineSubprocStep() {
+  const cont = document.getElementById('sp-steps');
+  if (!cont) return;
+  const idx = cont.querySelectorAll('.sp-step-row').length;
+  cont.insertAdjacentHTML('beforeend', inlineSubprocStepHTML(idx));
+}
+
+// Crée la sous-procédure en base (POST /api/procedures avec is_subprocedure=1)
+// puis l'attache au step parent via le <select>.
+async function saveInlineSubproc(parentStepDataId) {
+  const title = document.getElementById('sp-title')?.value.trim();
+  const trigger = document.getElementById('sp-trigger')?.value.trim();
+  const desc = document.getElementById('sp-desc')?.value.trim();
+  if (!title || !trigger) {
+    showToast('Titre et déclencheur sont requis', 'error');
+    return;
+  }
+  const steps = [];
+  document.querySelectorAll('#sp-steps .sp-step-row').forEach((row, i) => {
+    const t = row.querySelector('.sp-step-title')?.value.trim();
+    if (!t) return;
+    steps.push({ step_number: i + 1, title: t, content: row.querySelector('.sp-step-content')?.value.trim() || '', linked_procedure_id: null });
+  });
+  if (steps.length === 0) {
+    showToast('Ajoute au moins une étape', 'error');
+    return;
+  }
+
+  const result = await api('/procedures', {
+    method: 'POST',
+    body: JSON.stringify({
+      title, trigger_event: trigger, description: desc,
+      category_id: null, steps, conditions: [],
+      is_subprocedure: true
+    })
+  });
+  if (!result || !result.id) {
+    showToast('Erreur lors de la création', 'error');
+    return;
+  }
+
+  // Met à jour state.subprocedures pour que le nouveau soit dispo dans tous les selects
+  state.subprocedures = state.subprocedures || [];
+  state.subprocedures.push({ id: result.id, title, is_subprocedure: 1 });
+
+  // Trouver le step parent et y assigner la sous-proc fraîchement créée
+  const parentField = document.querySelector(`.step-field[data-step-id="${parentStepDataId}"]`);
+  if (parentField) {
+    const select = parentField.querySelector('.step-linked-id');
+    if (select) {
+      // Ajoute l'option si elle n'existe pas
+      const exists = Array.from(select.options).some(o => String(o.value) === String(result.id));
+      if (!exists) {
+        const opt = document.createElement('option');
+        opt.value = result.id;
+        opt.textContent = title;
+        select.appendChild(opt);
+      }
+      select.value = String(result.id);
+    }
+    // Indicateur visuel "créée et liée"
+    const info = parentField.querySelector('.step-linked-info');
+    const infoText = parentField.querySelector('.step-linked-info-text');
+    if (info && infoText) {
+      infoText.textContent = `Sous-procédure « ${title} » créée et liée à cette étape.`;
+      info.classList.remove('hidden');
+    }
+  }
+
+  // Refléter aussi dans tous les autres selects ouverts (autres étapes)
+  document.querySelectorAll('.step-linked-id').forEach(sel => {
+    if (!Array.from(sel.options).some(o => String(o.value) === String(result.id))) {
+      const opt = document.createElement('option');
+      opt.value = result.id;
+      opt.textContent = title;
+      sel.appendChild(opt);
+    }
+  });
+
+  document.getElementById('subproc-creator-overlay')?.remove();
+  showToast('Sous-procédure créée et liée', 'success');
 }
 
 // Toggle UI des deux variantes d'étape (simple / sous-procédure)
@@ -4209,6 +4412,87 @@ function formatDate(dateStr) {
 }
 
 // ============================================
+// HISTORY / NAVIGATION (bouton "Retour" navigateur)
+// ============================================
+// Problème résolu : avant, cliquer "Retour" sur le navigateur quittait directement
+// le site, parce qu'aucune entrée d'historique n'était poussée lors des changements
+// de vue côté SPA. Maintenant, chaque changement de vue principal (et ouverture
+// d'un détail procédure) pousse une entrée dans window.history, et popstate
+// restaure l'état correspondant.
+//
+// Convention pour state object stocké dans history :
+//   { view: 'dashboard' | 'procedures' | 'info' | 'wikot' | 'wikot-max' | 'conversations'
+//        | 'changelog' | 'templates' | 'users' | 'hotels' | 'procedure-detail' ...,
+//     procedureId: number | null }
+//
+// On ignore volontairement les sous-états très éphémères (modales, accordéons,
+// scroll, etc.) pour ne pas saturer l'historique.
+
+let _historyPopping = false; // garde anti-boucle
+
+function pushHistory(view, params) {
+  if (_historyPopping) return; // pas de pushState pendant un popstate
+  const entry = { view, ...(params || {}) };
+  try {
+    history.pushState(entry, '', '#' + view);
+  } catch {}
+}
+
+function replaceHistory(view, params) {
+  const entry = { view, ...(params || {}) };
+  try {
+    history.replaceState(entry, '', '#' + view);
+  } catch {}
+}
+
+async function restoreFromHistory(entry) {
+  if (!entry || !entry.view) return;
+  _historyPopping = true;
+  try {
+    // Cas spécial : retour vers une vue détail procédure → recharger la procédure
+    if (entry.view === 'procedure-detail' && entry.procedureId) {
+      const data = await api(`/procedures/${entry.procedureId}?include_subprocedures=1`);
+      if (data) {
+        state.selectedProcedure = data;
+        state.currentView = 'procedure-detail';
+      } else {
+        // Procédure introuvable (supprimée) → retour à la liste
+        state.currentView = 'procedures';
+      }
+    } else {
+      // Vues simples : on reproduit ce que fait navigate() mais sans pushHistory
+      if (state.currentView === 'conversations' && entry.view !== 'conversations') {
+        stopChatPolling();
+        state.selectedChannelId = null;
+        state.chatMessages = [];
+      }
+      state.currentView = entry.view;
+      state.selectedProcedure = null;
+
+      if (entry.view === 'conversations') {
+        const fresh = state.chatGroups && state.chatGroups.length > 0
+          && state.chatLastLoadedAt && (Date.now() - state.chatLastLoadedAt) < 30000;
+        if (!fresh) {
+          await loadChatData();
+        }
+      }
+    }
+    render();
+  } finally {
+    _historyPopping = false;
+  }
+}
+
+window.addEventListener('popstate', (e) => {
+  // Si state est vide (par exemple ancrage initial sans replaceState), on tente
+  // de retomber sur la vue racine (dashboard / procedures selon rôle).
+  const fallback = state.user
+    ? { view: state.user.role === 'employee' ? 'procedures' : 'dashboard' }
+    : { view: 'dashboard' };
+  restoreFromHistory(e.state || fallback);
+});
+
+// ============================================
 // INITIALIZATION
 // ============================================
 async function init() {
@@ -4225,6 +4509,9 @@ async function init() {
     ensureChatGlobalPolling();
     ensureProfilePolling();
   }
+  // Ancrer l'historique sur la vue de départ (sans push, pour éviter une entrée
+  // vide qui ferait quitter le site au premier "retour")
+  replaceHistory(state.currentView || 'dashboard');
   render();
 }
 

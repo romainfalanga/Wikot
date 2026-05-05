@@ -286,7 +286,7 @@ app.get('/api/procedures', authMiddleware, async (c) => {
   if (categoryId) { query += ' AND p.category_id = ?'; params.push(categoryId) }
   if (search) { query += ' AND (p.title LIKE ? OR p.trigger_event LIKE ? OR p.description LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`) }
 
-  query += ' ORDER BY p.priority DESC, c.sort_order, p.title'
+  query += ' ORDER BY c.sort_order, p.title'
 
   const stmt = c.env.DB.prepare(query)
   const procedures = await stmt.bind(...params).all()
@@ -340,10 +340,11 @@ app.post('/api/procedures', authMiddleware, async (c) => {
 
   // Note : trigger_icon (anciennement supprimé de l'UI) a default 'fa-bolt' en DB
   // Note : status (anciennement supprimé de l'UI) → on force 'active' (toutes les procédures sont actives)
+  // priority forcé à 'normal' (champ supprimé de l'UI mais conservé en DB)
   const result = await c.env.DB.prepare(
     `INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, trigger_conditions, priority, status, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)`
-  ).bind(hotelId, body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_conditions || null, body.priority || 'normal', user.id).run()
+     VALUES (?, ?, ?, ?, ?, ?, 'normal', 'active', ?)`
+  ).bind(hotelId, body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_conditions || null, user.id).run()
 
   const procId = result.meta.last_row_id
 
@@ -390,10 +391,10 @@ app.put('/api/procedures/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const body = await c.req.json()
 
-  // Status reste 'active' (champ supprimé de l'UI)
+  // Status reste 'active', priority reste inchangé (champs supprimés de l'UI)
   await c.env.DB.prepare(
-    `UPDATE procedures SET category_id = ?, title = ?, description = ?, trigger_event = ?, trigger_conditions = ?, priority = ?, status = 'active', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-  ).bind(body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_conditions || null, body.priority || 'normal', id).run()
+    `UPDATE procedures SET category_id = ?, title = ?, description = ?, trigger_event = ?, trigger_conditions = ?, status = 'active', version = version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  ).bind(body.category_id || null, body.title, body.description || null, body.trigger_event, body.trigger_conditions || null, id).run()
 
   // Re-create steps avec content + linked_procedure_id
   if (body.steps) {
@@ -1162,10 +1163,6 @@ app.get('*', (c) => {
     .step-connector { position: relative; }
     .step-connector::before { content: ''; position: absolute; left: 19px; top: 40px; bottom: -8px; width: 2px; background: #e5e7eb; }
     .step-connector:last-child::before { display: none; }
-    .priority-critical { border-left: 4px solid #DC2626; }
-    .priority-high { border-left: 4px solid #F59E0B; }
-    .priority-normal { border-left: 4px solid #3B82F6; }
-    .priority-low { border-left: 4px solid #9CA3AF; }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #f1f5f9; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }

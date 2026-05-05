@@ -912,25 +912,16 @@ function renderProceduresList() {
 }
 
 function renderProcedureCard(proc, canEdit) {
-  const priorityConfig = {
-    critical: { label: 'Critique', class: 'text-red-600' },
-    high: { label: 'Important', class: 'text-orange-500' },
-    normal: { label: 'Normal', class: 'text-blue-500' },
-    low: { label: 'Faible', class: 'text-gray-400' }
-  };
-  const pr = priorityConfig[proc.priority] || priorityConfig.normal;
-  // Description : on prend description, sinon trigger_event (ancien champ migré)
-  const descSnippet = (proc.description || proc.trigger_event || '').slice(0, 120);
+  const trigger = proc.trigger_event || '';
 
   return `
-  <div class="px-4 sm:px-5 py-3 sm:py-4 hover:bg-gray-50 transition-colors cursor-pointer priority-${proc.priority}" onclick="viewProcedure(${proc.id})">
+  <div class="px-4 sm:px-5 py-3 sm:py-4 hover:bg-gray-50 transition-colors cursor-pointer" onclick="viewProcedure(${proc.id})">
     <div class="flex items-start gap-3">
       <div class="flex-1 min-w-0">
         <div class="flex flex-wrap items-center gap-1.5 mb-1">
           <h4 class="font-semibold text-navy-800 text-sm sm:text-base truncate max-w-full">${escapeHtml(proc.title)}</h4>
-          ${proc.priority !== 'normal' ? `<span class="text-[10px] font-medium ${pr.class} shrink-0"><i class="fas fa-flag mr-0.5"></i>${pr.label}</span>` : ''}
         </div>
-        ${descSnippet ? `<p class="text-xs sm:text-sm text-navy-600 mb-1 line-clamp-2">${escapeHtml(descSnippet)}${(proc.description || proc.trigger_event || '').length > 120 ? '…' : ''}</p>` : ''}
+        ${trigger ? `<p class="text-xs sm:text-sm text-navy-600 mb-1 line-clamp-2"><i class="fas fa-bolt text-brand-400 mr-1 text-[10px]"></i>${escapeHtml(trigger)}</p>` : ''}
         <div class="flex flex-wrap items-center gap-2 sm:gap-4 text-[11px] text-navy-400">
           <span><i class="fas fa-list-ol mr-1"></i>${proc.step_count || 0} étape${(proc.step_count || 0) > 1 ? 's' : ''}</span>
           ${proc.condition_count > 0 ? `<span class="hidden sm:inline"><i class="fas fa-code-branch mr-1"></i>${proc.condition_count} cas</span>` : ''}
@@ -966,10 +957,8 @@ function renderProcedureDetail() {
   const { procedure: proc, steps, conditions } = state.selectedProcedure;
   const canEdit = userCanEditProcedures();
 
-  const priorityBorder = { critical: 'border-red-500', high: 'border-orange-400', normal: 'border-blue-400', low: 'border-gray-300' };
-
-  // Description : on prend description, sinon trigger_event (ancien champ migré)
-  const procDescription = proc.description || proc.trigger_event || '';
+  const procDescription = proc.description || '';
+  const procTrigger = proc.trigger_event || '';
 
   return `
   <div class="fade-in">
@@ -979,7 +968,7 @@ function renderProcedureDetail() {
         <i class="fas fa-arrow-left"></i>Retour aux procédures
       </button>
       
-      <div class="bg-white rounded-xl shadow-sm border-l-4 ${priorityBorder[proc.priority] || 'border-blue-400'} p-4 sm:p-6">
+      <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
         <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div class="flex-1 min-w-0">
             <h2 class="text-lg sm:text-xl font-bold text-navy-900 leading-tight">${escapeHtml(proc.title)}</h2>
@@ -999,6 +988,21 @@ function renderProcedureDetail() {
         </div>
       </div>
     </div>
+
+    <!-- Déclencheur -->
+    ${procTrigger ? `
+    <div class="bg-gradient-to-r from-brand-50 to-yellow-50 rounded-xl border border-brand-200 p-4 sm:p-5 mb-6">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-brand-400 rounded-xl flex items-center justify-center shadow shrink-0">
+          <i class="fas fa-bolt text-white"></i>
+        </div>
+        <div class="min-w-0">
+          <p class="text-xs font-semibold text-brand-600 uppercase tracking-wide">Déclencheur — Qu'est-ce qu'il se passe ?</p>
+          <p class="text-base sm:text-lg font-semibold text-navy-800 mt-0.5">${escapeHtml(procTrigger)}</p>
+        </div>
+      </div>
+    </div>
+    ` : ''}
 
     <!-- Steps - What to do -->
     <div class="mb-8">
@@ -1164,13 +1168,13 @@ function renderSearchResults(returnString = false) {
     <div class="space-y-3">
       <p class="text-sm text-navy-400 mb-2">${results.length} résultat(s)</p>
       ${results.map(proc => {
-        const descSnippet = (proc.description || proc.trigger_event || '').slice(0, 140);
+        const trigger = proc.trigger_event || '';
         return `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md cursor-pointer transition-all priority-${proc.priority}" onclick="viewProcedure(${proc.id})">
+        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md cursor-pointer transition-all" onclick="viewProcedure(${proc.id})">
           <div class="flex items-start gap-3">
             <div class="flex-1 min-w-0">
               <h4 class="font-semibold text-navy-800">${escapeHtml(proc.title)}</h4>
-              ${descSnippet ? `<p class="text-sm text-navy-500 mt-1 line-clamp-2">${escapeHtml(descSnippet)}${(proc.description || proc.trigger_event || '').length > 140 ? '…' : ''}</p>` : ''}
+              ${trigger ? `<p class="text-sm text-navy-500 mt-1 line-clamp-2"><i class="fas fa-bolt text-brand-400 mr-1 text-xs"></i>${escapeHtml(trigger)}</p>` : ''}
               <div class="flex gap-3 mt-2 text-[11px] text-navy-400">
                 <span>${proc.category_name || 'Sans catégorie'}</span>
                 <span>${proc.step_count} étape${proc.step_count > 1 ? 's' : ''}</span>
@@ -2751,9 +2755,14 @@ async function showProcedureForm(procedureId = null) {
             class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
         </div>
         <div>
+          <label class="block text-sm font-medium text-navy-600 mb-1"><i class="fas fa-bolt text-brand-400 mr-1"></i>Déclencheur — Qu'est-ce qu'il se passe ? *</label>
+          <input id="proc-trigger" type="text" required value="${proc?.trigger_event || ''}" placeholder="Ex: Un client arrive à la réception pour s'enregistrer"
+            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
+        </div>
+        <div>
           <label class="block text-sm font-medium text-navy-600 mb-1">Description / Contexte</label>
-          <textarea id="proc-desc" rows="3" oninput="autoResizeTextarea(this)" placeholder="Quand est-ce qu'on suit cette procédure ? Pourquoi ? Ce qu'il faut savoir avant de commencer..."
-            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">${proc?.description || proc?.trigger_event || ''}</textarea>
+          <textarea id="proc-desc" rows="3" oninput="autoResizeTextarea(this)" placeholder="Contexte, objectif, infos importantes à savoir avant de commencer..."
+            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">${proc?.description || ''}</textarea>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -2761,15 +2770,6 @@ async function showProcedureForm(procedureId = null) {
             <select id="proc-category" class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 bg-white">
               <option value="">Sans catégorie</option>
               ${state.categories.map(c => `<option value="${c.id}" ${proc?.category_id == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-navy-600 mb-1">Priorité</label>
-            <select id="proc-priority" class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 bg-white">
-              <option value="low" ${proc?.priority === 'low' ? 'selected' : ''}>Faible</option>
-              <option value="normal" ${!proc || proc?.priority === 'normal' ? 'selected' : ''}>Normal</option>
-              <option value="high" ${proc?.priority === 'high' ? 'selected' : ''}>Important</option>
-              <option value="critical" ${proc?.priority === 'critical' ? 'selected' : ''}>Critique</option>
             </select>
           </div>
         </div>
@@ -2974,13 +2974,12 @@ async function saveProcedure(existingId) {
   });
 
   const desc = document.getElementById('proc-desc').value.trim();
+  const trigger = document.getElementById('proc-trigger').value.trim();
   const body = {
     title: document.getElementById('proc-title').value.trim(),
     description: desc,
-    // trigger_event toujours requis côté DB : on réutilise la description comme fallback
-    trigger_event: desc || document.getElementById('proc-title').value.trim(),
+    trigger_event: trigger,
     category_id: document.getElementById('proc-category').value || null,
-    priority: document.getElementById('proc-priority').value,
     steps,
     conditions
   };

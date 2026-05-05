@@ -619,43 +619,6 @@ app.put('/api/suggestions/:id', authMiddleware, async (c) => {
 })
 
 // ============================================
-// CHANGELOG ROUTES
-// ============================================
-app.get('/api/changelog', authMiddleware, async (c) => {
-  const user = c.get('user')
-  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
-  const hotelId = c.req.query('hotel_id') || user.hotel_id
-
-  const changelog = await c.env.DB.prepare(
-    `SELECT cl.*, u.name as user_name, p.title as procedure_title,
-      (SELECT COUNT(*) FROM changelog_reads cr WHERE cr.changelog_id = cl.id AND cr.user_id = ?) as is_read
-    FROM changelog cl
-    LEFT JOIN users u ON cl.user_id = u.id
-    LEFT JOIN procedures p ON cl.procedure_id = p.id
-    WHERE cl.hotel_id = ?
-    ORDER BY cl.created_at DESC
-    LIMIT 50`
-  ).bind(user.id, hotelId).all()
-
-  const unreadRequired = await c.env.DB.prepare(
-    `SELECT COUNT(*) as count FROM changelog cl
-     WHERE cl.hotel_id = ? AND cl.is_read_required = 1
-     AND cl.id NOT IN (SELECT changelog_id FROM changelog_reads WHERE user_id = ?)`
-  ).bind(hotelId, user.id).first() as any
-
-  return c.json({ changelog: changelog.results, unread_required: unreadRequired?.count || 0 })
-})
-
-app.post('/api/changelog/:id/read', authMiddleware, async (c) => {
-  const user = c.get('user')
-  const id = c.req.param('id')
-  try {
-    await c.env.DB.prepare('INSERT OR IGNORE INTO changelog_reads (changelog_id, user_id) VALUES (?, ?)').bind(id, user.id).run()
-  } catch {}
-  return c.json({ success: true })
-})
-
-// ============================================
 // TEMPLATES ROUTES (admin hôtel uniquement — super_admin exclu)
 // ============================================
 app.get('/api/templates', authMiddleware, async (c) => {
@@ -737,29 +700,16 @@ app.get('/api/stats', authMiddleware, async (c) => {
   const totalProc = await c.env.DB.prepare('SELECT COUNT(*) as count FROM procedures WHERE hotel_id = ?').bind(hotelId).first() as any
   const activeProc = await c.env.DB.prepare("SELECT COUNT(*) as count FROM procedures WHERE hotel_id = ? AND status = 'active'").bind(hotelId).first() as any
   const draftProc = await c.env.DB.prepare("SELECT COUNT(*) as count FROM procedures WHERE hotel_id = ? AND status = 'draft'").bind(hotelId).first() as any
-  const pendingSugg = await c.env.DB.prepare("SELECT COUNT(*) as count FROM suggestions WHERE hotel_id = ? AND status = 'pending'").bind(hotelId).first() as any
   const totalUsers = await c.env.DB.prepare('SELECT COUNT(*) as count FROM users WHERE hotel_id = ?').bind(hotelId).first() as any
 
-  const unreadRequired = await c.env.DB.prepare(
-    `SELECT COUNT(*) as count FROM changelog cl
-     WHERE cl.hotel_id = ? AND cl.is_read_required = 1
-     AND cl.id NOT IN (SELECT changelog_id FROM changelog_reads WHERE user_id = ?)`
-  ).bind(hotelId, user.id).first() as any
-
-  const recentChanges = await c.env.DB.prepare(
-    `SELECT cl.*, u.name as user_name, p.title as procedure_title
-     FROM changelog cl LEFT JOIN users u ON cl.user_id = u.id LEFT JOIN procedures p ON cl.procedure_id = p.id
-     WHERE cl.hotel_id = ? ORDER BY cl.created_at DESC LIMIT 5`
-  ).bind(hotelId).all()
-
+  // Pages "Rechercher" et "Historique" supprimées : on ne calcule plus
+  // unread_required ni recent_changes (changelog reste alimenté en interne
+  // uniquement à des fins de log/audit, mais n'est plus affiché).
   return c.json({
     total_procedures: totalProc.count,
     active_procedures: activeProc.count,
     draft_procedures: draftProc.count,
-    pending_suggestions: pendingSugg.count,
-    total_users: totalUsers.count,
-    unread_required: unreadRequired?.count || 0,
-    recent_changes: recentChanges.results
+    total_users: totalUsers.count
   })
 })
 

@@ -10,17 +10,14 @@ let state = {
   currentView: 'dashboard',
   currentHotelId: null,
   procedures: [],
+  subprocedures: [],
   categories: [],
-  suggestions: [],
-  changelog: [],
   templates: [],
   users: [],
   hotels: [],
   stats: {},
   selectedProcedure: null,
-  searchQuery: '',
   filterCategory: '',
-  unreadRequired: 0,
   // Chat
   chatGroups: [],
   chatChannels: [],
@@ -273,7 +270,7 @@ function logout() {
   state.users = [];
   state.hotels = [];
   state.stats = {};
-  state.unreadRequired = 0;
+
 
   // Nettoyer le localStorage
   localStorage.removeItem('wikot_token');
@@ -308,13 +305,14 @@ async function loadData() {
   // Admin / Employee : chargement complet
   // /procedures      → uniquement les procédures principales (is_subprocedure=0)
   // /procedures?include_subprocedures=1 → toutes (utile pour le picker du modal)
+  // Pages "Rechercher" et "Historique" (changelog) supprimées : Wikot remplit
+  // le rôle de recherche, donc on n'appelle plus /changelog au boot.
   const subParam = hotelParam ? `${hotelParam}&include_subprocedures=1` : '?include_subprocedures=1';
-  const [statsData, categoriesData, proceduresData, allProcsData, changelogData] = await Promise.all([
+  const [statsData, categoriesData, proceduresData, allProcsData] = await Promise.all([
     api(`/stats${hotelParam}`),
     api(`/categories${hotelParam}`),
     api(`/procedures${hotelParam}`),
-    api(`/procedures${subParam}`),
-    api(`/changelog${hotelParam}`)
+    api(`/procedures${subParam}`)
   ]);
 
   if (statsData) state.stats = statsData;
@@ -324,10 +322,6 @@ async function loadData() {
   if (allProcsData) {
     const all = allProcsData.procedures || [];
     state.subprocedures = all.filter(p => p.is_subprocedure === 1 || p.is_subprocedure === true);
-  }
-  if (changelogData) {
-    state.changelog = changelogData.changelog || [];
-    state.unreadRequired = changelogData.unread_required || 0;
   }
 
   if (state.user.role === 'admin') {
@@ -515,28 +509,26 @@ function renderMainLayout() {
     ];
   } else if (isAdmin) {
     // Admin hôtel : tout sauf suggestions ; les admins ont accès à Back Wikot
+    // Pages "Rechercher" et "Historique" supprimées : Wikot remplit le rôle de recherche
     menuItems = [
       { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
       { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
-      { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
-      { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
     // Employé : Wikot pour tous, Back Wikot uniquement si peut éditer procédures OU informations
+    // Pages "Rechercher" et "Historique" supprimées : Wikot remplit le rôle de recherche
     const canUseMax = userCanEditProcedures() || userCanEditInfo();
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
       ...(canUseMax ? [{ id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' }] : []),
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
-      { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
-      { id: 'changelog', icon: 'fa-clock-rotate-left', label: 'Historique', badge: state.unreadRequired },
     ];
   }
 
@@ -549,10 +541,8 @@ function renderMainLayout() {
     wikot: 'Wikot',
     'wikot-max': 'Back Wikot',
     procedures: 'Procédures',
-    search: 'Rechercher',
     info: 'Informations',
     conversations: 'Conversations',
-    changelog: 'Historique',
     users: 'Utilisateurs',
     hotels: 'Hôtels',
     templates: 'Modèles',
@@ -569,7 +559,7 @@ function renderMainLayout() {
     // 5 items max — on garde l'ordre pour rester cohérent avec la sidebar desktop
     const priorityIds = userCanUseWikotMax()
       ? ['wikot','wikot-max','procedures','info','conversations']
-      : ['wikot','procedures','info','conversations','search'];
+      : ['wikot','procedures','info','conversations'];
     bottomNavItems = priorityIds
       .map(id => menuItems.find(i => i.id === id))
       .filter(Boolean)
@@ -648,10 +638,7 @@ function renderMainLayout() {
             <i class="fas fa-comments"></i>
             <span data-badge-conversations class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[16px] text-center">${state.unreadChatTotal > 0 ? (state.unreadChatTotal > 99 ? '99+' : state.unreadChatTotal) : ''}</span>
           </button>
-          ${state.unreadRequired > 0 ? `<button onclick="navigate('changelog')" class="relative w-9 h-9 flex items-center justify-center rounded-lg bg-red-50 text-red-500" title="Changements à lire">
-            <i class="fas fa-bell"></i>
-            <span class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[16px] text-center">${state.unreadRequired}</span>
-          </button>` : ''}
+
           <div class="w-8 h-8 bg-navy-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">${state.user.name.charAt(0)}</div>
         </div>
       </div>
@@ -755,9 +742,7 @@ function renderCurrentView() {
     case 'wikot': return renderWikotView('standard');
     case 'wikot-max': return renderWikotView('max');
     case 'procedures': return state.selectedProcedure ? renderProcedureDetail() : renderProceduresList();
-    case 'search': return renderSearchView();
     case 'info': return renderHotelInfoView();
-    case 'changelog': return renderChangelogView();
     case 'conversations': return renderConversationsView();
     case 'users': return renderUsersView();
     case 'hotels': return renderHotelsView();
@@ -826,18 +811,6 @@ function renderDashboard() {
       <p class="text-navy-500 mt-1 text-sm">${state.user.role === 'admin' ? 'Gérez les procédures de votre hôtel' : 'Consultez les procédures à suivre'}</p>
     </div>
 
-    ${state.unreadRequired > 0 ? `
-    <div class="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3 cursor-pointer hover:bg-red-100 transition-colors" onclick="navigate('changelog')">
-      <div class="w-9 h-9 sm:w-10 sm:h-10 bg-red-100 rounded-full flex items-center justify-center shrink-0">
-        <i class="fas fa-exclamation-triangle text-red-500 text-sm"></i>
-      </div>
-      <div class="flex-1 min-w-0">
-        <p class="font-semibold text-red-800 text-sm">${state.unreadRequired} changement(s) à lire</p>
-        <p class="text-xs text-red-600 mt-0.5">Des procédures ont été mises à jour.</p>
-      </div>
-      <i class="fas fa-chevron-right text-red-300 mt-1 shrink-0"></i>
-    </div>` : ''}
-
     <div class="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-5 mb-6 sm:mb-8">
       ${statCard('fa-sitemap', 'Procédures actives', s.active_procedures || 0, 'bg-green-500')}
       ${statCard('fa-file-pen', 'Brouillons', s.draft_procedures || 0, 'bg-yellow-500')}
@@ -861,22 +834,6 @@ function renderDashboard() {
       </div>
     </div>
 
-    <!-- Recent changes -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
-      <h3 class="text-base sm:text-lg font-semibold text-navy-800 mb-4"><i class="fas fa-clock-rotate-left mr-2 text-navy-400"></i>Derniers changements</h3>
-      ${(s.recent_changes || []).length === 0 ? '<p class="text-navy-400 text-sm">Aucun changement récent</p>' :
-        (s.recent_changes || []).map(ch => `
-          <div class="flex items-start gap-3 py-3 border-b border-gray-50 last:border-0">
-            <div class="w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${getActionColor(ch.action)}">
-              <i class="fas ${getActionIcon(ch.action)} text-xs"></i>
-            </div>
-            <div class="min-w-0 flex-1">
-              <p class="text-sm text-navy-700 leading-snug">${ch.summary}</p>
-              <p class="text-xs text-navy-400 mt-0.5">${ch.user_name} · ${formatDate(ch.created_at)}</p>
-            </div>
-          </div>
-        `).join('')}
-    </div>
   </div>`;
 }
 
@@ -1176,142 +1133,6 @@ function renderCondition(cond) {
         </div>`}
     </div>
   </div>`;
-}
-
-// ============================================
-// SEARCH VIEW
-// ============================================
-function renderSearchView() {
-  return `
-  <div class="fade-in">
-    <div class="mb-5 sm:mb-6">
-      <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-search mr-2 text-brand-400"></i>Rechercher</h2>
-      <p class="text-navy-500 text-sm mt-1">Trouvez rapidement quoi faire face à une situation</p>
-    </div>
-
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6">
-      <div class="relative">
-        <i class="fas fa-search absolute left-4 top-4 text-navy-300 text-lg"></i>
-        <input id="search-input" type="text" placeholder="Que se passe-t-il ? Ex: client en colère, alarme incendie, check-in..." 
-          value="${state.searchQuery}"
-          oninput="state.searchQuery=this.value; renderSearchResults()"
-          class="w-full pl-12 pr-4 py-3.5 border border-navy-200 rounded-xl text-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
-      </div>
-    </div>
-
-    <div id="search-results">
-      ${state.searchQuery ? renderSearchResults(true) : `
-        <div class="text-center py-12">
-          <i class="fas fa-magnifying-glass text-5xl text-navy-200 mb-4"></i>
-          <p class="text-navy-400 font-medium">Décrivez votre situation</p>
-          <p class="text-sm text-navy-300 mt-1">Tapez des mots-clés liés à la situation que vous rencontrez</p>
-        </div>
-      `}
-    </div>
-  </div>`;
-}
-
-function renderSearchResults(returnString = false) {
-  const query = state.searchQuery.toLowerCase().trim();
-  if (!query) return '';
-  
-  const results = state.procedures.filter(p => 
-    p.title.toLowerCase().includes(query) ||
-    (p.trigger_event || '').toLowerCase().includes(query) ||
-    (p.description || '').toLowerCase().includes(query)
-  );
-
-  const html = results.length === 0 ? `
-    <div class="text-center py-12">
-      <i class="fas fa-face-meh text-4xl text-navy-200 mb-4"></i>
-      <p class="text-navy-400 font-medium">Aucune procédure trouvée</p>
-      <p class="text-sm text-navy-300 mt-1">Essayez d'autres termes ou proposez une nouvelle procédure</p>
-    </div>
-  ` : `
-    <div class="space-y-3">
-      <p class="text-sm text-navy-400 mb-2">${results.length} résultat(s)</p>
-      ${results.map(proc => {
-        const trigger = proc.trigger_event || '';
-        return `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 hover:shadow-md cursor-pointer transition-all" onclick="viewProcedure(${proc.id})">
-          <div class="flex items-start gap-3">
-            <div class="flex-1 min-w-0">
-              <h4 class="font-semibold text-navy-800">${escapeHtml(proc.title)}</h4>
-              ${trigger ? `<p class="text-sm text-navy-500 mt-1 line-clamp-2"><i class="fas fa-bolt text-brand-400 mr-1 text-xs"></i>${escapeHtml(trigger)}</p>` : ''}
-              <div class="flex gap-3 mt-2 text-[11px] text-navy-400">
-                <span>${proc.category_name || 'Sans catégorie'}</span>
-                <span>${proc.step_count} étape${proc.step_count > 1 ? 's' : ''}</span>
-                ${proc.condition_count > 0 ? `<span>${proc.condition_count} cas spécifiques</span>` : ''}
-              </div>
-            </div>
-            <i class="fas fa-chevron-right text-navy-300 mt-2"></i>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>`;
-
-  if (returnString) return html;
-  const container = document.getElementById('search-results');
-  if (container) container.innerHTML = html;
-}
-
-// ============================================
-// CHANGELOG VIEW
-// ============================================
-function renderChangelogView() {
-  return `
-  <div class="fade-in">
-    <div class="mb-5 sm:mb-6">
-      <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-clock-rotate-left mr-2 text-brand-400"></i>Historique</h2>
-      <p class="text-navy-500 text-sm mt-1">Suivi des modifications de procédures</p>
-    </div>
-
-    ${state.unreadRequired > 0 ? `
-    <div class="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
-      <p class="font-semibold text-red-800"><i class="fas fa-exclamation-triangle mr-2"></i>${state.unreadRequired} changement(s) important(s) non lu(s)</p>
-      <p class="text-xs text-red-600 mt-1">Marquez-les comme lus pour confirmer que vous en avez pris connaissance</p>
-    </div>` : ''}
-
-    <div class="space-y-3">
-      ${state.changelog.length === 0 ? `
-        <div class="bg-white rounded-xl p-12 text-center border border-gray-100">
-          <i class="fas fa-clock-rotate-left text-4xl text-navy-200 mb-4"></i>
-          <p class="text-navy-400 font-medium">Aucun changement enregistré</p>
-        </div>
-      ` : state.changelog.map(ch => `
-        <div class="bg-white rounded-xl shadow-sm border ${ch.is_read_required && !ch.is_read ? 'border-red-200 bg-red-50' : 'border-gray-100'} p-4">
-          <div class="flex items-start gap-3">
-            <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${getActionColor(ch.action)}">
-              <i class="fas ${getActionIcon(ch.action)} text-sm"></i>
-            </div>
-            <div class="flex-1">
-              <p class="font-medium text-navy-800">${ch.summary}</p>
-              <div class="flex items-center gap-3 mt-1 text-xs text-navy-400">
-                <span><i class="fas fa-user mr-1"></i>${ch.user_name || 'Système'}</span>
-                <span><i class="fas fa-clock mr-1"></i>${formatDate(ch.created_at)}</span>
-                ${ch.procedure_title ? `<span><i class="fas fa-sitemap mr-1"></i>${ch.procedure_title}</span>` : ''}
-              </div>
-              ${ch.details ? `<p class="text-sm text-navy-500 mt-2">${ch.details}</p>` : ''}
-            </div>
-            ${ch.is_read_required && !ch.is_read ? `
-              <button onclick="markChangelogRead(${ch.id})" class="bg-red-500 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shrink-0">
-                <i class="fas fa-check mr-1"></i>Lu
-              </button>
-            ` : ch.is_read ? `
-              <span class="text-[10px] text-green-500 shrink-0"><i class="fas fa-check-circle mr-1"></i>Lu</span>
-            ` : ''}
-          </div>
-        </div>
-      `).join('')}
-    </div>
-  </div>`;
-}
-
-async function markChangelogRead(id) {
-  await api(`/changelog/${id}/read`, { method: 'POST' });
-  await loadData();
-  render();
-  showToast('Changement marqué comme lu', 'success');
 }
 
 // ============================================
@@ -4371,30 +4192,6 @@ async function submitChangePassword() {
 // ============================================
 // HELPERS
 // ============================================
-function getActionColor(action) {
-  const colors = {
-    created: 'bg-blue-100 text-blue-600',
-    updated: 'bg-yellow-100 text-yellow-600',
-    activated: 'bg-green-100 text-green-600',
-    archived: 'bg-gray-100 text-gray-500',
-    approved: 'bg-green-100 text-green-600',
-    rejected: 'bg-red-100 text-red-600'
-  };
-  return colors[action] || 'bg-gray-100 text-gray-500';
-}
-
-function getActionIcon(action) {
-  const icons = {
-    created: 'fa-plus',
-    updated: 'fa-pen',
-    activated: 'fa-check-circle',
-    archived: 'fa-archive',
-    approved: 'fa-check-double',
-    rejected: 'fa-times-circle'
-  };
-  return icons[action] || 'fa-circle';
-}
-
 function formatDate(dateStr) {
   if (!dateStr) return '';
   try {

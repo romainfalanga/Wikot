@@ -1935,18 +1935,41 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     if (selectedAnswer.type === 'procedure' && selectedAnswer.id) {
       const p = await c.env.DB.prepare(`
         SELECT p.id, p.title, p.description, p.trigger_event, p.category_id,
-               c.name as category_name, c.color as category_color, c.icon as category_icon,
-               (SELECT COUNT(*) FROM steps WHERE procedure_id = p.id) as step_count
+               c.name as category_name, c.color as category_color, c.icon as category_icon
         FROM procedures p
         LEFT JOIN categories c ON p.category_id = c.id
         WHERE p.id = ? AND p.hotel_id = ?
       `).bind(selectedAnswer.id, user.hotel_id).first() as any
       if (p) {
+        // Récupération de toutes les étapes (titre + contenu + sous-procédures liées)
+        const stepsRes = await c.env.DB.prepare(`
+          SELECT s.id, s.step_number, s.title, s.content, s.linked_procedure_id, lp.title as linked_title
+          FROM steps s
+          LEFT JOIN procedures lp ON lp.id = s.linked_procedure_id
+          WHERE s.procedure_id = ? ORDER BY s.step_number
+        `).bind(p.id).all()
+        const steps: any[] = []
+        for (const st of (stepsRes.results as any[])) {
+          // Si l'étape pointe vers une sous-procédure, on récupère aussi les étapes de la sous-procédure
+          let linkedSteps: any[] = []
+          if (st.linked_procedure_id) {
+            const subRes = await c.env.DB.prepare(`
+              SELECT step_number, title, content
+              FROM steps WHERE procedure_id = ? ORDER BY step_number
+            `).bind(st.linked_procedure_id).all()
+            linkedSteps = subRes.results as any[]
+          }
+          steps.push({
+            id: st.id, step_number: st.step_number, title: st.title, content: st.content,
+            linked_procedure_id: st.linked_procedure_id, linked_title: st.linked_title,
+            linked_steps: linkedSteps
+          })
+        }
         answerCard = {
           kind: 'procedure',
           id: p.id, title: p.title, description: p.description, trigger_event: p.trigger_event,
           category_name: p.category_name, category_color: p.category_color, category_icon: p.category_icon,
-          step_count: p.step_count
+          step_count: steps.length, steps
         }
       } else {
         answerCard = { kind: 'not_found' }

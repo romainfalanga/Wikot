@@ -2263,7 +2263,9 @@ async function loadWikotConversation(convId, mode) {
     id: m.id,
     role: m.role,
     content: m.content,
-    references: m.references_json ? JSON.parse(m.references_json) : []
+    // Le backend renvoie déjà references (array) et answer_card (object) désérialisés
+    references: Array.isArray(m.references) ? m.references : [],
+    answer_card: m.answer_card || null
   }));
   s.actions = data.actions || [];
   render();
@@ -2552,7 +2554,7 @@ function renderWikotAnswerCard(card) {
   }
 
   if (card.kind === 'procedure') {
-    const ref = { type: 'procedure', id: card.id, title: card.title };
+    const steps = Array.isArray(card.steps) ? card.steps : [];
     return `
       <div class="bg-white border-2 border-brand-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
         <!-- Header coloré -->
@@ -2561,29 +2563,23 @@ function renderWikotAnswerCard(card) {
           <span class="text-xs font-semibold uppercase tracking-wide">Procédure</span>
           ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
         </div>
-        <!-- Body -->
-        <div class="px-4 py-3 space-y-2">
+        <!-- Header procédure -->
+        <div class="px-4 py-3 space-y-2 border-b border-gray-100">
           <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.title)}</h3>
           ${card.trigger_event ? `<div class="text-xs text-navy-600 flex items-start gap-1.5"><i class="fas fa-bolt text-amber-500 mt-0.5"></i><span>${escapeHtml(card.trigger_event)}</span></div>` : ''}
-          ${card.description ? `<p class="text-sm text-navy-700 whitespace-pre-wrap leading-relaxed">${escapeHtml(card.description)}</p>` : ''}
-          <div class="flex items-center gap-2 text-xs text-navy-500 pt-1">
-            <i class="fas fa-list-ol"></i>
-            <span>${card.step_count || 0} étape${(card.step_count || 0) > 1 ? 's' : ''}</span>
-          </div>
+          ${card.description ? `<p class="text-sm text-navy-700 whitespace-pre-wrap leading-relaxed">${formatHotelInfoContent(card.description)}</p>` : ''}
         </div>
-        <!-- Bouton ouvrir -->
-        <div class="px-4 pb-3">
-          <button onclick='viewWikotReference(${JSON.stringify(ref)})'
-            class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-brand-500 hover:bg-brand-600 text-white rounded-xl text-sm font-semibold transition-colors">
-            <i class="fas fa-arrow-right"></i>Ouvrir la procédure
-          </button>
-        </div>
+        <!-- Étapes COMPLÈTES (titre + contenu + sous-procédures dépliées) -->
+        ${steps.length > 0 ? `
+          <ol class="px-3 sm:px-4 py-3 space-y-2.5">
+            ${steps.map(s => renderWikotStep(s)).join('')}
+          </ol>
+        ` : '<p class="px-4 py-3 text-sm text-navy-400 italic">Aucune étape renseignée.</p>'}
       </div>
     `;
   }
 
   if (card.kind === 'info_item') {
-    const ref = { type: 'info_item', id: card.id, title: card.title };
     const catColor = card.category_color || '#3B82F6';
     return `
       <div class="bg-white border-2 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden" style="border-color:${catColor}40">
@@ -2593,18 +2589,10 @@ function renderWikotAnswerCard(card) {
           <span class="text-xs font-semibold uppercase tracking-wide">Information</span>
           ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
         </div>
-        <!-- Body : contenu COMPLET de l'info -->
+        <!-- Body : contenu COMPLET de l'info, autosuffisant -->
         <div class="px-4 py-3 space-y-2">
           <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.title)}</h3>
           ${card.content ? `<div class="text-sm text-navy-700 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(card.content)}</div>` : '<p class="text-sm text-navy-400 italic">Aucun contenu.</p>'}
-        </div>
-        <!-- Bouton aller à l'emplacement -->
-        <div class="px-4 pb-3">
-          <button onclick='viewWikotReference(${JSON.stringify(ref)})'
-            class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-white rounded-xl text-sm font-semibold transition-colors hover:opacity-90"
-            style="background:${catColor}">
-            <i class="fas fa-location-arrow"></i>Voir dans la page Informations
-          </button>
         </div>
       </div>
     `;
@@ -2612,6 +2600,47 @@ function renderWikotAnswerCard(card) {
 
   // Type inconnu : fallback not_found
   return renderWikotAnswerCard({ kind: 'not_found' });
+}
+
+// Helper : rend UNE étape de la answer_card procédure (mode standard Wikot)
+// - Titre + contenu en clair
+// - Si linked_procedure_id → on affiche aussi les étapes de la sous-procédure dépliées
+function renderWikotStep(s) {
+  const num = s.step_number || '';
+  const linkedSteps = Array.isArray(s.linked_steps) ? s.linked_steps : [];
+  const hasLinked = s.linked_procedure_id && (linkedSteps.length > 0 || s.linked_title);
+  return `
+    <li class="bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
+      <div class="flex items-start gap-3">
+        <span class="flex-shrink-0 w-7 h-7 rounded-full bg-brand-100 text-brand-700 text-xs font-bold flex items-center justify-center">${num}</span>
+        <div class="min-w-0 flex-1">
+          <div class="font-semibold text-navy-900 text-sm leading-snug">${escapeHtml(s.title || '(sans titre)')}</div>
+          ${s.content ? `<div class="text-[13px] text-navy-700 mt-1.5 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(s.content)}</div>` : ''}
+          ${hasLinked ? `
+            <div class="mt-2.5 border-l-2 border-brand-300 pl-3 bg-brand-50/40 rounded-r-lg py-2 pr-2">
+              <div class="text-[11px] uppercase tracking-wide font-semibold text-brand-700 flex items-center gap-1.5 mb-1.5">
+                <i class="fas fa-diagram-project"></i>
+                Sous-procédure : ${escapeHtml(s.linked_title || '')}
+              </div>
+              ${linkedSteps.length > 0 ? `
+                <ol class="space-y-1.5">
+                  ${linkedSteps.map(ls => `
+                    <li class="flex items-start gap-2">
+                      <span class="flex-shrink-0 w-5 h-5 rounded-full bg-white border border-brand-200 text-brand-700 text-[10px] font-bold flex items-center justify-center mt-0.5">${ls.step_number || ''}</span>
+                      <div class="min-w-0 flex-1">
+                        <div class="font-semibold text-navy-800 text-xs">${escapeHtml(ls.title || '(sans titre)')}</div>
+                        ${ls.content ? `<div class="text-[11px] text-navy-600 mt-0.5 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(ls.content)}</div>` : ''}
+                      </div>
+                    </li>
+                  `).join('')}
+                </ol>
+              ` : '<div class="text-[11px] text-navy-400 italic">(aucune étape dans la sous-procédure)</div>'}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    </li>
+  `;
 }
 
 // Helper : formate un bloc d'étapes pour affichage complet (titre + contenu, sans troncature)

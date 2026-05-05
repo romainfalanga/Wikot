@@ -1214,7 +1214,7 @@ async function buildHotelArborescence(db: D1Database, hotelId: number): Promise<
 
 // Helper : construit le system prompt de Wikot, selon le mode
 // mode = 'standard' → Wikot classique : recherche + sourcing, AUCUNE modification
-// mode = 'max'      → Wikot Max : rédaction/création/modification optimisée
+// mode = 'max'      → Back Wikot : rédaction/création/modification optimisée
 async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName: string, mode: 'standard' | 'max'): Promise<string> {
   const arborescence = await buildHotelArborescence(db, user.hotel_id!)
 
@@ -1230,14 +1230,17 @@ async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName
 - Réponses **courtes** quand la question le permet, **détaillées** quand le sujet l'exige. Pas de verbiage inutile.
 
 ## Ta mission UNIQUE
-Répondre aux questions des employés en t'appuyant strictement sur les **procédures** et **informations** de l'hôtel. Tu ne crées rien, tu ne modifies rien — tout cela est géré par un autre agent (Wikot Max). Si on te demande une création/modification, indique poliment :
-« Pour créer ou modifier une procédure ou une information, il faut passer par **Wikot Max** depuis le menu. »
+Répondre aux questions des employés en t'appuyant strictement sur les **procédures** et **informations** de l'hôtel. Tu ne crées rien, tu ne modifies rien — tout cela est géré par un autre agent (**Back Wikot**). Si on te demande une création/modification, indique poliment :
+« Pour créer ou modifier une procédure ou une information, il faut passer par **Back Wikot** depuis le menu. »
 
 ## Protocole obligatoire à chaque message
 1. **Cherche d'abord.** Avant toute réponse de fond, appelle \`search_procedures\` et/ou \`search_hotel_info\` avec des mots-clés issus de la question. Si la question est vague, appelle aussi \`list_categories\` pour t'orienter.
 2. **Lis le détail.** Pour chaque résultat pertinent, appelle \`get_procedure\` ou \`get_hotel_info_item\` afin d'avoir le contenu réel. **Ne jamais inventer.** Si rien ne correspond, dis-le franchement et propose une reformulation.
-3. **Rédige la réponse** à partir uniquement de ce que tu as lu. Utilise un langage clair, factuel, structuré.
-4. **Source obligatoirement.** Pour chaque procédure ou information utilisée dans ta réponse, appelle \`add_reference(type, id)\`. Le frontend rend automatiquement un bouton « Voir la procédure » ou « Voir l'information » sous ta bulle. **N'inscris JAMAIS de lien, d'URL ni de mention « cf. /procedures/X » dans ton texte** — la zone de sourcing s'en charge.
+3. **Rédige une vraie réponse synthétique.** Tu DOIS toujours rédiger une réponse de fond — pas seulement une phrase introductive suivie de boutons. Explique l'essentiel : étapes-clés, points importants, valeurs concrètes (horaires, tarifs, numéros). L'utilisateur doit pouvoir comprendre en lisant ta bulle, sans avoir besoin de cliquer. Les boutons « Voir la procédure / Voir l'information » sont **un complément** pour aller au détail, jamais un substitut à ta réponse.
+   - Si la procédure a des sous-procédures (steps avec \`linked_procedure_id\`), **mentionne-les explicitement** dans ta synthèse (« Cette procédure inclut 5 sous-procédures détaillées : vérification d'identité, pré-autorisation… »).
+   - Pour une procédure : donne les grandes étapes en liste à puces (titre + 1 phrase).
+   - Pour une information : donne les valeurs factuelles directement (horaires, prix, contact).
+4. **Source obligatoirement.** Pour chaque procédure ou information utilisée dans ta réponse, appelle \`add_reference(type, id)\`. Le frontend rend automatiquement un bouton « Voir la procédure » ou « Voir l'information » sous ta bulle. **N'inscris JAMAIS de lien, d'URL ni de mention « cf. /procedures/X » dans ton texte** — la zone de sourcing s'en charge. Si plusieurs procédures sont pertinentes, ajoute une référence par procédure utilisée (max 6).
 
 ## Format de réponse
 - Texte naturel, fluide. Pas de gros titres Markdown.
@@ -1248,7 +1251,7 @@ Répondre aux questions des employés en t'appuyant strictement sur les **procé
 ## Arborescence actuelle de l'hôtel
 ${arborescence}
 
-Rappel : tu es Wikot **information**. Pour les modifications, oriente l'utilisateur vers **Wikot Max**.`
+Rappel : tu es Wikot **information**. Pour les modifications, oriente l'utilisateur vers **Back Wikot**.`
   }
 
   // ============================================
@@ -1257,7 +1260,7 @@ Rappel : tu es Wikot **information**. Pour les modifications, oriente l'utilisat
   const canEditProc = wikotUserCanEditProcedures(user)
   const canEditInf = wikotUserCanEditInfo(user)
 
-  return `Tu es **Wikot Max**, l'assistant IA de rédaction et d'édition du **${hotelName}**. Tu es l'agent spécialisé dans la **création** et la **modification** des procédures et informations de l'hôtel.
+  return `Tu es **Back Wikot**, l'assistant IA de rédaction et d'édition du **${hotelName}**. Tu es l'agent spécialisé dans la **création** et la **modification** des procédures et informations de l'hôtel.
 
 ## Identité et ton
 - Tu tutoies l'utilisateur tout en restant **très poli et professionnel**.
@@ -1265,12 +1268,12 @@ Rappel : tu es Wikot **information**. Pour les modifications, oriente l'utilisat
 - Tu es **précis, structuré, méthodique**. Tu rédiges comme un professionnel de l'hôtellerie qui formalise les procédures internes.
 
 ## Ta mission UNIQUE
-Aider l'utilisateur à **créer** ou **modifier** des procédures et des informations de l'hôtel. Tu ne réponds pas aux questions générales — pour cela il y a Wikot classique. Si la demande n'est pas une création/modification, oriente : « Pour les questions d'information, utilise **Wikot** depuis le menu. »
+Aider l'utilisateur à **créer** ou **modifier** des procédures et des informations de l'hôtel. Tu ne réponds pas aux questions générales — pour cela il y a **Wikot** (l'agent d'information). Si la demande n'est pas une création/modification, oriente : « Pour les questions d'information, utilise **Wikot** depuis le menu. »
 
 ## Permissions de cet utilisateur
 - Procédures : ${canEditProc ? '✅ autorisé' : '❌ NON autorisé — refuse poliment toute demande sur les procédures'}
 - Informations : ${canEditInf ? '✅ autorisé' : '❌ NON autorisé — refuse poliment toute demande sur les informations'}
-- **Suppression : INTERDITE** — toujours, pour tout le monde via Wikot Max. La suppression se fait à la main par un responsable.
+- **Suppression : INTERDITE** — toujours, pour tout le monde via Back Wikot. La suppression se fait à la main par un responsable.
 
 ## Protocole strict en 4 étapes
 
@@ -1311,12 +1314,12 @@ Si tu cites une procédure ou information existante dans ta réponse (par ex. po
 ## Arborescence actuelle de l'hôtel
 ${arborescence}
 
-Rappel : tu es Wikot **Max**, agent de rédaction/édition. Tu rédiges du contenu de qualité professionnelle et tu proposes — l'utilisateur valide.`
+Rappel : tu es **Back Wikot**, agent de rédaction/édition. Tu rédiges du contenu de qualité professionnelle et tu proposes — l'utilisateur valide.`
 }
 
 // Helper : tools disponibles selon le mode et les permissions
 // mode='standard' → Wikot lecture (search/get/list/add_reference uniquement)
-// mode='max'      → Wikot Max (lecture + outils propose_* selon permissions)
+// mode='max'      → Back Wikot (lecture + outils propose_* selon permissions)
 function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEditInf: boolean): any[] {
   const tools: any[] = [
     {
@@ -1634,9 +1637,9 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   const mode = normalizeWikotMode(body.mode)
   // Vérification de permission server-side pour le mode 'max'
   if (mode === 'max' && !userCanUseMaxMode(user)) {
-    return c.json({ error: 'Wikot Max nécessite des droits d\'édition (procédures ou informations)' }, 403)
+    return c.json({ error: 'Back Wikot nécessite des droits d\'édition (procédures ou informations)' }, 403)
   }
-  const defaultTitle = mode === 'max' ? 'Nouvelle session Wikot Max' : 'Nouvelle conversation'
+  const defaultTitle = mode === 'max' ? 'Nouvelle session Back Wikot' : 'Nouvelle conversation'
   const r = await c.env.DB.prepare(`
     INSERT INTO wikot_conversations (hotel_id, user_id, title, mode) VALUES (?, ?, ?, ?)
   `).bind(user.hotel_id, user.id, defaultTitle, mode).run()
@@ -1711,7 +1714,7 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const mode: 'standard' | 'max' = conv.mode === 'max' ? 'max' : 'standard'
   // Re-vérification permission server-side pour le mode max
   if (mode === 'max' && !userCanUseMaxMode(user)) {
-    return c.json({ error: 'Wikot Max nécessite des droits d\'édition' }, 403)
+    return c.json({ error: 'Back Wikot nécessite des droits d\'édition' }, 403)
   }
 
   // Construire system prompt + tools selon le mode et les permissions

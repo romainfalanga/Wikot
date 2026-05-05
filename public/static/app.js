@@ -503,11 +503,11 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else if (isAdmin) {
-    // Admin hôtel : tout sauf suggestions ; les admins ont accès à Wikot Max
+    // Admin hôtel : tout sauf suggestions ; les admins ont accès à Back Wikot
     menuItems = [
       { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
-      { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Wikot Max' },
+      { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
@@ -516,11 +516,11 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
-    // Employé : Wikot pour tous, Wikot Max uniquement si peut éditer procédures OU informations
+    // Employé : Wikot pour tous, Back Wikot uniquement si peut éditer procédures OU informations
     const canUseMax = userCanEditProcedures() || userCanEditInfo();
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
-      ...(canUseMax ? [{ id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Wikot Max' }] : []),
+      ...(canUseMax ? [{ id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' }] : []),
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'search', icon: 'fa-magnifying-glass', label: 'Rechercher' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
@@ -536,7 +536,7 @@ function renderMainLayout() {
   const viewTitles = {
     dashboard: 'Tableau de bord',
     wikot: 'Wikot',
-    'wikot-max': 'Wikot Max',
+    'wikot-max': 'Back Wikot',
     procedures: 'Procédures',
     search: 'Rechercher',
     info: 'Informations',
@@ -554,7 +554,7 @@ function renderMainLayout() {
   if (isSuperAdmin) {
     bottomNavItems = menuItems; // 3 items, tous tiennent
   } else {
-    // Admin et employé : on priorise Wikot, Wikot Max (si dispo), Procédures, Infos, Conversations
+    // Admin et employé : on priorise Wikot, Back Wikot (si dispo), Procédures, Infos, Conversations
     // 5 items max — on garde l'ordre pour rester cohérent avec la sidebar desktop
     const priorityIds = userCanUseWikotMax()
       ? ['wikot','wikot-max','procedures','info','conversations']
@@ -2207,7 +2207,7 @@ const CHANNEL_SUGGESTIONS = {
 };
 
 // ============================================
-// WIKOT — AGENTS IA (vue chat) — Wikot (standard) + Wikot Max (max)
+// WIKOT — AGENTS IA (vue chat) — Wikot (standard) + Back Wikot (max)
 // ============================================
 // Helper : récupère/écrit l'état chat correspondant au mode (state.wikot* ou state.wikotMax*)
 function wikotState(mode) {
@@ -2236,7 +2236,7 @@ function activeWikotMode() {
   return state.currentView === 'wikot-max' ? 'max' : 'standard';
 }
 
-// L'utilisateur a-t-il accès à Wikot Max ?
+// L'utilisateur a-t-il accès à Back Wikot ?
 function userCanUseWikotMax() {
   if (!state.user) return false;
   if (state.user.role === 'admin' || state.user.role === 'super_admin') return true;
@@ -2370,7 +2370,7 @@ async function acceptWikotAction(actionId) {
   const all = [...(state.wikotActions || []), ...(state.wikotMaxActions || [])];
   const a = all.find(x => x.id === actionId);
   if (a) a.status = 'accepted';
-  showToast('Modification appliquée par Wikot Max', 'success');
+  showToast('Modification appliquée par Back Wikot', 'success');
   await loadData();
   render();
 }
@@ -2474,6 +2474,27 @@ function renderWikotMessage(msg, mode) {
   `;
 }
 
+// Helper : formate un bloc d'étapes pour affichage complet (titre + contenu, sans troncature)
+function renderActionCardSteps(steps, colorClass) {
+  if (!steps || !steps.length) return '';
+  return `
+    <ol class="space-y-2 mt-2">
+      ${steps.map((s, idx) => `
+        <li class="bg-white border ${colorClass} rounded-lg p-2.5">
+          <div class="flex items-start gap-2">
+            <span class="flex-shrink-0 w-5 h-5 rounded-full bg-gray-100 text-gray-700 text-[10px] font-bold flex items-center justify-center mt-0.5">${s.step_number || (idx + 1)}</span>
+            <div class="min-w-0 flex-1">
+              <div class="font-semibold text-navy-800 text-xs">${escapeHtml(s.title || '(sans titre)')}</div>
+              ${s.content ? `<div class="text-[11px] text-navy-600 mt-1 whitespace-pre-wrap leading-relaxed">${escapeHtml(s.content)}</div>` : ''}
+              ${s.linked_procedure_id ? `<div class="text-[10px] text-blue-600 mt-1"><i class="fas fa-link mr-1"></i>Sous-procédure liée (id ${s.linked_procedure_id})</div>` : ''}
+            </div>
+          </div>
+        </li>
+      `).join('')}
+    </ol>
+  `;
+}
+
 function renderWikotActionCard(action) {
   const payload = typeof action.payload === 'string' ? JSON.parse(action.payload) : action.payload;
   const before = action.before_snapshot ? (typeof action.before_snapshot === 'string' ? JSON.parse(action.before_snapshot) : action.before_snapshot) : null;
@@ -2492,10 +2513,48 @@ function renderWikotActionCard(action) {
   else if (action.status === 'rejected') statusBadge = '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 text-[10px] font-medium"><i class="fas fa-xmark"></i>Refusée</span>';
   else if (action.status === 'failed') statusBadge = '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-medium"><i class="fas fa-triangle-exclamation"></i>Échec</span>';
 
-  // Prévisualisation du contenu
   const title = payload.title || (before && before.title) || '';
   const stepsCount = payload.steps ? payload.steps.length : 0;
   const isUpdate = action.action_type.startsWith('update_');
+
+  // Bloc « Après » (toujours affiché, contenu COMPLET — toutes les étapes, sans troncature)
+  const afterBlockHtml = `
+    <div class="bg-green-50 border border-green-200 rounded-lg p-3 space-y-2">
+      <div class="font-semibold text-green-800 text-xs uppercase tracking-wide flex items-center gap-1.5">
+        <i class="fas fa-arrow-right text-green-600"></i>${isUpdate ? 'Après modification' : 'Nouveau contenu proposé'}
+      </div>
+      ${payload.title ? `<div class="text-sm"><strong class="text-navy-700">Titre :</strong> <span class="text-navy-800">${escapeHtml(payload.title)}</span></div>` : ''}
+      ${payload.trigger_event ? `<div class="text-xs text-navy-700"><strong>Déclencheur :</strong> ${escapeHtml(payload.trigger_event)}</div>` : ''}
+      ${payload.description ? `<div class="text-xs text-navy-700"><strong>Description :</strong><div class="whitespace-pre-wrap mt-1">${escapeHtml(payload.description)}</div></div>` : ''}
+      ${payload.content ? `<div class="text-xs text-navy-700"><strong>Contenu :</strong><div class="whitespace-pre-wrap mt-1 leading-relaxed">${escapeHtml(payload.content)}</div></div>` : ''}
+      ${payload.color ? `<div class="text-xs text-navy-700"><strong>Couleur :</strong> <span class="inline-block w-3 h-3 rounded-full align-middle ml-1" style="background-color:${escapeHtml(payload.color)}"></span> <code class="text-[10px]">${escapeHtml(payload.color)}</code></div>` : ''}
+      ${stepsCount > 0 ? `
+        <div class="text-xs text-navy-700">
+          <strong><i class="fas fa-list-ol mr-1"></i>${stepsCount} étape${stepsCount > 1 ? 's' : ''} ${isUpdate ? '(remplaceront les étapes actuelles)' : ''} :</strong>
+          ${renderActionCardSteps(payload.steps, 'border-green-200')}
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  // Bloc « Avant » (uniquement pour modifications, COMPLET aussi)
+  const beforeBlockHtml = (isUpdate && before) ? `
+    <div class="bg-red-50 border border-red-200 rounded-lg p-3 space-y-2 mb-2">
+      <div class="font-semibold text-red-800 text-xs uppercase tracking-wide flex items-center gap-1.5">
+        <i class="fas fa-clock-rotate-left text-red-600"></i>État actuel (avant)
+      </div>
+      ${before.title ? `<div class="text-sm"><strong class="text-navy-700">Titre :</strong> <span class="text-navy-800">${escapeHtml(before.title)}</span></div>` : ''}
+      ${before.trigger_event ? `<div class="text-xs text-navy-700"><strong>Déclencheur :</strong> ${escapeHtml(before.trigger_event)}</div>` : ''}
+      ${before.description ? `<div class="text-xs text-navy-700"><strong>Description :</strong><div class="whitespace-pre-wrap mt-1">${escapeHtml(before.description)}</div></div>` : ''}
+      ${before.content ? `<div class="text-xs text-navy-700"><strong>Contenu :</strong><div class="whitespace-pre-wrap mt-1 leading-relaxed">${escapeHtml(before.content)}</div></div>` : ''}
+      ${(before.steps && before.steps.length) ? `
+        <div class="text-xs text-navy-700">
+          <strong><i class="fas fa-list-ol mr-1"></i>${before.steps.length} étape${before.steps.length > 1 ? 's' : ''} actuelle${before.steps.length > 1 ? 's' : ''} :</strong>
+          ${renderActionCardSteps(before.steps, 'border-red-200')}
+        </div>
+      ` : ''}
+    </div>
+  ` : '';
 
   return `
     <div class="mt-3 bg-white border-2 border-${meta.color}-200 rounded-xl overflow-hidden shadow-sm" id="wikot-action-${action.id}">
@@ -2507,38 +2566,13 @@ function renderWikotActionCard(action) {
         ${statusBadge}
       </div>
       <div class="px-4 py-3 space-y-2 text-sm">
-        ${title ? `<div class="font-medium text-navy-800">${escapeHtml(title)}</div>` : ''}
-        ${payload.trigger_event ? `<div class="text-xs text-navy-500"><i class="fas fa-bolt text-brand-400 mr-1"></i>${escapeHtml(payload.trigger_event)}</div>` : ''}
-        ${payload.description ? `<div class="text-xs text-navy-600 whitespace-pre-wrap">${escapeHtml(payload.description.substring(0, 200))}${payload.description.length > 200 ? '...' : ''}</div>` : ''}
-        ${payload.content ? `<div class="text-xs text-navy-600 whitespace-pre-wrap">${escapeHtml(payload.content.substring(0, 200))}${payload.content.length > 200 ? '...' : ''}</div>` : ''}
-        ${stepsCount > 0 ? `<div class="text-xs text-navy-500"><i class="fas fa-list-ol mr-1"></i>${stepsCount} étape${stepsCount > 1 ? 's' : ''} ${isUpdate ? '(remplacera les étapes actuelles)' : ''}</div>` : ''}
+        ${title ? `<div class="font-medium text-navy-800 text-base">${escapeHtml(title)}</div>` : ''}
 
-        ${isUpdate && before ? `
-          <details class="mt-2">
-            <summary class="text-xs text-blue-600 cursor-pointer hover:text-blue-800"><i class="fas fa-eye mr-1"></i>Voir le diff avant / après</summary>
-            <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-              <div class="bg-red-50 border border-red-100 rounded p-2">
-                <div class="font-semibold text-red-700 mb-1 text-[10px] uppercase">Avant</div>
-                ${before.title ? `<div class="text-navy-700"><strong>Titre :</strong> ${escapeHtml(before.title)}</div>` : ''}
-                ${before.trigger_event ? `<div class="text-navy-700"><strong>Déclencheur :</strong> ${escapeHtml(before.trigger_event)}</div>` : ''}
-                ${before.description ? `<div class="text-navy-700 mt-1"><strong>Description :</strong> ${escapeHtml(before.description.substring(0, 150))}</div>` : ''}
-                ${before.content ? `<div class="text-navy-700 mt-1">${escapeHtml(before.content.substring(0, 200))}</div>` : ''}
-                ${before.steps ? `<div class="text-navy-500 mt-1">${before.steps.length} étape(s) actuelle(s)</div>` : ''}
-              </div>
-              <div class="bg-green-50 border border-green-100 rounded p-2">
-                <div class="font-semibold text-green-700 mb-1 text-[10px] uppercase">Après</div>
-                ${payload.title ? `<div class="text-navy-700"><strong>Titre :</strong> ${escapeHtml(payload.title)}</div>` : ''}
-                ${payload.trigger_event ? `<div class="text-navy-700"><strong>Déclencheur :</strong> ${escapeHtml(payload.trigger_event)}</div>` : ''}
-                ${payload.description ? `<div class="text-navy-700 mt-1"><strong>Description :</strong> ${escapeHtml(payload.description.substring(0, 150))}</div>` : ''}
-                ${payload.content ? `<div class="text-navy-700 mt-1">${escapeHtml(payload.content.substring(0, 200))}</div>` : ''}
-                ${stepsCount > 0 ? `<div class="text-navy-500 mt-1">${stepsCount} étape(s) proposée(s)</div>` : ''}
-              </div>
-            </div>
-          </details>
-        ` : ''}
+        ${beforeBlockHtml}
+        ${afterBlockHtml}
 
         ${action.status === 'pending' ? `
-          <div class="flex gap-2 pt-2">
+          <div class="flex gap-2 pt-3 sticky bottom-0 bg-white">
             <button onclick="acceptWikotAction(${action.id})" class="flex-1 bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded-lg text-xs font-medium transition-colors inline-flex items-center justify-center gap-1.5">
               <i class="fas fa-check"></i>Accepter
             </button>
@@ -2552,7 +2586,7 @@ function renderWikotActionCard(action) {
   `;
 }
 
-// Configuration visuelle/textuelle de chaque mode (Wikot vs Wikot Max)
+// Configuration visuelle/textuelle de chaque mode (Wikot vs Back Wikot)
 const WIKOT_MODE_CONFIG = {
   standard: {
     title: 'Wikot',
@@ -2578,7 +2612,7 @@ const WIKOT_MODE_CONFIG = {
     footer: 'Wikot peut faire des erreurs — vérifie les informations importantes.'
   },
   max: {
-    title: 'Wikot Max',
+    title: 'Back Wikot',
     subtitle: 'Ton assistant de rédaction et création',
     icon: 'fa-pen-ruler',
     avatarGradient: 'from-orange-400 to-rose-500',
@@ -2590,7 +2624,7 @@ const WIKOT_MODE_CONFIG = {
     placeholder: 'Décris la procédure ou l\'information à créer / modifier…',
     inputId: 'wikot-max-input',
     messagesId: 'wikot-max-messages',
-    emptyTitle: 'Bonjour, je suis Wikot Max',
+    emptyTitle: 'Bonjour, je suis Back Wikot',
     emptyText: "Je suis spécialisé dans la rédaction et la modification des procédures et informations. Décris-moi ce que tu veux créer ou modifier — je rédige, je structure, et tu valides via une carte avant/après.",
     quickButtons: [
       { label: 'Créer une procédure check-out', q: 'Crée-moi une procédure de check-out à la réception, du moment où le client se présente jusqu\'à son départ.' },
@@ -2598,7 +2632,7 @@ const WIKOT_MODE_CONFIG = {
       { label: 'Modifier les horaires piscine', q: 'Je veux modifier les horaires d\'ouverture de la piscine.' },
       { label: 'Créer une procédure réclamation', q: 'Crée une procédure pour gérer une réclamation client à la réception.' }
     ],
-    footer: 'Wikot Max propose les modifications — rien n\'est appliqué tant que tu n\'as pas validé la carte avant/après.'
+    footer: 'Back Wikot propose les modifications — rien n\'est appliqué tant que tu n\'as pas validé la carte avant/après.'
   }
 };
 
@@ -2642,7 +2676,7 @@ function renderWikotView(mode) {
 
   return `
   <div class="fade-in flex flex-col" style="height: calc(100vh - 8rem); max-height: calc(100vh - 8rem);">
-    <!-- Header Wikot/Wikot Max -->
+    <!-- Header Wikot/Back Wikot -->
     <div class="flex items-center justify-between mb-3 sm:mb-4 shrink-0">
       <div class="flex items-center gap-3 min-w-0">
         <button onclick="toggleWikotSidebar('${mode}')" class="lg:hidden w-9 h-9 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 flex items-center justify-center text-navy-600 transition-colors" title="Mes conversations">

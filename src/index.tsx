@@ -3,10 +3,22 @@ import { cors } from 'hono/cors'
 
 type Bindings = {
   DB: D1Database
+  OPENROUTER_API_KEY?: string
+}
+
+type WikotUser = {
+  id: number
+  hotel_id: number | null
+  email: string
+  name: string
+  role: string
+  can_edit_procedures: number
+  can_edit_info: number
+  can_manage_chat: number
 }
 
 type Variables = {
-  user: { id: number; hotel_id: number | null; email: string; name: string; role: string; can_edit_procedures: number }
+  user: WikotUser
 }
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
@@ -24,7 +36,7 @@ const authMiddleware = async (c: any, next: any) => {
   try {
     const decoded = atob(sessionToken)
     const [userId] = decoded.split(':')
-    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, is_active FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
+    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, can_edit_info, can_manage_chat, is_active FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
     if (!user) return c.json({ error: 'Utilisateur non trouvé' }, 401)
     c.set('user', user)
     await next()
@@ -38,7 +50,7 @@ const authMiddleware = async (c: any, next: any) => {
 // ============================================
 app.post('/api/auth/login', async (c) => {
   const { email, password } = await c.req.json()
-  const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, password_hash FROM users WHERE email = ? AND is_active = 1').bind(email).first() as any
+  const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, can_edit_info, can_manage_chat, password_hash FROM users WHERE email = ? AND is_active = 1').bind(email).first() as any
   if (!user || user.password_hash !== password) {
     return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
   }
@@ -46,7 +58,7 @@ app.post('/api/auth/login', async (c) => {
   const token = btoa(`${user.id}:${user.email}`)
   return c.json({
     token,
-    user: { id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role, can_edit_procedures: user.can_edit_procedures }
+    user: { id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role, can_edit_procedures: user.can_edit_procedures, can_edit_info: user.can_edit_info, can_manage_chat: user.can_manage_chat }
   })
 })
 
@@ -82,6 +94,14 @@ function isSuperAdmin(user: { role: string }) {
 function canEditProcedures(user: { role: string; can_edit_procedures: number }) {
   // super_admin exclu : il ne gère pas les procédures des hôtels
   return user.role === 'admin' || user.can_edit_procedures === 1
+}
+
+function canEditInfo(user: { role: string; can_edit_info?: number }) {
+  return user.role === 'admin' || user.can_edit_info === 1
+}
+
+function canManageChat(user: { role: string; can_manage_chat?: number }) {
+  return user.role === 'admin' || user.can_manage_chat === 1
 }
 
 // ============================================
@@ -154,30 +174,43 @@ app.get('/api/users', authMiddleware, async (c) => {
   const user = c.get('user')
   let users
   if (user.role === 'super_admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name').all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name').all()
   } else if (user.role === 'admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name').bind(user.hotel_id).all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name').bind(user.hotel_id).all()
   } else {
     return c.json({ error: 'Non autorisé' }, 403)
   }
   return c.json({ users: users.results })
 })
 
-// Toggle can_edit_procedures permission (admin only)
+// Mise à jour des permissions granulaires (admin only)
+// Body : { can_edit_procedures?, can_edit_info?, can_manage_chat? }
 app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
   const currentUser = c.get('user')
   if (currentUser.role !== 'super_admin' && currentUser.role !== 'admin') return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
-  const { can_edit_procedures } = await c.req.json()
+  const body = await c.req.json() as {
+    can_edit_procedures?: boolean | number
+    can_edit_info?: boolean | number
+    can_manage_chat?: boolean | number
+  }
 
   // Check the target user belongs to same hotel (for admin)
   const targetUser = await c.env.DB.prepare('SELECT id, hotel_id, role FROM users WHERE id = ?').bind(id).first() as any
   if (!targetUser) return c.json({ error: 'Utilisateur non trouvé' }, 404)
   if (currentUser.role === 'admin' && targetUser.hotel_id !== currentUser.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
-  // Can only grant to employees
-  if (targetUser.role !== 'employee') return c.json({ error: 'Cette permission ne s\'applique qu\'aux employés' }, 400)
+  if (targetUser.role !== 'employee') return c.json({ error: 'Ces permissions ne s\'appliquent qu\'aux employés' }, 400)
 
-  await c.env.DB.prepare('UPDATE users SET can_edit_procedures = ? WHERE id = ?').bind(can_edit_procedures ? 1 : 0, id).run()
+  // Construction dynamique de l'UPDATE selon les champs fournis
+  const fields: string[] = []
+  const values: any[] = []
+  if (body.can_edit_procedures !== undefined) { fields.push('can_edit_procedures = ?'); values.push(body.can_edit_procedures ? 1 : 0) }
+  if (body.can_edit_info !== undefined)       { fields.push('can_edit_info = ?');       values.push(body.can_edit_info ? 1 : 0) }
+  if (body.can_manage_chat !== undefined)     { fields.push('can_manage_chat = ?');     values.push(body.can_manage_chat ? 1 : 0) }
+  if (fields.length === 0) return c.json({ error: 'Aucune permission à mettre à jour' }, 400)
+
+  values.push(id)
+  await c.env.DB.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
   return c.json({ success: true })
 })
 
@@ -692,8 +725,9 @@ app.get('/api/stats', authMiddleware, async (c) => {
 // ============================================
 
 // Helper : peut gérer les salons (créer/modifier/supprimer)
-function canManageChannels(user: { role: string; can_edit_procedures: number }) {
-  return user.role === 'admin' || (user.role === 'employee' && user.can_edit_procedures === 1)
+function canManageChannels(user: { role: string; can_manage_chat?: number }) {
+  // Basé sur la nouvelle permission can_manage_chat
+  return user.role === 'admin' || user.can_manage_chat === 1
 }
 
 // Helper : a accès au chat (admin + tous employees)
@@ -1038,10 +1072,10 @@ app.get('/api/hotel-info/search', authMiddleware, async (c) => {
   return c.json({ results: results.results || [] })
 })
 
-// POST nouvelle catégorie (admin seulement)
+// POST nouvelle catégorie (admin + employé avec can_edit_info)
 app.post('/api/hotel-info/categories', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const hotelId = user.role === 'super_admin' ? parseInt(c.req.query('hotel_id') || '0') : user.hotel_id
   if (!hotelId) return c.json({ error: 'Aucun hôtel' }, 400)
 
@@ -1059,7 +1093,7 @@ app.post('/api/hotel-info/categories', authMiddleware, async (c) => {
 // PUT modifier catégorie
 app.put('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
   const { name, icon, color, sort_order } = await c.req.json()
 
@@ -1075,17 +1109,17 @@ app.put('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
 // DELETE catégorie (les items deviennent sans catégorie)
 app.delete('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
 
   await c.env.DB.prepare(`DELETE FROM hotel_info_categories WHERE id = ?`).bind(id).run()
   return c.json({ success: true })
 })
 
-// POST nouvel item (admin ou employé éditeur)
+// POST nouvel item (admin + employé avec can_edit_info)
 app.post('/api/hotel-info/items', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const hotelId = user.role === 'super_admin' ? parseInt(c.req.query('hotel_id') || '0') : user.hotel_id
   if (!hotelId) return c.json({ error: 'Aucun hôtel' }, 400)
 
@@ -1103,7 +1137,7 @@ app.post('/api/hotel-info/items', authMiddleware, async (c) => {
 // PUT modifier item
 app.put('/api/hotel-info/items/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
   const { category_id, title, content, sort_order } = await c.req.json()
 
@@ -1120,10 +1154,742 @@ app.put('/api/hotel-info/items/:id', authMiddleware, async (c) => {
 // DELETE item
 app.delete('/api/hotel-info/items/:id', authMiddleware, async (c) => {
   const user = c.get('user')
-  if (!canEditProcedures(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
+  if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
 
   await c.env.DB.prepare(`DELETE FROM hotel_info_items WHERE id = ?`).bind(id).run()
+  return c.json({ success: true })
+})
+
+// ============================================
+// WIKOT — AGENT IA (OpenRouter + Gemini 2.0 Flash)
+// ============================================
+
+const WIKOT_MODEL = 'google/gemini-2.0-flash-001'
+const WIKOT_API_URL = 'https://openrouter.ai/api/v1/chat/completions'
+
+// Helper : récupère les permissions effectives d'un utilisateur
+function wikotUserCanEditProcedures(user: WikotUser): boolean {
+  return user.role === 'admin' || user.can_edit_procedures === 1
+}
+function wikotUserCanEditInfo(user: WikotUser): boolean {
+  return user.role === 'admin' || user.can_edit_info === 1
+}
+
+// Helper : construit l'arborescence courte de l'hôtel pour le system prompt
+async function buildHotelArborescence(db: D1Database, hotelId: number): Promise<string> {
+  const cats = await db.prepare('SELECT id, name FROM categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all()
+  const procs = await db.prepare('SELECT id, title, category_id, trigger_event FROM procedures WHERE hotel_id = ? ORDER BY title').bind(hotelId).all()
+  const infoCats = await db.prepare('SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all()
+  const infoItems = await db.prepare('SELECT id, title, category_id FROM hotel_info_items WHERE hotel_id = ? ORDER BY title').bind(hotelId).all()
+
+  let tree = '## Procédures de l\'hôtel\n'
+  for (const cat of cats.results as any[]) {
+    tree += `- **Catégorie #${cat.id} : ${cat.name}**\n`
+    const inCat = (procs.results as any[]).filter(p => p.category_id === cat.id)
+    for (const p of inCat) {
+      tree += `  - Procédure #${p.id} : « ${p.title} » (déclencheur : ${p.trigger_event || '—'})\n`
+    }
+  }
+  const orphanProcs = (procs.results as any[]).filter(p => !p.category_id)
+  if (orphanProcs.length > 0) {
+    tree += `- **Sans catégorie**\n`
+    for (const p of orphanProcs) tree += `  - Procédure #${p.id} : « ${p.title} »\n`
+  }
+
+  tree += '\n## Informations de l\'hôtel\n'
+  for (const cat of infoCats.results as any[]) {
+    tree += `- **Catégorie info #${cat.id} : ${cat.name}**\n`
+    const inCat = (infoItems.results as any[]).filter(i => i.category_id === cat.id)
+    for (const i of inCat) tree += `  - Info #${i.id} : « ${i.title} »\n`
+  }
+  const orphanInfos = (infoItems.results as any[]).filter(i => !i.category_id)
+  if (orphanInfos.length > 0) {
+    tree += `- **Sans catégorie**\n`
+    for (const i of orphanInfos) tree += `  - Info #${i.id} : « ${i.title} »\n`
+  }
+
+  return tree
+}
+
+// Helper : construit le system prompt de Wikot
+async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName: string): Promise<string> {
+  const arborescence = await buildHotelArborescence(db, user.hotel_id!)
+  const canEditProc = wikotUserCanEditProcedures(user)
+  const canEditInf = wikotUserCanEditInfo(user)
+
+  const permsLine = (canEditProc || canEditInf)
+    ? `Cet utilisateur a les permissions suivantes : ${canEditProc ? '✅ peut modifier/créer des procédures' : '❌ pas de modification de procédures'}, ${canEditInf ? '✅ peut modifier/créer des informations' : '❌ pas de modification d\'informations'}.`
+    : `Cet utilisateur est en lecture seule (employé classique). Il ne peut pas modifier les procédures ni les informations.`
+
+  const proposalRules = (canEditProc || canEditInf) ? `
+## Règles concernant les modifications
+
+- Tu ne crées ou ne modifies JAMAIS de procédure/information de ta propre initiative.
+- Si l'utilisateur te demande explicitement de créer ou modifier quelque chose, utilise les outils \`propose_*\` correspondants.
+- Tu peux suggérer poliment en fin de réponse : « Veux-tu que je crée cette procédure ? » ou « Veux-tu que j'ajoute cette information ? » — mais tu n'agis qu'après son OK.
+- Tu ne peux JAMAIS supprimer une procédure ou une information. La suppression est réservée à l'utilisateur lui-même via l'interface.
+- Privilégie la modification d'une procédure existante plutôt que la création d'un doublon si le sujet existe déjà.
+- ${canEditProc ? 'Tu PEUX' : 'Tu NE PEUX PAS'} proposer la création/modification de procédures pour cet utilisateur.
+- ${canEditInf ? 'Tu PEUX' : 'Tu NE PEUX PAS'} proposer la création/modification d\'informations pour cet utilisateur.
+` : `
+## Règles concernant les modifications
+
+- Cet utilisateur est en lecture seule. Tu ne lui proposes JAMAIS de modifications.
+- Si on te demande de modifier quelque chose, indique poliment que la modification doit être demandée à un administrateur ou à un éditeur.
+`
+
+  return `Tu es **Wikot**, l'assistant IA intelligent du **${hotelName}**. Tu es au service des employés et administrateurs de l'hôtel.
+
+## Identité et ton
+- Tu tutoies l'utilisateur tout en restant **très poli et professionnel**.
+- Tu réponds **exclusivement en français**.
+- Tu adaptes la longueur de tes réponses à la pertinence : courtes si une réponse brève suffit, détaillées quand le sujet le mérite. Évite le verbiage inutile.
+
+## Connaissances
+Tu as accès à l'arborescence complète de l'hôtel (procédures, informations, catégories). Pour chaque question, **utilise les outils** \`get_procedure\`, \`get_hotel_info_item\`, \`search_procedures\` ou \`search_hotel_info\` pour récupérer le détail nécessaire avant de répondre. Ne jamais inventer du contenu.
+
+## Sourcing OBLIGATOIRE
+Quand tu cites une procédure ou une information de l'hôtel dans ta réponse, tu DOIS appeler l'outil \`add_reference\` pour ajouter un bouton cliquable « Voir la procédure » ou « Voir l'information ». Cela permet à l'utilisateur d'accéder au détail complet en un clic.
+${proposalRules}
+## ${permsLine}
+
+## Arborescence actuelle de l'hôtel
+${arborescence}
+
+## Format
+Réponds en texte clair (pas de Markdown lourd). Tu peux utiliser **gras** sparingly, et des listes à puces \`•\` pour structurer. Évite les longs paragraphes.`
+}
+
+// Helper : tools disponibles selon les permissions
+function buildWikotTools(canEditProc: boolean, canEditInf: boolean): any[] {
+  const tools: any[] = [
+    {
+      type: 'function',
+      function: {
+        name: 'search_procedures',
+        description: 'Recherche dans les procédures de l\'hôtel par mots-clés (titre, déclencheur, description). Retourne une liste {id, title, trigger_event}.',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string', description: 'Termes de recherche' } },
+          required: ['query']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'get_procedure',
+        description: 'Récupère le détail complet d\'une procédure : titre, description, déclencheur, étapes ordonnées avec contenu, sous-procédures liées.',
+        parameters: {
+          type: 'object',
+          properties: { id: { type: 'integer', description: 'ID de la procédure' } },
+          required: ['id']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'search_hotel_info',
+        description: 'Recherche dans les informations de l\'hôtel par mots-clés (titre, contenu).',
+        parameters: {
+          type: 'object',
+          properties: { query: { type: 'string' } },
+          required: ['query']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'get_hotel_info_item',
+        description: 'Récupère le détail complet d\'une information : titre, contenu, catégorie.',
+        parameters: {
+          type: 'object',
+          properties: { id: { type: 'integer' } },
+          required: ['id']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'list_categories',
+        description: 'Liste toutes les catégories de procédures et d\'informations de l\'hôtel.',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'add_reference',
+        description: 'Ajoute un bouton de sourcing dans ta réponse pour permettre à l\'utilisateur de voir la procédure ou l\'information complète. À utiliser SYSTÉMATIQUEMENT quand tu cites un contenu de l\'hôtel.',
+        parameters: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', enum: ['procedure', 'info_item'], description: 'Type de ressource' },
+            id: { type: 'integer', description: 'ID de la ressource' }
+          },
+          required: ['type', 'id']
+        }
+      }
+    }
+  ]
+
+  if (canEditProc) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'propose_create_procedure',
+        description: 'Propose la création d\'une nouvelle procédure. L\'utilisateur devra valider avant que la procédure soit réellement créée.',
+        parameters: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+            trigger_event: { type: 'string', description: 'Quand cette procédure se déclenche' },
+            description: { type: 'string' },
+            category_id: { type: 'integer', description: 'ID de la catégorie (optionnel)' },
+            steps: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string' },
+                  content: { type: 'string', description: 'Contenu détaillé de l\'étape (peut contenir **gras** et listes • à puces)' }
+                },
+                required: ['title', 'content']
+              }
+            }
+          },
+          required: ['title', 'trigger_event', 'steps']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'propose_update_procedure',
+        description: 'Propose la modification d\'une procédure existante. L\'utilisateur verra un diff avant/après et devra valider.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            title: { type: 'string' },
+            trigger_event: { type: 'string' },
+            description: { type: 'string' },
+            category_id: { type: 'integer' },
+            steps: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string' },
+                  content: { type: 'string' }
+                }
+              }
+            }
+          },
+          required: ['id']
+        }
+      }
+    })
+  }
+
+  if (canEditInf) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'propose_create_info_item',
+        description: 'Propose la création d\'une nouvelle information dans une catégorie.',
+        parameters: {
+          type: 'object',
+          properties: {
+            category_id: { type: 'integer' },
+            title: { type: 'string' },
+            content: { type: 'string' }
+          },
+          required: ['title', 'content']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'propose_update_info_item',
+        description: 'Propose la modification d\'une information existante.',
+        parameters: {
+          type: 'object',
+          properties: {
+            id: { type: 'integer' },
+            title: { type: 'string' },
+            content: { type: 'string' },
+            category_id: { type: 'integer' }
+          },
+          required: ['id']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'propose_create_info_category',
+        description: 'Propose la création d\'une nouvelle catégorie d\'informations.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            color: { type: 'string', description: 'Couleur hex (ex: #3B82F6)' }
+          },
+          required: ['name']
+        }
+      }
+    })
+  }
+
+  return tools
+}
+
+// Exécute un tool de lecture côté serveur
+async function executeReadTool(db: D1Database, hotelId: number, toolName: string, args: any): Promise<any> {
+  switch (toolName) {
+    case 'search_procedures': {
+      const q = `%${args.query}%`
+      const r = await db.prepare(`
+        SELECT id, title, trigger_event FROM procedures
+        WHERE hotel_id = ? AND (title LIKE ? OR trigger_event LIKE ? OR description LIKE ?)
+        ORDER BY title LIMIT 20
+      `).bind(hotelId, q, q, q).all()
+      return { results: r.results }
+    }
+    case 'get_procedure': {
+      const proc = await db.prepare('SELECT * FROM procedures WHERE id = ? AND hotel_id = ?').bind(args.id, hotelId).first() as any
+      if (!proc) return { error: 'Procédure introuvable' }
+      const steps = await db.prepare(`
+        SELECT s.id, s.step_number, s.title, s.content, s.linked_procedure_id, lp.title as linked_title
+        FROM steps s
+        LEFT JOIN procedures lp ON lp.id = s.linked_procedure_id
+        WHERE s.procedure_id = ? ORDER BY s.step_number
+      `).bind(args.id).all()
+      return { procedure: proc, steps: steps.results }
+    }
+    case 'search_hotel_info': {
+      const q = `%${args.query}%`
+      const r = await db.prepare(`
+        SELECT i.id, i.title, c.name as category_name
+        FROM hotel_info_items i
+        LEFT JOIN hotel_info_categories c ON c.id = i.category_id
+        WHERE i.hotel_id = ? AND (i.title LIKE ? OR i.content LIKE ?)
+        ORDER BY i.title LIMIT 20
+      `).bind(hotelId, q, q).all()
+      return { results: r.results }
+    }
+    case 'get_hotel_info_item': {
+      const item = await db.prepare(`
+        SELECT i.*, c.name as category_name
+        FROM hotel_info_items i
+        LEFT JOIN hotel_info_categories c ON c.id = i.category_id
+        WHERE i.id = ? AND i.hotel_id = ?
+      `).bind(args.id, hotelId).first()
+      return item || { error: 'Information introuvable' }
+    }
+    case 'list_categories': {
+      const procCats = await db.prepare('SELECT id, name FROM categories WHERE hotel_id = ? ORDER BY name').bind(hotelId).all()
+      const infoCats = await db.prepare('SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY name').bind(hotelId).all()
+      return { procedure_categories: procCats.results, info_categories: infoCats.results }
+    }
+    case 'add_reference': {
+      // C'est un "side-effect" tool : on retourne juste une confirmation, le frontend gérera l'affichage
+      return { ok: true, type: args.type, id: args.id }
+    }
+    default:
+      return { error: 'Tool inconnu' }
+  }
+}
+
+// Appelle OpenRouter
+async function callOpenRouter(apiKey: string, messages: any[], tools: any[]): Promise<any> {
+  const res = await fetch(WIKOT_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://wikot.fr',
+      'X-Title': 'Wikot'
+    },
+    body: JSON.stringify({
+      model: WIKOT_MODEL,
+      messages,
+      tools: tools.length > 0 ? tools : undefined,
+      tool_choice: tools.length > 0 ? 'auto' : undefined,
+      temperature: 0.4
+    })
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`OpenRouter ${res.status}: ${text}`)
+  }
+  return await res.json()
+}
+
+// ============================================
+// WIKOT ROUTES
+// ============================================
+
+// GET liste des conversations de l'utilisateur courant
+app.get('/api/wikot/conversations', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const r = await c.env.DB.prepare(`
+    SELECT id, title, updated_at, created_at
+    FROM wikot_conversations
+    WHERE user_id = ? AND is_archived = 0
+    ORDER BY updated_at DESC LIMIT 50
+  `).bind(user.id).all()
+  return c.json({ conversations: r.results })
+})
+
+// POST nouvelle conversation
+app.post('/api/wikot/conversations', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Aucun hôtel assigné' }, 400)
+  const r = await c.env.DB.prepare(`
+    INSERT INTO wikot_conversations (hotel_id, user_id, title) VALUES (?, ?, ?)
+  `).bind(user.hotel_id, user.id, 'Nouvelle conversation').run()
+  return c.json({ id: r.meta.last_row_id })
+})
+
+// GET détail d'une conversation + messages
+app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = parseInt(c.req.param('id'))
+  const conv = await c.env.DB.prepare('SELECT * FROM wikot_conversations WHERE id = ? AND user_id = ?').bind(id, user.id).first() as any
+  if (!conv) return c.json({ error: 'Conversation introuvable' }, 404)
+
+  const messages = await c.env.DB.prepare(`
+    SELECT id, role, content, references_json, created_at
+    FROM wikot_messages
+    WHERE conversation_id = ? AND role IN ('user', 'assistant')
+    ORDER BY created_at, id
+  `).bind(id).all()
+
+  // Joindre les pending actions à leur message
+  const actions = await c.env.DB.prepare(`
+    SELECT id, message_id, action_type, payload, before_snapshot, status, result_id
+    FROM wikot_pending_actions
+    WHERE conversation_id = ?
+    ORDER BY created_at
+  `).bind(id).all()
+
+  return c.json({ conversation: conv, messages: messages.results, actions: actions.results })
+})
+
+// DELETE archive une conversation
+app.delete('/api/wikot/conversations/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = parseInt(c.req.param('id'))
+  await c.env.DB.prepare('UPDATE wikot_conversations SET is_archived = 1 WHERE id = ? AND user_id = ?').bind(id, user.id).run()
+  return c.json({ success: true })
+})
+
+// POST envoyer un message → réponse Wikot
+app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const convId = parseInt(c.req.param('id'))
+  const { content } = await c.req.json()
+
+  if (!content || !content.trim()) return c.json({ error: 'Message vide' }, 400)
+  if (!user.hotel_id) return c.json({ error: 'Aucun hôtel' }, 400)
+
+  const apiKey = c.env.OPENROUTER_API_KEY
+  if (!apiKey) return c.json({ error: 'Wikot indisponible : clé API non configurée' }, 503)
+
+  // Vérifier que la conversation appartient bien à l'utilisateur
+  const conv = await c.env.DB.prepare('SELECT * FROM wikot_conversations WHERE id = ? AND user_id = ?').bind(convId, user.id).first() as any
+  if (!conv) return c.json({ error: 'Conversation introuvable' }, 404)
+
+  // Sauvegarder le message utilisateur
+  const userMsgRes = await c.env.DB.prepare(`
+    INSERT INTO wikot_messages (conversation_id, role, content) VALUES (?, 'user', ?)
+  `).bind(convId, content).run()
+
+  // Récupérer l'historique des messages (limité aux 30 derniers pour économiser les tokens)
+  const history = await c.env.DB.prepare(`
+    SELECT role, content, tool_calls, tool_call_id
+    FROM wikot_messages WHERE conversation_id = ?
+    ORDER BY created_at, id
+  `).bind(convId).all()
+
+  // Récupérer infos hôtel
+  const hotel = await c.env.DB.prepare('SELECT name FROM hotels WHERE id = ?').bind(user.hotel_id).first() as any
+
+  // Construire system prompt + tools selon les permissions
+  const systemPrompt = await buildWikotSystemPrompt(c.env.DB, user, hotel?.name || 'l\'hôtel')
+  const canEditProc = wikotUserCanEditProcedures(user)
+  const canEditInf = wikotUserCanEditInfo(user)
+  const tools = buildWikotTools(canEditProc, canEditInf)
+
+  // Construire les messages OpenAI-compatible
+  const oaiMessages: any[] = [{ role: 'system', content: systemPrompt }]
+  for (const m of history.results as any[]) {
+    if (m.role === 'user') {
+      oaiMessages.push({ role: 'user', content: m.content })
+    } else if (m.role === 'assistant') {
+      const msg: any = { role: 'assistant', content: m.content || '' }
+      if (m.tool_calls) msg.tool_calls = JSON.parse(m.tool_calls)
+      oaiMessages.push(msg)
+    } else if (m.role === 'tool') {
+      oaiMessages.push({ role: 'tool', content: m.content || '', tool_call_id: m.tool_call_id })
+    }
+  }
+
+  // Boucle d'appels avec tools (max 5 itérations pour éviter une boucle infinie)
+  const referencesCollected: any[] = []
+  const proposalsCollected: { tool_name: string; args: any }[] = []
+  let assistantText = ''
+  let lastToolCalls: any[] | null = null
+
+  for (let iter = 0; iter < 5; iter++) {
+    let response
+    try {
+      response = await callOpenRouter(apiKey, oaiMessages, tools)
+    } catch (e: any) {
+      console.error('OpenRouter error:', e.message)
+      return c.json({ error: 'Erreur Wikot : ' + e.message }, 500)
+    }
+
+    const choice = response.choices?.[0]
+    if (!choice) return c.json({ error: 'Réponse Wikot vide' }, 500)
+    const msg = choice.message
+
+    // Cas 1 : pas de tool_calls → réponse finale
+    if (!msg.tool_calls || msg.tool_calls.length === 0) {
+      assistantText = msg.content || ''
+      break
+    }
+
+    // Cas 2 : tool_calls présents → exécuter chaque tool
+    lastToolCalls = msg.tool_calls
+    oaiMessages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls })
+
+    for (const tc of msg.tool_calls) {
+      const fnName = tc.function?.name
+      let fnArgs: any = {}
+      try { fnArgs = JSON.parse(tc.function?.arguments || '{}') } catch {}
+
+      // Tools de lecture / sourcing → exécutés directement
+      if (['search_procedures', 'get_procedure', 'search_hotel_info', 'get_hotel_info_item', 'list_categories', 'add_reference'].includes(fnName)) {
+        const result = await executeReadTool(c.env.DB, user.hotel_id, fnName, fnArgs)
+        if (fnName === 'add_reference') {
+          referencesCollected.push({ type: fnArgs.type, id: fnArgs.id })
+        }
+        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) })
+      }
+      // Tools de proposition → on stocke pour traitement après réponse finale
+      else if (fnName.startsWith('propose_')) {
+        proposalsCollected.push({ tool_name: fnName, args: fnArgs })
+        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, message: 'Proposition enregistrée, l\'utilisateur va voir un diff et pouvoir valider.' }) })
+      }
+      else {
+        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: 'Tool non reconnu' }) })
+      }
+    }
+  }
+
+  // Enrichir et déduire les références : pour chaque référence, on récupère le titre
+  const enrichedRefs: any[] = []
+  for (const ref of referencesCollected) {
+    if (ref.type === 'procedure') {
+      const p = await c.env.DB.prepare('SELECT id, title FROM procedures WHERE id = ? AND hotel_id = ?').bind(ref.id, user.hotel_id).first() as any
+      if (p) enrichedRefs.push({ type: 'procedure', id: p.id, title: p.title })
+    } else if (ref.type === 'info_item') {
+      const i = await c.env.DB.prepare('SELECT id, title FROM hotel_info_items WHERE id = ? AND hotel_id = ?').bind(ref.id, user.hotel_id).first() as any
+      if (i) enrichedRefs.push({ type: 'info_item', id: i.id, title: i.title })
+    }
+  }
+
+  // Sauvegarder le message assistant
+  const assistantMsgRes = await c.env.DB.prepare(`
+    INSERT INTO wikot_messages (conversation_id, role, content, tool_calls, references_json)
+    VALUES (?, 'assistant', ?, ?, ?)
+  `).bind(
+    convId,
+    assistantText || '',
+    lastToolCalls ? JSON.stringify(lastToolCalls) : null,
+    enrichedRefs.length > 0 ? JSON.stringify(enrichedRefs) : null
+  ).run()
+  const assistantMsgId = assistantMsgRes.meta.last_row_id
+
+  // Sauvegarder les propositions en pending_actions
+  const createdActions: any[] = []
+  for (const proposal of proposalsCollected) {
+    let beforeSnapshot: any = null
+    // Pour les updates, snapshot de l'état actuel
+    if (proposal.tool_name === 'propose_update_procedure' && proposal.args.id) {
+      const cur = await c.env.DB.prepare('SELECT * FROM procedures WHERE id = ? AND hotel_id = ?').bind(proposal.args.id, user.hotel_id).first() as any
+      if (cur) {
+        const curSteps = await c.env.DB.prepare('SELECT step_number, title, content FROM steps WHERE procedure_id = ? ORDER BY step_number').bind(proposal.args.id).all()
+        beforeSnapshot = { ...cur, steps: curSteps.results }
+      }
+    } else if (proposal.tool_name === 'propose_update_info_item' && proposal.args.id) {
+      const cur = await c.env.DB.prepare('SELECT * FROM hotel_info_items WHERE id = ? AND hotel_id = ?').bind(proposal.args.id, user.hotel_id).first() as any
+      if (cur) beforeSnapshot = cur
+    }
+
+    const aRes = await c.env.DB.prepare(`
+      INSERT INTO wikot_pending_actions (conversation_id, message_id, hotel_id, user_id, action_type, payload, before_snapshot, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+    `).bind(
+      convId, assistantMsgId, user.hotel_id, user.id,
+      proposal.tool_name.replace('propose_', ''),
+      JSON.stringify(proposal.args),
+      beforeSnapshot ? JSON.stringify(beforeSnapshot) : null
+    ).run()
+    createdActions.push({
+      id: aRes.meta.last_row_id,
+      message_id: assistantMsgId,
+      action_type: proposal.tool_name.replace('propose_', ''),
+      payload: proposal.args,
+      before_snapshot: beforeSnapshot,
+      status: 'pending'
+    })
+  }
+
+  // Mettre à jour updated_at de la conversation + auto-titre si c'est le 1er échange
+  if ((history.results as any[]).filter(m => m.role === 'user').length === 0) {
+    const autoTitle = content.length > 60 ? content.substring(0, 57) + '...' : content
+    await c.env.DB.prepare('UPDATE wikot_conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(autoTitle, convId).run()
+  } else {
+    await c.env.DB.prepare('UPDATE wikot_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(convId).run()
+  }
+
+  return c.json({
+    user_message_id: userMsgRes.meta.last_row_id,
+    assistant_message: {
+      id: assistantMsgId,
+      role: 'assistant',
+      content: assistantText,
+      references: enrichedRefs
+    },
+    actions: createdActions
+  })
+})
+
+// POST accepter une action proposée par Wikot
+app.post('/api/wikot/actions/:id/accept', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = parseInt(c.req.param('id'))
+
+  const action = await c.env.DB.prepare('SELECT * FROM wikot_pending_actions WHERE id = ? AND user_id = ?').bind(id, user.id).first() as any
+  if (!action) return c.json({ error: 'Action introuvable' }, 404)
+  if (action.status !== 'pending') return c.json({ error: 'Action déjà traitée' }, 400)
+
+  const payload = JSON.parse(action.payload)
+  const hotelId = action.hotel_id
+  let resultId: number | null = null
+  let errorMsg: string | null = null
+
+  try {
+    switch (action.action_type) {
+      case 'create_procedure': {
+        if (!wikotUserCanEditProcedures(user)) throw new Error('Permission refusée')
+        const r = await c.env.DB.prepare(`
+          INSERT INTO procedures (hotel_id, category_id, title, description, trigger_event, priority, status, created_by)
+          VALUES (?, ?, ?, ?, ?, 'normal', 'active', ?)
+        `).bind(hotelId, payload.category_id || null, payload.title, payload.description || null, payload.trigger_event, user.id).run()
+        resultId = r.meta.last_row_id as number
+        if (payload.steps && Array.isArray(payload.steps)) {
+          for (let i = 0; i < payload.steps.length; i++) {
+            const s = payload.steps[i]
+            await c.env.DB.prepare(`
+              INSERT INTO steps (procedure_id, step_number, title, content, step_type)
+              VALUES (?, ?, ?, ?, 'action')
+            `).bind(resultId, i + 1, s.title, s.content || null).run()
+          }
+        }
+        await c.env.DB.prepare(`INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary) VALUES (?, ?, ?, 'created', ?)`)
+          .bind(hotelId, resultId, user.id, `Procédure "${payload.title}" créée par Wikot`).run()
+        break
+      }
+      case 'update_procedure': {
+        if (!wikotUserCanEditProcedures(user)) throw new Error('Permission refusée')
+        const procId = payload.id
+        const cur = await c.env.DB.prepare('SELECT * FROM procedures WHERE id = ? AND hotel_id = ?').bind(procId, hotelId).first() as any
+        if (!cur) throw new Error('Procédure introuvable')
+        await c.env.DB.prepare(`
+          UPDATE procedures SET
+            title = COALESCE(?, title),
+            description = COALESCE(?, description),
+            trigger_event = COALESCE(?, trigger_event),
+            category_id = COALESCE(?, category_id),
+            version = version + 1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).bind(payload.title, payload.description, payload.trigger_event, payload.category_id, procId).run()
+        if (payload.steps && Array.isArray(payload.steps)) {
+          await c.env.DB.prepare('DELETE FROM steps WHERE procedure_id = ?').bind(procId).run()
+          for (let i = 0; i < payload.steps.length; i++) {
+            const s = payload.steps[i]
+            await c.env.DB.prepare(`INSERT INTO steps (procedure_id, step_number, title, content, step_type) VALUES (?, ?, ?, ?, 'action')`)
+              .bind(procId, i + 1, s.title, s.content || null).run()
+          }
+        }
+        resultId = procId
+        await c.env.DB.prepare(`INSERT INTO changelog (hotel_id, procedure_id, user_id, action, summary) VALUES (?, ?, ?, 'updated', ?)`)
+          .bind(hotelId, procId, user.id, `Procédure modifiée par Wikot`).run()
+        break
+      }
+      case 'create_info_item': {
+        if (!wikotUserCanEditInfo(user)) throw new Error('Permission refusée')
+        const r = await c.env.DB.prepare(`INSERT INTO hotel_info_items (hotel_id, category_id, title, content) VALUES (?, ?, ?, ?)`)
+          .bind(hotelId, payload.category_id || null, payload.title, payload.content || '').run()
+        resultId = r.meta.last_row_id as number
+        break
+      }
+      case 'update_info_item': {
+        if (!wikotUserCanEditInfo(user)) throw new Error('Permission refusée')
+        await c.env.DB.prepare(`
+          UPDATE hotel_info_items SET
+            title = COALESCE(?, title),
+            content = COALESCE(?, content),
+            category_id = COALESCE(?, category_id),
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND hotel_id = ?
+        `).bind(payload.title, payload.content, payload.category_id, payload.id, hotelId).run()
+        resultId = payload.id
+        break
+      }
+      case 'create_info_category': {
+        if (!wikotUserCanEditInfo(user)) throw new Error('Permission refusée')
+        const r = await c.env.DB.prepare(`INSERT INTO hotel_info_categories (hotel_id, name, color) VALUES (?, ?, ?)`)
+          .bind(hotelId, payload.name, payload.color || '#3B82F6').run()
+        resultId = r.meta.last_row_id as number
+        break
+      }
+      default:
+        throw new Error('Type d\'action non supporté')
+    }
+  } catch (e: any) {
+    errorMsg = e.message
+  }
+
+  if (errorMsg) {
+    await c.env.DB.prepare(`UPDATE wikot_pending_actions SET status = 'failed', error_message = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(errorMsg, id).run()
+    return c.json({ error: errorMsg }, 400)
+  }
+
+  await c.env.DB.prepare(`UPDATE wikot_pending_actions SET status = 'accepted', result_id = ?, resolved_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .bind(resultId, id).run()
+  return c.json({ success: true, result_id: resultId })
+})
+
+// POST refuser une action
+app.post('/api/wikot/actions/:id/reject', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = parseInt(c.req.param('id'))
+  const action = await c.env.DB.prepare('SELECT * FROM wikot_pending_actions WHERE id = ? AND user_id = ?').bind(id, user.id).first() as any
+  if (!action) return c.json({ error: 'Action introuvable' }, 404)
+  if (action.status !== 'pending') return c.json({ error: 'Action déjà traitée' }, 400)
+  await c.env.DB.prepare(`UPDATE wikot_pending_actions SET status = 'rejected', resolved_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(id).run()
   return c.json({ success: true })
 })
 

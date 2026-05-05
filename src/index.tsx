@@ -304,7 +304,13 @@ app.get('/api/procedures', authMiddleware, async (c) => {
   const hotelId = c.req.query('hotel_id') || user.hotel_id
   const categoryId = c.req.query('category_id')
   const search = c.req.query('search')
+  const includeSubprocedures = c.req.query('include_subprocedures') === '1' // explicite, pour le détail
 
+  // FILTRAGE DES SOUS-PROCÉDURES :
+  // Une procédure est considérée "sous-procédure" si elle est référencée
+  // via linked_procedure_id depuis au moins une étape d'une AUTRE procédure
+  // du même hôtel. Ces sous-procédures ne doivent PAS apparaître dans la
+  // liste principale, seulement comme étapes liées à leur procédure mère.
   let query = `SELECT p.*, c.name as category_name, c.icon as category_icon, c.color as category_color, 
     u1.name as created_by_name, u2.name as approved_by_name,
     (SELECT COUNT(*) FROM steps WHERE procedure_id = p.id) as step_count,
@@ -315,6 +321,26 @@ app.get('/api/procedures', authMiddleware, async (c) => {
     LEFT JOIN users u2 ON p.approved_by = u2.id
     WHERE p.hotel_id = ?`
   const params: any[] = [hotelId]
+
+  if (!includeSubprocedures) {
+    query += ` AND p.id NOT IN (
+      SELECT DISTINCT s.linked_procedure_id
+      FROM steps s
+      JOIN procedures parent ON parent.id = s.procedure_id
+      WHERE s.linked_procedure_id IS NOT NULL
+        AND parent.hotel_id = ?
+        AND parent.id <> p.id
+      UNION
+      SELECT DISTINCT cs.linked_procedure_id
+      FROM condition_steps cs
+      JOIN conditions cd ON cd.id = cs.condition_id
+      JOIN procedures parent ON parent.id = cd.procedure_id
+      WHERE cs.linked_procedure_id IS NOT NULL
+        AND parent.hotel_id = ?
+        AND parent.id <> p.id
+    )`
+    params.push(hotelId, hotelId)
+  }
 
   if (categoryId) { query += ' AND p.category_id = ?'; params.push(categoryId) }
   if (search) { query += ' AND (p.title LIKE ? OR p.trigger_event LIKE ? OR p.description LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`) }
@@ -1252,38 +1278,32 @@ async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName
 
   if (mode === 'standard') {
     // ============================================
-    // WIKOT CLASSIQUE — Lecture / sourcing
+    // WIKOT CLASSIQUE — SÉLECTEUR DE CARTES (zéro texte libre)
     // ============================================
-    return `Tu es **Wikot**, l'assistant IA d'information du **${hotelName}**. Tu es l'agent qui RENSEIGNE — tu ne modifies jamais rien.
-
-## Identité et ton
-- Tu tutoies l'utilisateur tout en restant **très poli et professionnel**.
-- Tu réponds **exclusivement en français**.
-- Réponses **courtes** quand la question le permet, **détaillées** quand le sujet l'exige. Pas de verbiage inutile.
+    return `Tu es **Wikot**, le moteur de recherche conversationnel du **${hotelName}**.
 
 ## Ta mission UNIQUE
-Répondre aux questions des employés en t'appuyant strictement sur les **procédures** et **informations** de l'hôtel. Tu ne crées rien, tu ne modifies rien — tout cela est géré par un autre agent (**Back Wikot**). Si on te demande une création/modification, indique poliment :
-« Pour créer ou modifier une procédure ou une information, il faut passer par **Back Wikot** depuis le menu. »
+Tu reçois une question d'employé. Tu identifies LA procédure ou L'information de l'hôtel la plus pertinente, et tu la retournes via l'outil \`select_answer\`. **Tu NE rédiges JAMAIS de texte de réponse.** L'interface affiche directement la carte de la ressource sélectionnée.
 
-## Protocole obligatoire à chaque message
-1. **Cherche d'abord.** Avant toute réponse de fond, appelle \`search_procedures\` et/ou \`search_hotel_info\` avec des mots-clés issus de la question. Si la question est vague, appelle aussi \`list_categories\` pour t'orienter.
-2. **Lis le détail.** Pour chaque résultat pertinent, appelle \`get_procedure\` ou \`get_hotel_info_item\` afin d'avoir le contenu réel. **Ne jamais inventer.** Si rien ne correspond, dis-le franchement et propose une reformulation.
-3. **Rédige une vraie réponse synthétique.** Tu DOIS toujours rédiger une réponse de fond — pas seulement une phrase introductive suivie de boutons. Explique l'essentiel : étapes-clés, points importants, valeurs concrètes (horaires, tarifs, numéros). L'utilisateur doit pouvoir comprendre en lisant ta bulle, sans avoir besoin de cliquer. Les boutons « Voir la procédure / Voir l'information » sont **un complément** pour aller au détail, jamais un substitut à ta réponse.
-   - Si la procédure a des sous-procédures (steps avec \`linked_procedure_id\`), **mentionne-les explicitement** dans ta synthèse (« Cette procédure inclut 5 sous-procédures détaillées : vérification d'identité, pré-autorisation… »).
-   - Pour une procédure : donne les grandes étapes en liste à puces (titre + 1 phrase).
-   - Pour une information : donne les valeurs factuelles directement (horaires, prix, contact).
-4. **Source obligatoirement.** Pour chaque procédure ou information utilisée dans ta réponse, appelle \`add_reference(type, id)\`. Le frontend rend automatiquement un bouton « Voir la procédure » ou « Voir l'information » sous ta bulle. **N'inscris JAMAIS de lien, d'URL ni de mention « cf. /procedures/X » dans ton texte** — la zone de sourcing s'en charge. Si plusieurs procédures sont pertinentes, ajoute une référence par procédure utilisée (max 6).
+## Protocole strict (obligatoire à chaque message)
+1. Appelle \`search_procedures\` ET/OU \`search_hotel_info\` avec des mots-clés issus de la question.
+2. Si plusieurs résultats, appelle \`get_procedure\` ou \`get_hotel_info_item\` pour comparer et choisir le plus pertinent.
+3. Termine TOUJOURS par UN SEUL appel à \`select_answer\` avec :
+   - \`type: "procedure"\` + \`id\` → si une procédure répond à la question
+   - \`type: "info_item"\` + \`id\` → si une information répond à la question
+   - \`type: "none"\` → si aucune procédure ni information existante ne correspond
 
-## Format de réponse
-- Texte naturel, fluide. Pas de gros titres Markdown.
-- Tu peux mettre du **gras** ponctuel sur les éléments-clés.
-- Listes à puces avec \`•\` pour les énumérations (horaires, étapes, points).
-- Pas de blocs de code, pas de tableaux Markdown lourds.
+## Règles ABSOLUES
+- **AUCUN texte de réponse écrit par toi.** Le seul output que tu produis pour l'utilisateur est l'appel à \`select_answer\`. Pas de phrase de politesse, pas d'introduction, pas de conclusion.
+- **UNE SEULE ressource sélectionnée** (la plus pertinente). Pas de liste, pas de comparatif.
+- Si la question concerne une création/modification : sélectionne \`type: "none"\` (Wikot ne fait que de la lecture).
+- Si la question est vague ou hors-sujet (ex : « bonjour ») : sélectionne \`type: "none"\`.
+- Si une sous-procédure répond mieux qu'une procédure mère, choisis la sous-procédure.
 
 ## Arborescence actuelle de l'hôtel
 ${arborescence}
 
-Rappel : tu es Wikot **information**. Pour les modifications, oriente l'utilisateur vers **Back Wikot**.`
+Rappel : tu es un **sélecteur**, pas un rédacteur. \`select_answer\` à chaque tour, jamais de texte libre.`
   }
 
   // ============================================
@@ -1414,12 +1434,12 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
       type: 'function',
       function: {
         name: 'add_reference',
-        description: 'Ajoute un bouton de sourcing dans ta réponse pour permettre à l\'utilisateur de voir la procédure ou l\'information complète. À utiliser SYSTÉMATIQUEMENT quand tu cites un contenu de l\'hôtel.',
+        description: '[Mode max uniquement] Ajoute un bouton de sourcing pour permettre à l\'utilisateur de voir la procédure ou l\'information complète.',
         parameters: {
           type: 'object',
           properties: {
-            type: { type: 'string', enum: ['procedure', 'info_item'], description: 'Type de ressource' },
-            id: { type: 'integer', description: 'ID de la ressource' }
+            type: { type: 'string', enum: ['procedure', 'info_item'] },
+            id: { type: 'integer' }
           },
           required: ['type', 'id']
         }
@@ -1427,9 +1447,28 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
     }
   ]
 
-  // Les outils propose_* ne sont disponibles QUE en mode 'max'
-  // En mode 'standard' (Wikot classique), aucune modification possible
+  // ============================================
+  // MODE STANDARD (Wikot) — UN SEUL outil de finalisation : select_answer
+  // ============================================
   if (mode !== 'max') {
+    // En mode standard, on remplace add_reference par select_answer
+    // (l'utilisateur ne reçoit qu'une carte structurée, pas de texte libre)
+    tools.pop() // Retirer add_reference
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'select_answer',
+        description: 'Sélectionne LA procédure ou L\'information la plus pertinente pour répondre à la question. UTILISE-LE OBLIGATOIREMENT à chaque message après tes recherches. type="none" si aucune ressource ne correspond.',
+        parameters: {
+          type: 'object',
+          properties: {
+            type: { type: 'string', enum: ['procedure', 'info_item', 'none'], description: 'procedure / info_item / none (aucune ressource pertinente)' },
+            id: { type: 'integer', description: 'ID de la ressource (omettre si type=none)' }
+          },
+          required: ['type']
+        }
+      }
+    })
     return tools
   }
 
@@ -1692,6 +1731,24 @@ app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
     ORDER BY created_at, id
   `).bind(id).all()
 
+  // Décoder references_json : si c'est { answer_card: ... } → on expose answer_card,
+  // sinon c'est un tableau de références sourcing classiques (mode max).
+  const decodedMessages = (messages.results as any[]).map(m => {
+    let refs: any[] = []
+    let answerCard: any = null
+    if (m.references_json) {
+      try {
+        const parsed = JSON.parse(m.references_json)
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.answer_card) {
+          answerCard = parsed.answer_card
+        } else if (Array.isArray(parsed)) {
+          refs = parsed
+        }
+      } catch {}
+    }
+    return { ...m, references: refs, answer_card: answerCard }
+  })
+
   // Joindre les pending actions à leur message
   const actions = await c.env.DB.prepare(`
     SELECT id, message_id, action_type, payload, before_snapshot, status, result_id
@@ -1700,7 +1757,7 @@ app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
     ORDER BY created_at
   `).bind(id).all()
 
-  return c.json({ conversation: conv, messages: messages.results, actions: actions.results })
+  return c.json({ conversation: conv, messages: decodedMessages, actions: actions.results })
 })
 
 // DELETE archive une conversation
@@ -1772,9 +1829,11 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   // Boucle d'appels avec tools (max 5 itérations pour éviter une boucle infinie)
   const referencesCollected: any[] = []
   const proposalsCollected: { tool_name: string; args: any }[] = []
-  // IDs vus dans les résultats des tools de lecture (auto-sourcing)
+  // IDs vus dans les résultats des tools de lecture (filet de sécurité mode standard)
   const seenProcedureIds = new Set<number>()
   const seenInfoItemIds = new Set<number>()
+  // Sélection finale du mode standard (Wikot = sélecteur de cartes)
+  let selectedAnswer: { type: 'procedure' | 'info_item' | 'none'; id?: number } | null = null
   let assistantText = ''
   let lastToolCalls: any[] | null = null
 
@@ -1801,18 +1860,20 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     lastToolCalls = msg.tool_calls
     oaiMessages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls })
 
+    let stopAfterThisIter = false
+
     for (const tc of msg.tool_calls) {
       const fnName = tc.function?.name
       let fnArgs: any = {}
       try { fnArgs = JSON.parse(tc.function?.arguments || '{}') } catch {}
 
-      // Tools de lecture / sourcing → exécutés directement
+      // Tools de lecture
       if (['search_procedures', 'get_procedure', 'search_hotel_info', 'get_hotel_info_item', 'list_categories', 'add_reference'].includes(fnName)) {
         const result = await executeReadTool(c.env.DB, user.hotel_id, fnName, fnArgs)
         if (fnName === 'add_reference') {
           referencesCollected.push({ type: fnArgs.type, id: fnArgs.id })
         }
-        // Auto-tracking : on enregistre tous les IDs que le modèle a "vus"
+        // Tracking IDs vus
         if (fnName === 'search_procedures' && Array.isArray(result)) {
           for (const r of result) { if (r && r.id) seenProcedureIds.add(r.id) }
         } else if (fnName === 'get_procedure' && result && (result as any).procedure?.id) {
@@ -1824,7 +1885,21 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         }
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) })
       }
-      // Tools de proposition → on stocke pour traitement après réponse finale
+      // === MODE STANDARD : select_answer === outil de finalisation
+      else if (fnName === 'select_answer') {
+        const t = fnArgs.type
+        const aId = typeof fnArgs.id === 'number' ? fnArgs.id : (fnArgs.id ? parseInt(fnArgs.id) : undefined)
+        if (t === 'procedure' && aId) {
+          selectedAnswer = { type: 'procedure', id: aId }
+        } else if (t === 'info_item' && aId) {
+          selectedAnswer = { type: 'info_item', id: aId }
+        } else {
+          selectedAnswer = { type: 'none' }
+        }
+        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true }) })
+        stopAfterThisIter = true
+      }
+      // Tools de proposition (mode max)
       else if (fnName.startsWith('propose_')) {
         proposalsCollected.push({ tool_name: fnName, args: fnArgs })
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, message: 'Proposition enregistrée, l\'utilisateur va voir un diff et pouvoir valider.' }) })
@@ -1833,124 +1908,99 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: 'Tool non reconnu' }) })
       }
     }
+
+    // Mode standard : dès que select_answer est appelé, on arrête la boucle
+    if (stopAfterThisIter) break
   }
 
   // ============================================
-  // AUTO-SOURCING ALGORITHMIQUE (filet de sécurité)
+  // MODE STANDARD : on construit la answer_card à partir de selectedAnswer
   // ============================================
-  // Si Wikot oublie d'appeler add_reference, on déduit automatiquement les références
-  // à partir de :
-  //   1) ce que le modèle a "vu" via search_*/get_* (seenProcedureIds, seenInfoItemIds)
-  //   2) un matching algorithmique titre ↔ texte de la réponse
-  //
-  // Règle : on prend en priorité ce qu'a explicitement référencé add_reference,
-  // puis on complète avec ce qui matche le titre dans le texte ET qui a été "vu".
-  // Limite : max 6 références au total.
-  const enrichedRefs: any[] = []
-  const seenRefKeys = new Set<string>()
-
-  // 1) Références explicites du modèle (add_reference)
-  for (const ref of referencesCollected) {
-    const key = `${ref.type}:${ref.id}`
-    if (seenRefKeys.has(key)) continue
-    if (ref.type === 'procedure') {
-      const p = await c.env.DB.prepare('SELECT id, title FROM procedures WHERE id = ? AND hotel_id = ?').bind(ref.id, user.hotel_id).first() as any
-      if (p) { enrichedRefs.push({ type: 'procedure', id: p.id, title: p.title }); seenRefKeys.add(key) }
-    } else if (ref.type === 'info_item') {
-      const i = await c.env.DB.prepare('SELECT id, title FROM hotel_info_items WHERE id = ? AND hotel_id = ?').bind(ref.id, user.hotel_id).first() as any
-      if (i) { enrichedRefs.push({ type: 'info_item', id: i.id, title: i.title }); seenRefKeys.add(key) }
-    }
-  }
-
-  // 2) Auto-complétion : matching algorithmique titre ↔ texte de la réponse
-  // On charge tous les titres de procédures et infos de l'hôtel, on cherche les mentions.
-  if (assistantText && enrichedRefs.length < 6) {
-    const normText = normalizeForMatch(assistantText)
-
-    // Procédures vues : matching prioritaire (le modèle a déjà lu ces procédures)
-    if (seenProcedureIds.size > 0 && enrichedRefs.length < 6) {
-      const ids = Array.from(seenProcedureIds)
-      const placeholders = ids.map(() => '?').join(',')
-      const rows = await c.env.DB.prepare(
-        `SELECT id, title FROM procedures WHERE hotel_id = ? AND id IN (${placeholders})`
-      ).bind(user.hotel_id, ...ids).all()
-      for (const p of (rows.results as any[])) {
-        if (enrichedRefs.length >= 6) break
-        const key = `procedure:${p.id}`
-        if (seenRefKeys.has(key)) continue
-        if (titleMatchesText(p.title, normText)) {
-          enrichedRefs.push({ type: 'procedure', id: p.id, title: p.title })
-          seenRefKeys.add(key)
-        }
-      }
-    }
-
-    // Infos vues
-    if (seenInfoItemIds.size > 0 && enrichedRefs.length < 6) {
-      const ids = Array.from(seenInfoItemIds)
-      const placeholders = ids.map(() => '?').join(',')
-      const rows = await c.env.DB.prepare(
-        `SELECT id, title FROM hotel_info_items WHERE hotel_id = ? AND id IN (${placeholders})`
-      ).bind(user.hotel_id, ...ids).all()
-      for (const i of (rows.results as any[])) {
-        if (enrichedRefs.length >= 6) break
-        const key = `info_item:${i.id}`
-        if (seenRefKeys.has(key)) continue
-        if (titleMatchesText(i.title, normText)) {
-          enrichedRefs.push({ type: 'info_item', id: i.id, title: i.title })
-          seenRefKeys.add(key)
-        }
-      }
-    }
-
-    // 3) Filet de dernier recours : si AUCUNE référence et que le modèle a vu des résultats,
-    // on prend simplement les premiers résultats vus (max 3) pour garantir un sourcing.
-    if (enrichedRefs.length === 0) {
+  let answerCard: any = null
+  if (mode === 'standard') {
+    // Filet de sécurité : si le modèle n'a pas appelé select_answer, on déduit
+    if (!selectedAnswer) {
       if (seenProcedureIds.size > 0) {
-        const ids = Array.from(seenProcedureIds).slice(0, 3)
-        const placeholders = ids.map(() => '?').join(',')
-        const rows = await c.env.DB.prepare(
-          `SELECT id, title FROM procedures WHERE hotel_id = ? AND id IN (${placeholders})`
-        ).bind(user.hotel_id, ...ids).all()
-        for (const p of (rows.results as any[])) {
-          enrichedRefs.push({ type: 'procedure', id: p.id, title: p.title })
-        }
+        const firstProc = Array.from(seenProcedureIds)[0]
+        selectedAnswer = { type: 'procedure', id: firstProc }
       } else if (seenInfoItemIds.size > 0) {
-        const ids = Array.from(seenInfoItemIds).slice(0, 3)
-        const placeholders = ids.map(() => '?').join(',')
-        const rows = await c.env.DB.prepare(
-          `SELECT id, title FROM hotel_info_items WHERE hotel_id = ? AND id IN (${placeholders})`
-        ).bind(user.hotel_id, ...ids).all()
-        for (const i of (rows.results as any[])) {
-          enrichedRefs.push({ type: 'info_item', id: i.id, title: i.title })
-        }
+        const firstInfo = Array.from(seenInfoItemIds)[0]
+        selectedAnswer = { type: 'info_item', id: firstInfo }
+      } else {
+        selectedAnswer = { type: 'none' }
       }
     }
+
+    // Construire la carte structurée selon le type
+    if (selectedAnswer.type === 'procedure' && selectedAnswer.id) {
+      const p = await c.env.DB.prepare(`
+        SELECT p.id, p.title, p.description, p.trigger_event, p.category_id,
+               c.name as category_name, c.color as category_color, c.icon as category_icon,
+               (SELECT COUNT(*) FROM steps WHERE procedure_id = p.id) as step_count
+        FROM procedures p
+        LEFT JOIN categories c ON p.category_id = c.id
+        WHERE p.id = ? AND p.hotel_id = ?
+      `).bind(selectedAnswer.id, user.hotel_id).first() as any
+      if (p) {
+        answerCard = {
+          kind: 'procedure',
+          id: p.id, title: p.title, description: p.description, trigger_event: p.trigger_event,
+          category_name: p.category_name, category_color: p.category_color, category_icon: p.category_icon,
+          step_count: p.step_count
+        }
+      } else {
+        answerCard = { kind: 'not_found' }
+      }
+    } else if (selectedAnswer.type === 'info_item' && selectedAnswer.id) {
+      const i = await c.env.DB.prepare(`
+        SELECT i.id, i.title, i.content, i.category_id,
+               c.name as category_name, c.color as category_color, c.icon as category_icon
+        FROM hotel_info_items i
+        LEFT JOIN hotel_info_categories c ON i.category_id = c.id
+        WHERE i.id = ? AND i.hotel_id = ?
+      `).bind(selectedAnswer.id, user.hotel_id).first() as any
+      if (i) {
+        answerCard = {
+          kind: 'info_item',
+          id: i.id, title: i.title, content: i.content, category_id: i.category_id,
+          category_name: i.category_name, category_color: i.category_color, category_icon: i.category_icon
+        }
+      } else {
+        answerCard = { kind: 'not_found' }
+      }
+    } else {
+      answerCard = { kind: 'not_found' }
+    }
+
+    // En mode standard, on n'utilise PAS le texte libre du modèle (zéro texte libre)
+    assistantText = ''
   }
 
   // ============================================
-  // FALLBACK TEXTE : si la réponse est vide ou trop courte alors qu'on a des références,
-  // on génère algorithmiquement une intro synthétique pour garantir un message exploitable.
+  // MODE MAX : on garde l'ancien sourcing (références multiples + texte libre)
   // ============================================
-  const trimmedText = (assistantText || '').trim()
-  if (trimmedText.length < 40 && enrichedRefs.length > 0) {
-    const procRefs = enrichedRefs.filter(r => r.type === 'procedure')
-    const infoRefs = enrichedRefs.filter(r => r.type === 'info_item')
-    const parts: string[] = []
-    if (procRefs.length === 1) {
-      parts.push(`Voici la procédure qui répond à ta question : **${procRefs[0].title}**. Clique sur le bouton ci-dessous pour voir le détail complet.`)
-    } else if (procRefs.length > 1) {
-      parts.push(`Plusieurs procédures correspondent à ta question :\n${procRefs.map(r => '• **' + r.title + '**').join('\n')}\n\nClique sur les boutons ci-dessous pour ouvrir chacune.`)
+  const enrichedRefs: any[] = []
+  if (mode === 'max') {
+    const seenRefKeys = new Set<string>()
+    for (const ref of referencesCollected) {
+      const key = `${ref.type}:${ref.id}`
+      if (seenRefKeys.has(key)) continue
+      if (ref.type === 'procedure') {
+        const p = await c.env.DB.prepare('SELECT id, title FROM procedures WHERE id = ? AND hotel_id = ?').bind(ref.id, user.hotel_id).first() as any
+        if (p) { enrichedRefs.push({ type: 'procedure', id: p.id, title: p.title }); seenRefKeys.add(key) }
+      } else if (ref.type === 'info_item') {
+        const i = await c.env.DB.prepare('SELECT id, title FROM hotel_info_items WHERE id = ? AND hotel_id = ?').bind(ref.id, user.hotel_id).first() as any
+        if (i) { enrichedRefs.push({ type: 'info_item', id: i.id, title: i.title }); seenRefKeys.add(key) }
+      }
     }
-    if (infoRefs.length === 1) {
-      parts.push(`Voici l'information qui répond à ta question : **${infoRefs[0].title}**. Clique sur le bouton ci-dessous pour aller directement à l'emplacement.`)
-    } else if (infoRefs.length > 1) {
-      parts.push(`Plusieurs informations correspondent à ta question :\n${infoRefs.map(r => '• **' + r.title + '**').join('\n')}\n\nClique sur les boutons ci-dessous pour aller à chacune.`)
-    }
-    assistantText = parts.join('\n\n')
   }
 
   // Sauvegarder le message assistant
+  // Pour mode standard : on stocke la answer_card dans references_json (réutilisation du champ existant)
+  // Pour mode max : on stocke les références sourcing classiques
+  const referencesJson = mode === 'standard'
+    ? (answerCard ? JSON.stringify({ answer_card: answerCard }) : null)
+    : (enrichedRefs.length > 0 ? JSON.stringify(enrichedRefs) : null)
   const assistantMsgRes = await c.env.DB.prepare(`
     INSERT INTO wikot_messages (conversation_id, role, content, tool_calls, references_json)
     VALUES (?, 'assistant', ?, ?, ?)
@@ -1958,7 +2008,7 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     convId,
     assistantText || '',
     lastToolCalls ? JSON.stringify(lastToolCalls) : null,
-    enrichedRefs.length > 0 ? JSON.stringify(enrichedRefs) : null
+    referencesJson
   ).run()
   const assistantMsgId = assistantMsgRes.meta.last_row_id
 
@@ -2011,7 +2061,8 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
       id: assistantMsgId,
       role: 'assistant',
       content: assistantText,
-      references: enrichedRefs
+      references: enrichedRefs,
+      answer_card: answerCard
     },
     actions: createdActions
   })

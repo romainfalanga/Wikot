@@ -2350,7 +2350,8 @@ async function sendWikotMessage(mode) {
     id: result.assistant_message.id,
     role: 'assistant',
     content: result.assistant_message.content,
-    references: result.assistant_message.references || []
+    references: result.assistant_message.references || [],
+    answer_card: result.assistant_message.answer_card || null
   });
 
   if (result.actions && result.actions.length > 0) {
@@ -2482,10 +2483,32 @@ function renderWikotMessage(msg, mode) {
   }
   // Assistant
   const refs = msg.references || [];
+  const answerCard = msg.answer_card || null;
   const actionsArr = mode === 'max' ? (state.wikotMaxActions || []) : (state.wikotActions || []);
   const actionsForMsg = actionsArr.filter(a => a.message_id === msg.id);
   const cfg = WIKOT_MODE_CONFIG[mode] || WIKOT_MODE_CONFIG.standard;
 
+  // ============================================
+  // MODE STANDARD (Wikot) — UNE SEULE carte, zéro texte libre
+  // ============================================
+  if (mode === 'standard') {
+    return `
+      <div class="flex justify-start mb-4">
+        <div class="flex gap-2 max-w-[95%] sm:max-w-[85%] w-full">
+          <div class="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white text-xs">
+            <i class="fas ${cfg.icon}"></i>
+          </div>
+          <div class="flex-1 min-w-0">
+            ${renderWikotAnswerCard(answerCard)}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // ============================================
+  // MODE MAX (Back Wikot) — bulle texte + références sourcing + actions
+  // ============================================
   return `
     <div class="flex justify-start mb-4">
       <div class="flex gap-2 max-w-[90%] sm:max-w-[80%]">
@@ -2511,6 +2534,84 @@ function renderWikotMessage(msg, mode) {
       </div>
     </div>
   `;
+}
+
+// Carte de réponse Wikot (mode standard) : 3 types possibles
+//   - procedure : carte procédure (titre + déclencheur + nb étapes + bouton)
+//   - info_item : carte info (titre + contenu complet + bouton vers l'emplacement)
+//   - not_found : message préfait "aucune information ni procédure ne correspond"
+function renderWikotAnswerCard(card) {
+  if (!card || card.kind === 'not_found') {
+    return `
+      <div class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-2xl px-4 py-5 text-center">
+        <i class="fas fa-circle-question text-3xl text-gray-400 mb-2"></i>
+        <p class="text-sm font-semibold text-navy-700">Aucune information ni procédure ne correspond à ta demande.</p>
+        <p class="text-xs text-navy-500 mt-1.5">Essaie de reformuler ta question, ou contacte un responsable si le sujet n'est pas encore documenté.</p>
+      </div>
+    `;
+  }
+
+  if (card.kind === 'procedure') {
+    const ref = { type: 'procedure', id: card.id, title: card.title };
+    return `
+      <div class="bg-white border-2 border-brand-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
+        <!-- Header coloré -->
+        <div class="px-4 py-2.5 bg-gradient-to-r from-brand-500 to-purple-500 text-white flex items-center gap-2">
+          <i class="fas fa-sitemap text-sm"></i>
+          <span class="text-xs font-semibold uppercase tracking-wide">Procédure</span>
+          ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
+        </div>
+        <!-- Body -->
+        <div class="px-4 py-3 space-y-2">
+          <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.title)}</h3>
+          ${card.trigger_event ? `<div class="text-xs text-navy-600 flex items-start gap-1.5"><i class="fas fa-bolt text-amber-500 mt-0.5"></i><span>${escapeHtml(card.trigger_event)}</span></div>` : ''}
+          ${card.description ? `<p class="text-sm text-navy-700 whitespace-pre-wrap leading-relaxed">${escapeHtml(card.description)}</p>` : ''}
+          <div class="flex items-center gap-2 text-xs text-navy-500 pt-1">
+            <i class="fas fa-list-ol"></i>
+            <span>${card.step_count || 0} étape${(card.step_count || 0) > 1 ? 's' : ''}</span>
+          </div>
+        </div>
+        <!-- Bouton ouvrir -->
+        <div class="px-4 pb-3">
+          <button onclick='viewWikotReference(${JSON.stringify(ref)})'
+            class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-brand-500 hover:bg-brand-600 text-white rounded-xl text-sm font-semibold transition-colors">
+            <i class="fas fa-arrow-right"></i>Ouvrir la procédure
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  if (card.kind === 'info_item') {
+    const ref = { type: 'info_item', id: card.id, title: card.title };
+    const catColor = card.category_color || '#3B82F6';
+    return `
+      <div class="bg-white border-2 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden" style="border-color:${catColor}40">
+        <!-- Header coloré -->
+        <div class="px-4 py-2.5 text-white flex items-center gap-2" style="background:${catColor}">
+          <i class="fas ${card.category_icon || 'fa-circle-info'} text-sm"></i>
+          <span class="text-xs font-semibold uppercase tracking-wide">Information</span>
+          ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
+        </div>
+        <!-- Body : contenu COMPLET de l'info -->
+        <div class="px-4 py-3 space-y-2">
+          <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.title)}</h3>
+          ${card.content ? `<div class="text-sm text-navy-700 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(card.content)}</div>` : '<p class="text-sm text-navy-400 italic">Aucun contenu.</p>'}
+        </div>
+        <!-- Bouton aller à l'emplacement -->
+        <div class="px-4 pb-3">
+          <button onclick='viewWikotReference(${JSON.stringify(ref)})'
+            class="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 text-white rounded-xl text-sm font-semibold transition-colors hover:opacity-90"
+            style="background:${catColor}">
+            <i class="fas fa-location-arrow"></i>Voir dans la page Informations
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Type inconnu : fallback not_found
+  return renderWikotAnswerCard({ kind: 'not_found' });
 }
 
 // Helper : formate un bloc d'étapes pour affichage complet (titre + contenu, sans troncature)

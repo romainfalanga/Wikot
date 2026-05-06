@@ -5,8 +5,35 @@
 
 const API = '/api';
 let state = {
+  // Auth STAFF
   token: localStorage.getItem('wikot_token'),
   user: JSON.parse(localStorage.getItem('wikot_user') || 'null'),
+  // Auth CLIENT (Front Wikot — chambre client)
+  clientToken: localStorage.getItem('wikot_client_token'),
+  client: JSON.parse(localStorage.getItem('wikot_client') || 'null'),
+  loginTab: 'staff', // 'staff' | 'client' — onglet actif sur la page de login
+  // Vues client
+  clientView: 'home', // 'home' | 'wikot' | 'restaurant' | 'info'
+  clientWikotConversations: [],
+  clientWikotCurrentConvId: null,
+  clientWikotMessages: [],
+  clientWikotSending: false,
+  clientRestaurantDate: null,
+  clientRestaurantAvailability: null,
+  clientRestaurantReservations: [],
+  clientHotelInfoCategories: [],
+  clientHotelInfoItems: [],
+  // Staff — vues étendues
+  rooms: [],
+  occupancyEntries: {}, // {room_id: {guest_name, checkout_date}}
+  restaurantSchedule: [],
+  restaurantExceptions: [],
+  restaurantReservations: [],
+  restaurantDashboard: null,
+  restaurantDashboardFrom: null,
+  restaurantDashboardTo: null,
+  restaurantPickedDate: null,
+  hotelSettings: null,
   currentView: 'dashboard',
   currentHotelId: null,
   procedures: [],
@@ -117,6 +144,34 @@ function userCanEditInfo() {
 function userCanManageChat() {
   if (!state.user) return false;
   return state.user.role === 'admin' || state.user.can_manage_chat === 1;
+}
+
+function userCanEditClients() {
+  if (!state.user) return false;
+  return state.user.role === 'admin' || Number(state.user.can_edit_clients) === 1;
+}
+
+function userCanEditRestaurant() {
+  if (!state.user) return false;
+  return state.user.role === 'admin' || Number(state.user.can_edit_restaurant) === 1;
+}
+
+// ============================================
+// CLIENT API HELPER (token séparé du staff)
+// ============================================
+async function clientApi(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (state.clientToken) headers['Authorization'] = `Bearer ${state.clientToken}`;
+  try {
+    const res = await fetch(`${API}${path}`, { ...options, headers });
+    const data = await res.json();
+    if (res.status === 401) { clientLogout(); return null; }
+    if (!res.ok) { showToast(data.error || 'Erreur', 'error'); return null; }
+    return data;
+  } catch (e) {
+    showToast('Erreur de connexion', 'error');
+    return null;
+  }
 }
 
 // ============================================
@@ -456,17 +511,70 @@ function updateSidebarBadges() {
 // ============================================
 function render() {
   const app = document.getElementById('app');
-  if (!state.token || !state.user) {
-    app.innerHTML = renderLoginPage();
+  // Priorité 1 : si un client est connecté, afficher l'app Front Wikot client
+  if (state.clientToken && state.client) {
+    app.innerHTML = renderClientApp();
     return;
   }
-  app.innerHTML = renderMainLayout();
+  // Priorité 2 : si un staff est connecté, afficher l'app staff
+  if (state.token && state.user) {
+    app.innerHTML = renderMainLayout();
+    return;
+  }
+  // Priorité 3 : page de login (avec onglet staff/client)
+  app.innerHTML = renderLoginPage();
+}
+
+// ============================================
+// CLIENT AUTH
+// ============================================
+async function clientLogin(hotelCode, roomNumber, guestName) {
+  try {
+    const res = await fetch(`${API}/client/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hotel_code: hotelCode, room_number: roomNumber, guest_name: guestName })
+    });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || 'Connexion impossible', 'error'); return; }
+    state.clientToken = data.token;
+    state.client = data.client;
+    localStorage.setItem('wikot_client_token', data.token);
+    localStorage.setItem('wikot_client', JSON.stringify(data.client));
+    state.clientView = 'home';
+    showToast(`Bienvenue ${data.client.guest_name} !`, 'success');
+    render();
+  } catch (e) {
+    showToast('Erreur réseau', 'error');
+  }
+}
+
+function clientLogout() {
+  // Tenter logout serveur (silencieux)
+  if (state.clientToken) {
+    fetch(`${API}/client/logout`, { method: 'POST', headers: { 'Authorization': `Bearer ${state.clientToken}` } }).catch(() => {});
+  }
+  state.clientToken = null;
+  state.client = null;
+  state.clientView = 'home';
+  state.clientWikotConversations = [];
+  state.clientWikotCurrentConvId = null;
+  state.clientWikotMessages = [];
+  localStorage.removeItem('wikot_client_token');
+  localStorage.removeItem('wikot_client');
+  render();
+}
+
+function setLoginTab(tab) {
+  state.loginTab = tab;
+  render();
 }
 
 // ============================================
 // LOGIN PAGE
 // ============================================
 function renderLoginPage() {
+  const tab = state.loginTab || 'staff';
   return `
   <div class="min-h-screen bg-gradient-to-br from-navy-900 via-navy-800 to-navy-700 flex items-center justify-center p-4">
     <div class="w-full max-w-md">
@@ -475,34 +583,97 @@ function renderLoginPage() {
           <i class="fas fa-concierge-bell text-3xl text-white"></i>
         </div>
         <h1 class="text-4xl font-bold text-white tracking-tight">Wik<span class="text-brand-400">ot</span></h1>
-        <p class="text-navy-300 mt-2 text-sm">Gestion intelligente des procédures hôtelières</p>
+        <p class="text-navy-300 mt-2 text-sm">${tab === 'client' ? 'Votre concierge virtuel' : 'Gestion intelligente des procédures hôtelières'}</p>
       </div>
-      <div class="bg-white rounded-2xl shadow-2xl p-8 fade-in">
-        <h2 class="text-xl font-semibold text-navy-800 mb-6">Connexion</h2>
-        <form onsubmit="event.preventDefault(); login(document.getElementById('email').value, document.getElementById('password').value)">
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-navy-600 mb-1.5">Email</label>
-            <div class="relative">
-              <i class="fas fa-envelope absolute left-3 top-3 text-navy-300"></i>
-              <input id="email" type="email" required placeholder="votre@email.com" 
-                class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
-            </div>
-          </div>
-          <div class="mb-6">
-            <label class="block text-sm font-medium text-navy-600 mb-1.5">Mot de passe</label>
-            <div class="relative">
-              <i class="fas fa-lock absolute left-3 top-3 text-navy-300"></i>
-              <input id="password" type="password" required placeholder="••••••••" 
-                class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
-            </div>
-          </div>
-          <button type="submit" class="w-full bg-brand-400 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-lg transition-colors shadow-md">
-            <i class="fas fa-sign-in-alt mr-2"></i>Se connecter
+      <div class="bg-white rounded-2xl shadow-2xl overflow-hidden fade-in">
+        <!-- Tabs -->
+        <div class="flex border-b border-gray-200">
+          <button onclick="setLoginTab('staff')" class="flex-1 py-4 text-sm font-semibold transition-colors ${tab === 'staff' ? 'text-brand-500 border-b-2 border-brand-400 bg-brand-50' : 'text-gray-500 hover:bg-gray-50'}">
+            <i class="fas fa-user-tie mr-2"></i>Espace Équipe
           </button>
-        </form>
+          <button onclick="setLoginTab('client')" class="flex-1 py-4 text-sm font-semibold transition-colors ${tab === 'client' ? 'text-brand-500 border-b-2 border-brand-400 bg-brand-50' : 'text-gray-500 hover:bg-gray-50'}">
+            <i class="fas fa-bed mr-2"></i>Espace Client
+          </button>
+        </div>
+        <div class="p-8">
+          ${tab === 'staff' ? renderStaffLoginForm() : renderClientLoginForm()}
+        </div>
       </div>
     </div>
   </div>`;
+}
+
+function renderStaffLoginForm() {
+  return `
+    <h2 class="text-xl font-semibold text-navy-800 mb-1">Connexion Équipe</h2>
+    <p class="text-xs text-gray-500 mb-6">Réservée au personnel et à la direction de l'hôtel.</p>
+    <form onsubmit="event.preventDefault(); login(document.getElementById('email').value, document.getElementById('password').value)">
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Email</label>
+        <div class="relative">
+          <i class="fas fa-envelope absolute left-3 top-3 text-navy-300"></i>
+          <input id="email" type="email" required placeholder="votre@email.com"
+            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
+        </div>
+      </div>
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Mot de passe</label>
+        <div class="relative">
+          <i class="fas fa-lock absolute left-3 top-3 text-navy-300"></i>
+          <input id="password" type="password" required placeholder="••••••••"
+            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
+        </div>
+      </div>
+      <button type="submit" class="w-full bg-brand-400 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-lg transition-colors shadow-md">
+        <i class="fas fa-sign-in-alt mr-2"></i>Se connecter
+      </button>
+    </form>`;
+}
+
+function renderClientLoginForm() {
+  return `
+    <h2 class="text-xl font-semibold text-navy-800 mb-1">Bienvenue dans votre hôtel</h2>
+    <p class="text-xs text-gray-500 mb-6">Munissez-vous de la fiche présente dans votre chambre.</p>
+    <form onsubmit="event.preventDefault(); clientLogin(document.getElementById('client_hotel_code').value, document.getElementById('client_room_number').value, document.getElementById('client_guest_name').value)">
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">
+          <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-400 text-white text-[10px] font-bold mr-2">1</span>
+          Code de l'hôtel
+        </label>
+        <div class="relative">
+          <i class="fas fa-hotel absolute left-3 top-3 text-navy-300"></i>
+          <input id="client_hotel_code" type="text" required placeholder="Ex: GRDPARIS" autocomplete="off"
+            style="text-transform: uppercase; letter-spacing: 1px;"
+            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm font-mono">
+        </div>
+      </div>
+      <div class="mb-4">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">
+          <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-400 text-white text-[10px] font-bold mr-2">2</span>
+          Numéro de chambre
+        </label>
+        <div class="relative">
+          <i class="fas fa-door-open absolute left-3 top-3 text-navy-300"></i>
+          <input id="client_room_number" type="text" required placeholder="Ex: 12" autocomplete="off"
+            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
+        </div>
+      </div>
+      <div class="mb-6">
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">
+          <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-400 text-white text-[10px] font-bold mr-2">3</span>
+          Votre nom
+        </label>
+        <div class="relative">
+          <i class="fas fa-user absolute left-3 top-3 text-navy-300"></i>
+          <input id="client_guest_name" type="text" required placeholder="Ex: Dupont" autocomplete="off"
+            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
+        </div>
+        <p class="text-[11px] text-gray-400 mt-1.5"><i class="fas fa-info-circle mr-1"></i>Le nom utilisé lors de la réservation.</p>
+      </div>
+      <button type="submit" class="w-full bg-brand-400 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-lg transition-colors shadow-md">
+        <i class="fas fa-key mr-2"></i>Accéder à mon espace
+      </button>
+    </form>`;
 }
 
 // ============================================
@@ -525,18 +696,21 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else if (isAdmin) {
-    // Admin hôtel : Dashboard supprimé (peu pertinent), redirection par défaut sur Procédures
+    // Admin hôtel : accès complet à toutes les pages opérationnelles + paramètres
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
       { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
+      { id: 'rooms', icon: 'fa-door-closed', label: 'Chambres' },
+      { id: 'occupancy', icon: 'fa-id-card', label: 'Présents du jour' },
+      { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
+      { id: 'hotel-settings', icon: 'fa-gear', label: 'Paramètres hôtel' },
     ];
   } else {
-    // Employé : Wikot pour tous, Back Wikot uniquement si peut éditer procédures OU informations
-    // Pages "Rechercher" et "Historique" supprimées : Wikot remplit le rôle de recherche
+    // Employé : Wikot pour tous + items conditionnels selon permissions granulaires
     const canUseMax = userCanEditProcedures() || userCanEditInfo();
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
@@ -544,6 +718,13 @@ function renderMainLayout() {
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
+      ...(userCanEditClients() ? [
+        { id: 'rooms', icon: 'fa-door-closed', label: 'Chambres' },
+        { id: 'occupancy', icon: 'fa-id-card', label: 'Présents du jour' }
+      ] : []),
+      ...(userCanEditRestaurant() ? [
+        { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' }
+      ] : []),
     ];
   }
 
@@ -561,6 +742,10 @@ function renderMainLayout() {
     users: 'Utilisateurs',
     hotels: 'Hôtels',
     templates: 'Modèles',
+    rooms: 'Chambres',
+    occupancy: 'Présents du jour',
+    restaurant: 'Restaurant',
+    'hotel-settings': 'Paramètres hôtel',
   };
   const currentTitle = viewTitles[state.currentView] || 'Wikot';
 
@@ -767,6 +952,10 @@ function renderCurrentView() {
     case 'hotels': return renderHotelsView();
     case 'templates': return renderTemplatesView();
     case 'procedure-detail': return renderProcedureDetail();
+    case 'rooms': return renderRoomsView();
+    case 'occupancy': return renderOccupancyView();
+    case 'restaurant': return renderRestaurantView();
+    case 'hotel-settings': return renderHotelSettingsView();
     default:
       return (state.user && state.user.role === 'super_admin') ? renderDashboard() : renderProceduresList();
   }
@@ -5447,6 +5636,1077 @@ window.addEventListener('popstate', (e) => {
     : { view: 'dashboard' };
   restoreFromHistory(e.state || fallback);
 });
+
+// ============================================
+// VIEW: ROOMS — gestion des chambres (admin/permission can_edit_clients)
+// ============================================
+async function loadRooms() {
+  const data = await api('/rooms');
+  if (data) state.rooms = data.rooms || [];
+}
+
+function renderRoomsView() {
+  // Lazy load : on déclenche le chargement si pas encore fait
+  if (!state._roomsLoaded) {
+    state._roomsLoaded = true;
+    loadRooms().then(() => render());
+    return `<div class="text-center py-12 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl mb-2"></i><p>Chargement des chambres...</p></div>`;
+  }
+  if (!userCanEditClients() && state.user.role !== 'admin') {
+    return `<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800">Vous n'avez pas la permission de gérer les chambres.</div>`;
+  }
+  const canEdit = userCanEditClients();
+  return `
+  <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h2 class="text-2xl font-bold text-navy-800"><i class="fas fa-door-closed text-brand-400 mr-2"></i>Chambres</h2>
+      <p class="text-sm text-gray-500 mt-1">${state.rooms.length} chambre(s) · ${state.rooms.filter(r => r.is_active).length} active(s)</p>
+    </div>
+    ${canEdit ? `<button onclick="showRoomModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-plus mr-2"></i>Nouvelle chambre</button>` : ''}
+  </div>
+  <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <div class="table-scroll-wrapper">
+      <table class="min-w-full text-sm">
+        <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+          <tr>
+            <th class="px-4 py-3 text-left">Numéro</th>
+            <th class="px-4 py-3 text-left">Étage</th>
+            <th class="px-4 py-3 text-left">Capacité</th>
+            <th class="px-4 py-3 text-left">Client actuel</th>
+            <th class="px-4 py-3 text-left">Statut</th>
+            ${canEdit ? '<th class="px-4 py-3 text-right">Actions</th>' : ''}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          ${state.rooms.length === 0 ? `<tr><td colspan="${canEdit ? 6 : 5}" class="px-4 py-8 text-center text-gray-400">Aucune chambre. Créez la première !</td></tr>` : state.rooms.map(r => `
+            <tr class="hover:bg-gray-50">
+              <td class="px-4 py-3 font-bold text-navy-800">${escapeHtml(r.room_number)}</td>
+              <td class="px-4 py-3 text-gray-600">${escapeHtml(r.floor || '—')}</td>
+              <td class="px-4 py-3 text-gray-600">${r.capacity || 2} pers.</td>
+              <td class="px-4 py-3">
+                ${r.current_guest ? `<span class="font-medium text-navy-800">${escapeHtml(r.current_guest)}</span>` : '<span class="text-gray-400 italic">Libre</span>'}
+                ${r.checkout_date ? `<div class="text-[11px] text-gray-500">Départ: ${r.checkout_date}</div>` : ''}
+              </td>
+              <td class="px-4 py-3">
+                ${r.is_active ? '<span class="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded">Active</span>' : '<span class="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">Désactivée</span>'}
+              </td>
+              ${canEdit ? `<td class="px-4 py-3 text-right">
+                <button onclick="showRoomModal(${r.id})" class="text-blue-500 hover:text-blue-700 mr-3" title="Modifier"><i class="fas fa-pen"></i></button>
+                <button onclick="deleteRoom(${r.id}, '${escapeHtml(r.room_number).replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700" title="Supprimer"><i class="fas fa-trash"></i></button>
+              </td>` : ''}
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+function showRoomModal(roomId = null) {
+  const room = roomId ? state.rooms.find(r => r.id === roomId) : null;
+  const isEdit = !!room;
+  const html = `
+  <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center" onclick="if(event.target===this) closeModal()">
+    <div class="modal-panel bg-white w-full sm:max-w-md">
+      <div class="modal-header bg-brand-400 text-white px-5 py-3 flex items-center justify-between">
+        <h3 class="font-semibold"><i class="fas fa-door-closed mr-2"></i>${isEdit ? 'Modifier' : 'Créer'} une chambre</h3>
+        <button onclick="closeModal()" class="text-white/80 hover:text-white"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body p-5 space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-navy-700 mb-1">Numéro de chambre *</label>
+          <input id="room_number" type="text" required value="${room ? escapeHtml(room.room_number) : ''}" placeholder="Ex: 101" class="w-full px-3 py-2 border border-gray-200 rounded-lg form-input-mobile">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-navy-700 mb-1">Étage</label>
+          <input id="room_floor" type="text" value="${room ? escapeHtml(room.floor || '') : ''}" placeholder="Ex: 1er, RDC" class="w-full px-3 py-2 border border-gray-200 rounded-lg form-input-mobile">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-navy-700 mb-1">Capacité (pers.)</label>
+          <input id="room_capacity" type="number" min="1" max="10" value="${room ? (room.capacity || 2) : 2}" class="w-full px-3 py-2 border border-gray-200 rounded-lg form-input-mobile">
+        </div>
+        ${isEdit ? `<div class="flex items-center gap-2"><input id="room_active" type="checkbox" ${room.is_active ? 'checked' : ''}><label for="room_active" class="text-sm text-navy-700">Chambre active</label></div>` : ''}
+        <div class="flex justify-end gap-2 pt-2">
+          <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Annuler</button>
+          <button onclick="saveRoom(${roomId || 'null'})" class="px-4 py-2 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded-lg font-semibold">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+}
+
+async function saveRoom(roomId) {
+  const room_number = document.getElementById('room_number').value.trim();
+  const floor = document.getElementById('room_floor').value.trim();
+  const capacity = parseInt(document.getElementById('room_capacity').value) || 2;
+  if (!room_number) { showToast('Numéro de chambre requis', 'error'); return; }
+  const body = { room_number, floor, capacity };
+  if (roomId) {
+    const activeEl = document.getElementById('room_active');
+    if (activeEl) body.is_active = activeEl.checked ? 1 : 0;
+    const data = await api(`/rooms/${roomId}`, { method: 'PUT', body: JSON.stringify(body) });
+    if (data) { showToast('Chambre modifiée', 'success'); closeModal(); await loadRooms(); render(); }
+  } else {
+    const data = await api('/rooms', { method: 'POST', body: JSON.stringify(body) });
+    if (data) { showToast('Chambre créée', 'success'); closeModal(); await loadRooms(); render(); }
+  }
+}
+
+async function deleteRoom(roomId, label) {
+  if (!confirm(`Supprimer la chambre ${label} ? Le compte client associé sera également supprimé.`)) return;
+  const data = await api(`/rooms/${roomId}`, { method: 'DELETE' });
+  if (data) { showToast('Chambre supprimée', 'success'); await loadRooms(); render(); }
+}
+
+// ============================================
+// VIEW: OCCUPANCY — Présents du jour (saisie 12h00 + impression fiches)
+// ============================================
+async function loadOccupancy() {
+  const data = await api('/occupancy/today');
+  if (data) {
+    state.occupancyToday = data;
+    state.occupancyEntries = {};
+    for (const room of (data.rooms || [])) {
+      state.occupancyEntries[room.room_id] = {
+        guest_name: room.guest_name || '',
+        checkout_date: room.checkout_date || ''
+      };
+    }
+  }
+}
+
+function renderOccupancyView() {
+  if (!state._occupancyLoaded) {
+    state._occupancyLoaded = true;
+    loadOccupancy().then(() => render());
+    return `<div class="text-center py-12 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl mb-2"></i><p>Chargement...</p></div>`;
+  }
+  if (!userCanEditClients()) {
+    return `<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800">Permission requise.</div>`;
+  }
+  const data = state.occupancyToday;
+  if (!data) return `<div class="text-gray-500">Chargement...</div>`;
+  const today = data.today;
+  const hotel = data.hotel || {};
+  const rooms = data.rooms || [];
+  const occupied = rooms.filter(r => r.is_active === 1).length;
+
+  // Date de checkout par défaut : J+1
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+
+  return `
+  <div class="mb-6">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <h2 class="text-2xl font-bold text-navy-800"><i class="fas fa-id-card text-brand-400 mr-2"></i>Présents du jour</h2>
+        <p class="text-sm text-gray-500 mt-1">Saisie quotidienne à 12h00 — ${occupied}/${rooms.length} chambre(s) occupée(s)</p>
+        <p class="text-xs text-gray-400 mt-1">Date : <span class="font-mono">${today}</span> · Code hôtel : <span class="font-mono font-bold text-brand-500">${hotel.client_login_code || '— (à définir dans Paramètres)'}</span></p>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button onclick="printOccupancyCards()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-print mr-2"></i>Imprimer les fiches</button>
+        <button onclick="saveOccupancyDay()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-save mr-2"></i>Enregistrer la journée</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-5 text-sm text-blue-800">
+    <i class="fas fa-info-circle mr-2"></i>
+    <strong>Comment ça marche :</strong> Pour chaque chambre, saisissez le nom du client + date de départ. Le nom devient automatiquement son mot de passe pour se connecter à Wikot depuis sa chambre. Une chambre laissée vide est considérée comme libre. Cliquez sur <strong>Enregistrer la journée</strong> pour valider tout d'un coup.
+  </div>
+
+  <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3">
+      ${rooms.length === 0 ? `<div class="col-span-full text-center py-12 text-gray-400">Aucune chambre. Allez dans <strong>Chambres</strong> pour en créer.</div>` : rooms.map(r => {
+        const entry = state.occupancyEntries[r.room_id] || { guest_name: '', checkout_date: '' };
+        const isOccupied = r.is_active === 1;
+        return `
+        <div class="border ${isOccupied ? 'border-brand-300 bg-brand-50/40' : 'border-gray-200'} rounded-lg p-3">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-bold text-navy-800 text-lg">Ch. ${escapeHtml(r.room_number)}</span>
+            ${isOccupied ? '<span class="text-[10px] bg-brand-400 text-white px-2 py-0.5 rounded-full font-semibold">OCCUPÉE</span>' : '<span class="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">LIBRE</span>'}
+          </div>
+          <div class="space-y-2">
+            <div>
+              <label class="block text-[11px] font-medium text-gray-600 mb-1">Nom du client (= mot de passe)</label>
+              <input type="text" value="${escapeHtml(entry.guest_name)}" oninput="state.occupancyEntries[${r.room_id}].guest_name = this.value"
+                placeholder="Ex: Dupont"
+                class="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm form-input-mobile">
+            </div>
+            <div>
+              <label class="block text-[11px] font-medium text-gray-600 mb-1">Date de départ</label>
+              <input type="date" value="${entry.checkout_date || tomorrowStr}" oninput="state.occupancyEntries[${r.room_id}].checkout_date = this.value"
+                class="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm form-input-mobile">
+            </div>
+            ${isOccupied ? `<button onclick="clearRoomOccupancy(${r.room_id})" class="w-full text-xs text-red-500 hover:bg-red-50 py-1 rounded"><i class="fas fa-eraser mr-1"></i>Marquer libre</button>` : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+async function saveOccupancyDay() {
+  const entries = [];
+  for (const [room_id, e] of Object.entries(state.occupancyEntries)) {
+    const name = (e.guest_name || '').trim();
+    if (name) {
+      entries.push({ room_id: parseInt(room_id), guest_name: name, checkout_date: e.checkout_date || null, action: 'set' });
+    } else {
+      entries.push({ room_id: parseInt(room_id), action: 'clear' });
+    }
+  }
+  const data = await api('/occupancy/day', { method: 'POST', body: JSON.stringify({ entries }) });
+  if (data) {
+    showToast('Journée enregistrée — mots de passe clients à jour', 'success');
+    state._occupancyLoaded = false;
+    await loadOccupancy();
+    render();
+  }
+}
+
+async function clearRoomOccupancy(roomId) {
+  if (!confirm('Marquer cette chambre comme libre ? Le compte client sera désactivé et toutes les sessions actives fermées.')) return;
+  const data = await api(`/occupancy/room/${roomId}`, { method: 'POST', body: JSON.stringify({ action: 'clear' }) });
+  if (data) {
+    showToast('Chambre libérée', 'success');
+    state._occupancyLoaded = false;
+    await loadOccupancy();
+    render();
+  }
+}
+
+async function printOccupancyCards() {
+  const data = await api('/occupancy/print-cards');
+  if (!data) return;
+  const hotel = data.hotel;
+  const rooms = (data.rooms || []).filter(r => r.is_active === 1 && r.guest_name);
+  if (rooms.length === 0) { showToast('Aucune chambre occupée à imprimer', 'warning'); return; }
+
+  // Génère un HTML imprimable avec une page A4 contenant 4 fiches A6
+  const html = `
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Fiches Wikot — ${escapeHtml(hotel.name)}</title>
+<style>
+  @page { size: A4; margin: 8mm; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; background: white; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
+  .card { border: 2px dashed #d97706; border-radius: 6mm; padding: 8mm 6mm; page-break-inside: avoid; min-height: 130mm; display: flex; flex-direction: column; justify-content: space-between; }
+  .header { text-align: center; }
+  .hotel-name { font-size: 14pt; font-weight: bold; color: #1e3a5f; }
+  .subtitle { font-size: 9pt; color: #888; margin-top: 2mm; }
+  .step { margin-top: 5mm; padding: 4mm; background: #fef3e2; border-left: 4px solid #d97706; border-radius: 2mm; }
+  .step-num { display: inline-block; width: 8mm; height: 8mm; background: #d97706; color: white; border-radius: 50%; text-align: center; line-height: 8mm; font-weight: bold; font-size: 11pt; margin-right: 3mm; }
+  .step-label { font-size: 9pt; color: #555; }
+  .step-value { font-family: 'Courier New', monospace; font-size: 18pt; font-weight: bold; color: #1e3a5f; letter-spacing: 1px; margin-top: 1mm; word-break: break-word; }
+  .footer { text-align: center; font-size: 8pt; color: #999; margin-top: 4mm; }
+  .room-badge { display: inline-block; background: #1e3a5f; color: white; padding: 2mm 4mm; border-radius: 3mm; font-size: 11pt; font-weight: bold; }
+  @media print { .no-print { display: none; } }
+</style>
+</head>
+<body>
+<div class="no-print" style="padding: 10mm; background: #f0f0f0; text-align: center;">
+  <button onclick="window.print()" style="padding: 8px 20px; background: #d97706; color: white; border: none; border-radius: 4px; font-size: 14px; cursor: pointer;">🖨️ Imprimer ces ${rooms.length} fiches</button>
+  <p style="font-size: 12px; color: #666; margin-top: 8px;">Chaque fiche fait une demi-page A4 — idéale pour plastification A5.</p>
+</div>
+<div class="grid">
+${rooms.map(r => `
+  <div class="card">
+    <div class="header">
+      <div class="hotel-name">${escapeHtml(hotel.name)}</div>
+      <div class="subtitle">Connectez-vous à votre concierge virtuel</div>
+      <div style="margin-top: 4mm;"><span class="room-badge">Chambre ${escapeHtml(r.room_number)}</span></div>
+    </div>
+    <div>
+      <div class="step">
+        <span class="step-num">1</span><span class="step-label">Code de l'hôtel</span>
+        <div class="step-value">${escapeHtml(hotel.client_login_code || '???')}</div>
+      </div>
+      <div class="step">
+        <span class="step-num">2</span><span class="step-label">Numéro de chambre</span>
+        <div class="step-value">${escapeHtml(r.room_number)}</div>
+      </div>
+      <div class="step">
+        <span class="step-num">3</span><span class="step-label">Votre nom (mot de passe)</span>
+        <div class="step-value">${escapeHtml(r.guest_name || '???')}</div>
+      </div>
+    </div>
+    <div class="footer">Wikot — votre concierge virtuel · accès 24h/24 jusqu'à votre départ</div>
+  </div>
+`).join('')}
+</div>
+</body>
+</html>`;
+  const w = window.open('', '_blank');
+  if (!w) { showToast('Bloquez-pop-ups : autorisez les fenêtres pop-up pour imprimer', 'warning'); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
+// ============================================
+// VIEW: RESTAURANT — planning + dashboard réservations
+// ============================================
+async function loadRestaurantData() {
+  const today = new Date().toISOString().slice(0, 10);
+  const fortnight = new Date(); fortnight.setDate(fortnight.getDate() + 13);
+  const to = fortnight.toISOString().slice(0, 10);
+  state.restaurantDashboardFrom = state.restaurantDashboardFrom || today;
+  state.restaurantDashboardTo = state.restaurantDashboardTo || to;
+  const [sched, exc, dash, resa] = await Promise.all([
+    api('/restaurant/schedule'),
+    api('/restaurant/exceptions'),
+    api(`/restaurant/dashboard?from=${state.restaurantDashboardFrom}&to=${state.restaurantDashboardTo}`),
+    api(`/restaurant/reservations?from=${state.restaurantDashboardFrom}&to=${state.restaurantDashboardTo}`)
+  ]);
+  if (sched) state.restaurantSchedule = sched.schedule || [];
+  if (exc) state.restaurantExceptions = exc.exceptions || [];
+  if (dash) state.restaurantDashboard = dash;
+  if (resa) state.restaurantReservations = resa.reservations || [];
+}
+
+function renderRestaurantView() {
+  if (!state._restaurantLoaded) {
+    state._restaurantLoaded = true;
+    loadRestaurantData().then(() => render());
+    return `<div class="text-center py-12 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl mb-2"></i><p>Chargement...</p></div>`;
+  }
+  const tab = state.restaurantTab || 'dashboard';
+  return `
+  <div class="mb-6">
+    <h2 class="text-2xl font-bold text-navy-800"><i class="fas fa-utensils text-brand-400 mr-2"></i>Restaurant</h2>
+    <p class="text-sm text-gray-500 mt-1">Planning hebdomadaire, exceptions et tableau de bord des réservations.</p>
+  </div>
+  <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <div class="border-b border-gray-200 flex flex-wrap">
+      <button onclick="state.restaurantTab='dashboard'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'dashboard' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-chart-column mr-1"></i> Tableau de bord</button>
+      <button onclick="state.restaurantTab='reservations'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'reservations' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-list mr-1"></i> Réservations</button>
+      <button onclick="state.restaurantTab='schedule'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'schedule' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-calendar-week mr-1"></i> Planning</button>
+      <button onclick="state.restaurantTab='exceptions'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'exceptions' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-calendar-xmark mr-1"></i> Exceptions</button>
+    </div>
+    <div class="p-5">
+      ${tab === 'dashboard' ? renderRestaurantDashboard()
+        : tab === 'reservations' ? renderRestaurantReservations()
+        : tab === 'schedule' ? renderRestaurantSchedule()
+        : renderRestaurantExceptions()}
+    </div>
+  </div>`;
+}
+
+function renderRestaurantDashboard() {
+  const d = state.restaurantDashboard;
+  if (!d) return '<div class="text-gray-500">Chargement...</div>';
+  const stats = d.stats || [];
+  const cap = d.capacityMap || {};
+  // Construire la liste de jours
+  const days = [];
+  const start = new Date(d.from + 'T00:00:00Z');
+  const end = new Date(d.to + 'T00:00:00Z');
+  for (let dt = new Date(start); dt <= end; dt.setUTCDate(dt.getUTCDate() + 1)) {
+    days.push(dt.toISOString().slice(0, 10));
+  }
+  const meals = ['breakfast', 'lunch', 'dinner'];
+  const mealLabels = { breakfast: '☕ Petit-déj', lunch: '🍽️ Déjeuner', dinner: '🍷 Dîner' };
+  const mealColors = { breakfast: 'bg-amber-400', lunch: 'bg-orange-400', dinner: 'bg-rose-400' };
+  // Index stats
+  const statsMap = {};
+  for (const s of stats) statsMap[`${s.reservation_date}|${s.meal_type}`] = s;
+  // Totaux
+  const totalGuests = stats.reduce((acc, s) => acc + parseInt(s.total_guests || 0), 0);
+  const totalBookings = stats.reduce((acc, s) => acc + parseInt(s.bookings || 0), 0);
+
+  return `
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+    <div class="bg-amber-50 border border-amber-100 rounded-lg p-4">
+      <div class="text-xs text-amber-700 uppercase tracking-wide font-semibold">Période</div>
+      <div class="text-sm font-bold text-amber-900 mt-1">${d.from} → ${d.to}</div>
+    </div>
+    <div class="bg-blue-50 border border-blue-100 rounded-lg p-4">
+      <div class="text-xs text-blue-700 uppercase tracking-wide font-semibold">Réservations</div>
+      <div class="text-2xl font-bold text-blue-900">${totalBookings}</div>
+    </div>
+    <div class="bg-green-50 border border-green-100 rounded-lg p-4">
+      <div class="text-xs text-green-700 uppercase tracking-wide font-semibold">Couverts totaux</div>
+      <div class="text-2xl font-bold text-green-900">${totalGuests}</div>
+    </div>
+  </div>
+  <div class="space-y-3">
+    ${days.map(day => {
+      const dayName = new Date(day + 'T00:00:00Z').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+      return `
+      <div class="border border-gray-200 rounded-lg p-3">
+        <div class="font-semibold text-navy-800 text-sm mb-2">${dayName}</div>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          ${meals.map(m => {
+            const k = `${day}|${m}`;
+            const s = statsMap[k];
+            const guests = s ? parseInt(s.total_guests) : 0;
+            const capacity = cap[k] || 0;
+            const ratio = capacity > 0 ? Math.min(100, (guests / capacity) * 100) : 0;
+            const isClosed = capacity === 0;
+            return `
+            <div class="bg-gray-50 rounded p-2 ${isClosed ? 'opacity-50' : ''}">
+              <div class="flex items-center justify-between text-xs">
+                <span class="font-medium">${mealLabels[m]}</span>
+                <span class="text-gray-600">${guests}/${capacity || '—'}</span>
+              </div>
+              ${isClosed ? '<div class="text-[10px] text-gray-400 italic mt-1">Fermé</div>' : `
+              <div class="w-full bg-gray-200 rounded-full h-2 mt-1.5">
+                <div class="${mealColors[m]} h-2 rounded-full transition-all" style="width: ${ratio}%"></div>
+              </div>
+              <div class="text-[10px] text-gray-500 mt-0.5">${Math.round(ratio)}% rempli</div>
+              `}
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function renderRestaurantReservations() {
+  const reservations = state.restaurantReservations || [];
+  const mealLabels = { breakfast: 'Petit-déj', lunch: 'Déjeuner', dinner: 'Dîner' };
+  const canEdit = userCanEditRestaurant();
+  return `
+  <div class="flex justify-between items-center mb-3">
+    <p class="text-sm text-gray-500">${reservations.length} réservation(s) du ${state.restaurantDashboardFrom} au ${state.restaurantDashboardTo}</p>
+    ${canEdit ? `<button onclick="showStaffReservationModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Ajouter</button>` : ''}
+  </div>
+  <div class="table-scroll-wrapper">
+    <table class="min-w-full text-sm">
+      <thead class="bg-gray-50 text-xs uppercase text-gray-500">
+        <tr>
+          <th class="px-3 py-2 text-left">Date</th>
+          <th class="px-3 py-2 text-left">Repas</th>
+          <th class="px-3 py-2 text-left">Heure</th>
+          <th class="px-3 py-2 text-left">Pers.</th>
+          <th class="px-3 py-2 text-left">Chambre</th>
+          <th class="px-3 py-2 text-left">Nom</th>
+          <th class="px-3 py-2 text-left">Notes</th>
+          ${canEdit ? '<th></th>' : ''}
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        ${reservations.length === 0 ? `<tr><td colspan="${canEdit ? 8 : 7}" class="px-3 py-8 text-center text-gray-400">Aucune réservation</td></tr>` : reservations.map(r => `
+          <tr class="hover:bg-gray-50">
+            <td class="px-3 py-2 font-medium">${r.reservation_date}</td>
+            <td class="px-3 py-2">${mealLabels[r.meal_type] || r.meal_type}</td>
+            <td class="px-3 py-2 font-mono text-xs">${r.time_slot || '—'}</td>
+            <td class="px-3 py-2 text-center">${r.guest_count}</td>
+            <td class="px-3 py-2">${r.room_number ? `Ch. ${escapeHtml(r.room_number)}` : '<span class="text-gray-400">—</span>'}</td>
+            <td class="px-3 py-2">${escapeHtml(r.guest_name || r.client_guest_name || '—')}</td>
+            <td class="px-3 py-2 text-gray-500 text-xs">${escapeHtml((r.notes || '').slice(0, 40))}</td>
+            ${canEdit ? `<td class="px-3 py-2 text-right"><button onclick="cancelStaffReservation(${r.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-times"></i></button></td>` : ''}
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function renderRestaurantSchedule() {
+  const sched = state.restaurantSchedule || [];
+  const days = ['Dim.', 'Lun.', 'Mar.', 'Mer.', 'Jeu.', 'Ven.', 'Sam.'];
+  const mealLabels = { breakfast: '☕ Petit-déj', lunch: '🍽️ Déjeuner', dinner: '🍷 Dîner' };
+  const meals = ['breakfast', 'lunch', 'dinner'];
+  const map = {};
+  for (const s of sched) map[`${s.weekday}|${s.meal_type}`] = s;
+  const canEdit = userCanEditRestaurant();
+  return `
+  <p class="text-sm text-gray-500 mb-3">Planning hebdomadaire — ouverture, horaires et capacités par défaut.</p>
+  <div class="space-y-3">
+    ${days.map((dayName, weekday) => `
+      <div class="border border-gray-200 rounded-lg p-3">
+        <div class="font-semibold text-navy-800 text-sm mb-2">${dayName}</div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+          ${meals.map(m => {
+            const s = map[`${weekday}|${m}`];
+            if (!s) return `<div class="bg-gray-50 rounded p-2 text-xs text-gray-400">${mealLabels[m]} — non configuré</div>`;
+            return `
+            <div class="bg-gray-50 rounded p-3">
+              <div class="flex items-center justify-between text-xs font-medium mb-2">
+                <span>${mealLabels[m]}</span>
+                <label class="flex items-center gap-1 text-[10px]">
+                  <input type="checkbox" ${s.is_open ? 'checked' : ''} ${canEdit ? '' : 'disabled'} onchange="updateScheduleField(${s.id}, 'is_open', this.checked ? 1 : 0)">
+                  Ouvert
+                </label>
+              </div>
+              <div class="grid grid-cols-3 gap-1 text-xs">
+                <input type="time" value="${s.open_time || ''}" ${canEdit ? '' : 'disabled'} onchange="updateScheduleField(${s.id}, 'open_time', this.value)" class="px-1 py-1 border rounded text-[11px]" placeholder="Début">
+                <input type="time" value="${s.close_time || ''}" ${canEdit ? '' : 'disabled'} onchange="updateScheduleField(${s.id}, 'close_time', this.value)" class="px-1 py-1 border rounded text-[11px]" placeholder="Fin">
+                <input type="number" min="0" value="${s.capacity || 0}" ${canEdit ? '' : 'disabled'} onchange="updateScheduleField(${s.id}, 'capacity', parseInt(this.value)||0)" class="px-1 py-1 border rounded text-[11px]" placeholder="Cap.">
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+async function updateScheduleField(id, field, value) {
+  const body = {}; body[field] = value;
+  const data = await api(`/restaurant/schedule/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+  if (data) {
+    showToast('Planning mis à jour', 'success');
+    // Met à jour l'état local sans recharger toute la vue
+    const s = state.restaurantSchedule.find(x => x.id === id);
+    if (s) s[field] = value;
+  }
+}
+
+function renderRestaurantExceptions() {
+  const exc = state.restaurantExceptions || [];
+  const mealLabels = { breakfast: 'Petit-déj', lunch: 'Déjeuner', dinner: 'Dîner' };
+  const canEdit = userCanEditRestaurant();
+  return `
+  <div class="flex justify-between items-center mb-3">
+    <p class="text-sm text-gray-500">Exceptions ponctuelles (jours fériés, événements privés…)</p>
+    ${canEdit ? `<button onclick="showExceptionModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Ajouter</button>` : ''}
+  </div>
+  <div class="space-y-2">
+    ${exc.length === 0 ? '<div class="text-center py-8 text-gray-400">Aucune exception programmée.</div>' : exc.map(e => `
+      <div class="border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+        <div class="flex-1">
+          <div class="font-semibold text-navy-800 text-sm">${e.exception_date} — ${mealLabels[e.meal_type]}</div>
+          <div class="text-xs text-gray-500">${e.is_open ? `Ouvert ${e.open_time || ''}–${e.close_time || ''} · capacité ${e.capacity || '—'}` : 'Fermé'}${e.notes ? ' · ' + escapeHtml(e.notes) : ''}</div>
+        </div>
+        ${canEdit ? `<button onclick="deleteException(${e.id})" class="text-red-500 hover:text-red-700"><i class="fas fa-trash"></i></button>` : ''}
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+function showExceptionModal() {
+  const today = new Date().toISOString().slice(0, 10);
+  const html = `
+  <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center" onclick="if(event.target===this) closeModal()">
+    <div class="modal-panel bg-white w-full sm:max-w-md">
+      <div class="modal-header bg-brand-400 text-white px-5 py-3"><h3 class="font-semibold">Nouvelle exception</h3></div>
+      <div class="modal-body p-5 space-y-3">
+        <div><label class="block text-sm mb-1">Date</label><input id="exc_date" type="date" min="${today}" value="${today}" class="w-full px-3 py-2 border rounded form-input-mobile"></div>
+        <div><label class="block text-sm mb-1">Repas</label><select id="exc_meal" class="w-full px-3 py-2 border rounded form-input-mobile"><option value="breakfast">Petit-déj</option><option value="lunch">Déjeuner</option><option value="dinner">Dîner</option></select></div>
+        <div class="flex items-center gap-2"><input id="exc_open" type="checkbox"><label for="exc_open" class="text-sm">Ouvert (sinon = service annulé)</label></div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="block text-xs mb-1">Début</label><input id="exc_start" type="time" class="w-full px-2 py-1 border rounded text-sm"></div>
+          <div><label class="block text-xs mb-1">Fin</label><input id="exc_end" type="time" class="w-full px-2 py-1 border rounded text-sm"></div>
+        </div>
+        <div><label class="block text-xs mb-1">Capacité</label><input id="exc_cap" type="number" min="0" class="w-full px-2 py-1 border rounded text-sm" placeholder="Ex: 20"></div>
+        <div><label class="block text-xs mb-1">Notes</label><input id="exc_notes" type="text" class="w-full px-2 py-1 border rounded text-sm" placeholder="Ex: Mariage privé"></div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button onclick="closeModal()" class="px-3 py-1.5 text-sm text-gray-600 rounded hover:bg-gray-100">Annuler</button>
+          <button onclick="saveException()" class="px-3 py-1.5 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+}
+
+async function saveException() {
+  const body = {
+    exception_date: document.getElementById('exc_date').value,
+    meal_type: document.getElementById('exc_meal').value,
+    is_open: document.getElementById('exc_open').checked,
+    open_time: document.getElementById('exc_start').value || null,
+    close_time: document.getElementById('exc_end').value || null,
+    capacity: parseInt(document.getElementById('exc_cap').value) || null,
+    notes: document.getElementById('exc_notes').value || null
+  };
+  const data = await api('/restaurant/exceptions', { method: 'POST', body: JSON.stringify(body) });
+  if (data) { showToast('Exception ajoutée', 'success'); closeModal(); state._restaurantLoaded = false; await loadRestaurantData(); render(); }
+}
+
+async function deleteException(id) {
+  if (!confirm('Supprimer cette exception ?')) return;
+  const data = await api(`/restaurant/exceptions/${id}`, { method: 'DELETE' });
+  if (data) { showToast('Exception supprimée', 'success'); state._restaurantLoaded = false; await loadRestaurantData(); render(); }
+}
+
+function showStaffReservationModal() {
+  const today = new Date().toISOString().slice(0, 10);
+  const html = `
+  <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center" onclick="if(event.target===this) closeModal()">
+    <div class="modal-panel bg-white w-full sm:max-w-md">
+      <div class="modal-header bg-brand-400 text-white px-5 py-3"><h3 class="font-semibold">Nouvelle réservation</h3></div>
+      <div class="modal-body p-5 space-y-3">
+        <div><label class="block text-sm mb-1">Date</label><input id="resa_date" type="date" min="${today}" value="${today}" class="w-full px-3 py-2 border rounded form-input-mobile"></div>
+        <div><label class="block text-sm mb-1">Repas</label><select id="resa_meal" class="w-full px-3 py-2 border rounded form-input-mobile"><option value="breakfast">Petit-déj</option><option value="lunch">Déjeuner</option><option value="dinner">Dîner</option></select></div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="block text-xs mb-1">Heure souhaitée</label><input id="resa_time" type="time" class="w-full px-2 py-1 border rounded text-sm"></div>
+          <div><label class="block text-xs mb-1">Personnes</label><input id="resa_count" type="number" min="1" max="20" value="2" class="w-full px-2 py-1 border rounded text-sm"></div>
+        </div>
+        <div><label class="block text-xs mb-1">Nom du client</label><input id="resa_name" type="text" class="w-full px-3 py-2 border rounded text-sm" placeholder="Ex: M. Dupont"></div>
+        <div><label class="block text-xs mb-1">Notes</label><input id="resa_notes" type="text" class="w-full px-3 py-2 border rounded text-sm" placeholder="Allergies, demandes spéciales…"></div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button onclick="closeModal()" class="px-3 py-1.5 text-sm text-gray-600 rounded hover:bg-gray-100">Annuler</button>
+          <button onclick="saveStaffReservation()" class="px-3 py-1.5 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded">Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+}
+
+async function saveStaffReservation() {
+  const body = {
+    reservation_date: document.getElementById('resa_date').value,
+    meal_type: document.getElementById('resa_meal').value,
+    time_slot: document.getElementById('resa_time').value || null,
+    guest_count: parseInt(document.getElementById('resa_count').value) || 1,
+    guest_name: document.getElementById('resa_name').value || null,
+    notes: document.getElementById('resa_notes').value || null
+  };
+  const data = await api('/restaurant/reservations', { method: 'POST', body: JSON.stringify(body) });
+  if (data) { showToast('Réservation enregistrée', 'success'); closeModal(); state._restaurantLoaded = false; await loadRestaurantData(); render(); }
+}
+
+async function cancelStaffReservation(id) {
+  if (!confirm('Annuler cette réservation ?')) return;
+  const data = await api(`/restaurant/reservations/${id}`, { method: 'DELETE' });
+  if (data) { showToast('Réservation annulée', 'success'); state._restaurantLoaded = false; await loadRestaurantData(); render(); }
+}
+
+// ============================================
+// VIEW: HOTEL SETTINGS — code client + capacités resto
+// ============================================
+async function loadHotelSettings() {
+  const id = state.user.hotel_id;
+  if (!id) return;
+  const data = await api(`/hotels/${id}/settings`);
+  if (data) state.hotelSettings = data.hotel;
+}
+
+function renderHotelSettingsView() {
+  if (!state._hotelSettingsLoaded) {
+    state._hotelSettingsLoaded = true;
+    loadHotelSettings().then(() => render());
+    return `<div class="text-center py-12 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl mb-2"></i><p>Chargement...</p></div>`;
+  }
+  if (state.user.role !== 'admin' && state.user.role !== 'super_admin') {
+    return `<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800">Réservé aux administrateurs.</div>`;
+  }
+  const h = state.hotelSettings || {};
+  return `
+  <div class="mb-6">
+    <h2 class="text-2xl font-bold text-navy-800"><i class="fas fa-gear text-brand-400 mr-2"></i>Paramètres de l'hôtel</h2>
+    <p class="text-sm text-gray-500 mt-1">${escapeHtml(h.name || '')}</p>
+  </div>
+  <div class="bg-white rounded-xl shadow-sm p-6 max-w-2xl space-y-5">
+    <div>
+      <label class="block text-sm font-semibold text-navy-700 mb-1">Code de connexion client</label>
+      <p class="text-xs text-gray-500 mb-2">Code court (3-12 caractères, lettres et chiffres) que vos clients tapent pour se connecter à Wikot. Ce code sera imprimé sur les fiches plastifiées.</p>
+      <div class="flex gap-2">
+        <input id="hotel_code" type="text" value="${escapeHtml(h.client_login_code || '')}" placeholder="Ex: GRDPARIS"
+          style="text-transform: uppercase; letter-spacing: 1px;"
+          class="flex-1 px-3 py-2 border border-gray-200 rounded-lg form-input-mobile font-mono font-bold text-brand-500">
+        <button onclick="saveHotelCode()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-save mr-1"></i>Sauver</button>
+      </div>
+    </div>
+    <div class="border-t border-gray-200 pt-4">
+      <h3 class="font-semibold text-navy-700 mb-3">Capacités par défaut du restaurant</h3>
+      <p class="text-xs text-gray-500 mb-3">Ces capacités servent de base au planning hebdomadaire. Modifiable jour par jour dans Restaurant → Planning.</p>
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="block text-xs text-gray-600 mb-1">☕ Petit-déj</label>
+          <input id="cap_breakfast" type="number" min="0" value="${h.breakfast_capacity || 30}" class="w-full px-2 py-1.5 border rounded form-input-mobile">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-600 mb-1">🍽️ Déjeuner</label>
+          <input id="cap_lunch" type="number" min="0" value="${h.lunch_capacity || 30}" class="w-full px-2 py-1.5 border rounded form-input-mobile">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-600 mb-1">🍷 Dîner</label>
+          <input id="cap_dinner" type="number" min="0" value="${h.dinner_capacity || 30}" class="w-full px-2 py-1.5 border rounded form-input-mobile">
+        </div>
+      </div>
+      <button onclick="saveHotelCapacities()" class="mt-3 bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-save mr-1"></i>Enregistrer les capacités</button>
+    </div>
+  </div>`;
+}
+
+async function saveHotelCode() {
+  const code = document.getElementById('hotel_code').value.trim().toUpperCase();
+  if (!code) { showToast('Code requis', 'error'); return; }
+  const data = await api(`/hotels/${state.user.hotel_id}/settings`, { method: 'PUT', body: JSON.stringify({ client_login_code: code }) });
+  if (data) { showToast('Code mis à jour', 'success'); state._hotelSettingsLoaded = false; await loadHotelSettings(); render(); }
+}
+
+async function saveHotelCapacities() {
+  const body = {
+    breakfast_capacity: parseInt(document.getElementById('cap_breakfast').value) || 0,
+    lunch_capacity: parseInt(document.getElementById('cap_lunch').value) || 0,
+    dinner_capacity: parseInt(document.getElementById('cap_dinner').value) || 0
+  };
+  const data = await api(`/hotels/${state.user.hotel_id}/settings`, { method: 'PUT', body: JSON.stringify(body) });
+  if (data) { showToast('Capacités enregistrées', 'success'); state._hotelSettingsLoaded = false; await loadHotelSettings(); render(); }
+}
+
+// ============================================
+// CLIENT APP — Front Wikot (espace client en chambre)
+// ============================================
+function renderClientApp() {
+  const c = state.client || {};
+  const view = state.clientView || 'home';
+  return `
+  <div class="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 flex flex-col">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-sm">
+      <div class="flex items-center gap-2">
+        <div class="w-9 h-9 bg-brand-400 rounded-lg flex items-center justify-center shadow"><i class="fas fa-concierge-bell text-white text-sm"></i></div>
+        <div>
+          <div class="font-bold text-navy-800 text-sm">Wik<span class="text-brand-400">ot</span></div>
+          <div class="text-[11px] text-gray-500">${escapeHtml(c.hotel_name || '')}</div>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="text-right hidden sm:block">
+          <div class="text-xs text-gray-500">Bienvenue</div>
+          <div class="font-semibold text-sm text-navy-800">${escapeHtml(c.guest_name || '')} · Ch. ${escapeHtml(c.room_number || '')}</div>
+        </div>
+        <button onclick="clientLogout()" class="text-xs text-gray-500 hover:text-red-500 px-2 py-1.5"><i class="fas fa-sign-out-alt"></i> <span class="hidden sm:inline">Déconnexion</span></button>
+      </div>
+    </header>
+
+    <!-- Tabs -->
+    <nav class="bg-white border-b border-gray-100 flex">
+      <button onclick="state.clientView='home'; render()" class="flex-1 py-3 text-sm font-semibold ${view === 'home' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-house mr-1"></i> Accueil</button>
+      <button onclick="state.clientView='wikot'; render(); ensureClientWikotLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'wikot' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-comments mr-1"></i> Wikot</button>
+      <button onclick="state.clientView='restaurant'; render(); ensureClientRestaurantLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'restaurant' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-utensils mr-1"></i> Restaurant</button>
+      <button onclick="state.clientView='info'; render(); ensureClientInfoLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'info' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-circle-info mr-1"></i> Infos</button>
+    </nav>
+
+    <!-- Content -->
+    <main class="flex-1 overflow-y-auto p-4 max-w-3xl mx-auto w-full">
+      ${view === 'home' ? renderClientHome()
+        : view === 'wikot' ? renderClientWikot()
+        : view === 'restaurant' ? renderClientRestaurant()
+        : renderClientInfo()}
+    </main>
+  </div>`;
+}
+
+function renderClientHome() {
+  const c = state.client || {};
+  return `
+  <div class="space-y-4">
+    <div class="bg-white rounded-2xl shadow-sm p-6">
+      <h2 class="text-xl font-bold text-navy-800">Bonjour ${escapeHtml(c.guest_name || '')} 👋</h2>
+      <p class="text-sm text-gray-600 mt-1">Bienvenue dans votre chambre <strong>${escapeHtml(c.room_number || '')}</strong> à l'${escapeHtml(c.hotel_name || '')}.</p>
+      <p class="text-xs text-gray-400 mt-2"><i class="fas fa-clock mr-1"></i>Votre session reste active jusqu'à 12h00 du jour de votre départ.</p>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <button onclick="state.clientView='wikot'; render(); ensureClientWikotLoaded()" class="bg-white hover:bg-amber-50 border-2 border-amber-200 rounded-xl p-5 text-left transition-colors">
+        <div class="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center mb-2"><i class="fas fa-comments text-amber-600 text-xl"></i></div>
+        <div class="font-bold text-navy-800">Discuter avec Wikot</div>
+        <div class="text-xs text-gray-500 mt-1">Posez vos questions sur l'hôtel.</div>
+      </button>
+      <button onclick="state.clientView='restaurant'; render(); ensureClientRestaurantLoaded()" class="bg-white hover:bg-rose-50 border-2 border-rose-200 rounded-xl p-5 text-left transition-colors">
+        <div class="w-12 h-12 bg-rose-100 rounded-lg flex items-center justify-center mb-2"><i class="fas fa-utensils text-rose-600 text-xl"></i></div>
+        <div class="font-bold text-navy-800">Restaurant</div>
+        <div class="text-xs text-gray-500 mt-1">Réservez petit-déj, déjeuner, dîner.</div>
+      </button>
+      <button onclick="state.clientView='info'; render(); ensureClientInfoLoaded()" class="bg-white hover:bg-blue-50 border-2 border-blue-200 rounded-xl p-5 text-left transition-colors">
+        <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-2"><i class="fas fa-circle-info text-blue-600 text-xl"></i></div>
+        <div class="font-bold text-navy-800">Infos pratiques</div>
+        <div class="text-xs text-gray-500 mt-1">Horaires, services, équipements.</div>
+      </button>
+    </div>
+  </div>`;
+}
+
+async function ensureClientWikotLoaded() {
+  if (state._clientWikotLoaded) return;
+  state._clientWikotLoaded = true;
+  const data = await clientApi('/client/wikot/conversations');
+  if (data) state.clientWikotConversations = data.conversations || [];
+  // Si aucune conversation, en créer une fraîche
+  if (state.clientWikotConversations.length === 0) {
+    const created = await clientApi('/client/wikot/conversations', { method: 'POST' });
+    if (created) {
+      state.clientWikotCurrentConvId = created.id;
+      state.clientWikotMessages = [];
+    }
+  } else {
+    state.clientWikotCurrentConvId = state.clientWikotConversations[0].id;
+    const conv = await clientApi(`/client/wikot/conversations/${state.clientWikotCurrentConvId}`);
+    if (conv) state.clientWikotMessages = conv.messages || [];
+  }
+  render();
+}
+
+function renderClientWikot() {
+  const messages = state.clientWikotMessages || [];
+  return `
+  <div class="bg-white rounded-2xl shadow-sm flex flex-col" style="height: calc(100vh - 180px); min-height: 400px;">
+    <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+      <div>
+        <h2 class="font-bold text-navy-800"><i class="fas fa-robot text-brand-400 mr-2"></i>Wikot</h2>
+        <p class="text-[11px] text-gray-500">Votre concierge virtuel</p>
+      </div>
+      <button onclick="newClientWikotConversation()" class="text-xs text-gray-500 hover:text-brand-500"><i class="fas fa-rotate-right mr-1"></i>Nouvelle</button>
+    </div>
+    <div id="client-wikot-messages" class="flex-1 overflow-y-auto p-4 space-y-3">
+      ${messages.length === 0 ? `
+        <div class="text-center py-8 text-gray-400">
+          <i class="fas fa-comments text-3xl mb-2"></i>
+          <p class="text-sm">Posez-moi une question sur votre séjour !</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4 max-w-md mx-auto">
+            <button onclick="sendClientWikotMessage('À quelle heure est servi le petit-déjeuner ?')" class="text-left bg-amber-50 hover:bg-amber-100 px-3 py-2 rounded-lg text-xs text-amber-800">À quelle heure est servi le petit-déjeuner ?</button>
+            <button onclick="sendClientWikotMessage('Où se trouve la piscine ?')" class="text-left bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded-lg text-xs text-blue-800">Où se trouve la piscine ?</button>
+            <button onclick="sendClientWikotMessage('Y a-t-il un parking ?')" class="text-left bg-green-50 hover:bg-green-100 px-3 py-2 rounded-lg text-xs text-green-800">Y a-t-il un parking ?</button>
+            <button onclick="sendClientWikotMessage('Quelles activités proposez-vous ?')" class="text-left bg-purple-50 hover:bg-purple-100 px-3 py-2 rounded-lg text-xs text-purple-800">Quelles activités proposez-vous ?</button>
+          </div>
+        </div>` : messages.map(m => `
+          <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">
+            <div class="max-w-[80%] ${m.role === 'user' ? 'bg-brand-400 text-white' : 'bg-gray-100 text-navy-800'} rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap">${escapeHtml(m.content || '')}</div>
+          </div>
+        `).join('')}
+      ${state.clientWikotSending ? '<div class="flex justify-start"><div class="bg-gray-100 rounded-2xl px-4 py-2 text-sm text-gray-500"><i class="fas fa-circle-notch fa-spin mr-1"></i> Wikot réfléchit...</div></div>' : ''}
+    </div>
+    <div class="border-t border-gray-100 p-3 flex gap-2">
+      <input id="client_wikot_input" type="text" placeholder="Posez votre question..."
+        onkeydown="if(event.key==='Enter'){sendClientWikotMessage(this.value);this.value='';}"
+        class="flex-1 px-4 py-2 border border-gray-200 rounded-full text-sm form-input-mobile">
+      <button onclick="const i=document.getElementById('client_wikot_input'); sendClientWikotMessage(i.value); i.value='';"
+        class="bg-brand-400 hover:bg-brand-500 text-white w-10 h-10 rounded-full flex items-center justify-center"><i class="fas fa-paper-plane"></i></button>
+    </div>
+  </div>`;
+}
+
+async function sendClientWikotMessage(text) {
+  text = (text || '').trim();
+  if (!text) return;
+  if (!state.clientWikotCurrentConvId) {
+    const created = await clientApi('/client/wikot/conversations', { method: 'POST' });
+    if (!created) return;
+    state.clientWikotCurrentConvId = created.id;
+  }
+  // Ajout immédiat du message user pour feedback instantané
+  state.clientWikotMessages.push({ id: 'tmp_' + Date.now(), role: 'user', content: text });
+  state.clientWikotSending = true;
+  render();
+  setTimeout(() => { const el = document.getElementById('client-wikot-messages'); if (el) el.scrollTop = el.scrollHeight; }, 50);
+
+  const data = await clientApi(`/client/wikot/conversations/${state.clientWikotCurrentConvId}/message`, {
+    method: 'POST', body: JSON.stringify({ content: text })
+  });
+  state.clientWikotSending = false;
+  if (data && data.assistant_message) {
+    // Remplacer le tmp + ajouter la réponse
+    state.clientWikotMessages.push(data.assistant_message);
+  }
+  render();
+  setTimeout(() => { const el = document.getElementById('client-wikot-messages'); if (el) el.scrollTop = el.scrollHeight; }, 50);
+}
+
+async function newClientWikotConversation() {
+  const created = await clientApi('/client/wikot/conversations', { method: 'POST' });
+  if (created) {
+    state.clientWikotCurrentConvId = created.id;
+    state.clientWikotMessages = [];
+    render();
+  }
+}
+
+async function ensureClientRestaurantLoaded() {
+  if (state._clientRestoLoaded) return;
+  state._clientRestoLoaded = true;
+  const today = new Date().toISOString().slice(0, 10);
+  state.clientRestaurantDate = today;
+  await loadClientRestaurant();
+}
+
+async function loadClientRestaurant() {
+  const date = state.clientRestaurantDate || new Date().toISOString().slice(0, 10);
+  const [avail, mine] = await Promise.all([
+    clientApi(`/client/restaurant/availability?date=${date}`),
+    clientApi('/client/restaurant/reservations')
+  ]);
+  if (avail) state.clientRestaurantAvailability = avail;
+  if (mine) state.clientRestaurantReservations = mine.reservations || [];
+  render();
+}
+
+function renderClientRestaurant() {
+  const avail = state.clientRestaurantAvailability;
+  const reservations = state.clientRestaurantReservations || [];
+  const date = state.clientRestaurantDate || new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+  const mealLabels = { breakfast: { label: 'Petit-déjeuner', icon: '☕', color: 'amber' }, lunch: { label: 'Déjeuner', icon: '🍽️', color: 'orange' }, dinner: { label: 'Dîner', icon: '🍷', color: 'rose' } };
+
+  return `
+  <div class="space-y-4">
+    <div class="bg-white rounded-2xl shadow-sm p-5">
+      <h2 class="font-bold text-navy-800 mb-3"><i class="fas fa-utensils text-brand-400 mr-2"></i>Réserver une table</h2>
+      <label class="block text-xs text-gray-600 mb-1">Choisir une date</label>
+      <input type="date" value="${date}" min="${today}" onchange="state.clientRestaurantDate=this.value; loadClientRestaurant()" class="w-full px-3 py-2 border rounded form-input-mobile">
+    </div>
+    ${!avail ? '<div class="text-center text-gray-400">Chargement...</div>' : `
+    <div class="space-y-3">
+      ${['breakfast', 'lunch', 'dinner'].map(m => {
+        const a = avail[m] || {};
+        const config = mealLabels[m];
+        const closed = !a.is_open;
+        const full = a.slots_left <= 0;
+        return `
+        <div class="bg-white rounded-2xl shadow-sm p-5 ${closed ? 'opacity-60' : ''}">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <div class="font-bold text-navy-800">${config.icon} ${config.label}</div>
+              <div class="text-xs text-gray-500">${a.open_time && a.close_time ? `${a.open_time} – ${a.close_time}` : ''}</div>
+            </div>
+            ${closed ? '<span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">Fermé</span>'
+              : full ? '<span class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">Complet</span>'
+              : `<span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">${a.slots_left} place(s)</span>`}
+          </div>
+          ${!closed && !full ? `<button onclick="showClientReservationModal('${m}', '${config.label}')" class="w-full bg-brand-400 hover:bg-brand-500 text-white py-2 rounded-lg text-sm font-semibold mt-2"><i class="fas fa-calendar-check mr-1"></i>Réserver</button>` : ''}
+        </div>`;
+      }).join('')}
+    </div>`}
+
+    <div class="bg-white rounded-2xl shadow-sm p-5">
+      <h3 class="font-bold text-navy-800 mb-3"><i class="fas fa-bookmark text-brand-400 mr-2"></i>Mes réservations</h3>
+      ${reservations.length === 0 ? '<div class="text-sm text-gray-400 italic">Aucune réservation pour le moment.</div>' : `
+        <div class="space-y-2">
+          ${reservations.map(r => {
+            const config = mealLabels[r.meal_type] || { label: r.meal_type, icon: '🍴' };
+            return `
+            <div class="border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+              <div>
+                <div class="font-semibold text-sm">${config.icon} ${config.label} · ${r.reservation_date}</div>
+                <div class="text-xs text-gray-500">${r.time_slot ? r.time_slot + ' · ' : ''}${r.guest_count} pers.${r.notes ? ' · ' + escapeHtml(r.notes) : ''}</div>
+              </div>
+              <button onclick="cancelClientReservation(${r.id})" class="text-red-500 hover:text-red-700 text-xs"><i class="fas fa-times"></i> Annuler</button>
+            </div>`;
+          }).join('')}
+        </div>`}
+    </div>
+  </div>`;
+}
+
+function showClientReservationModal(mealType, mealLabel) {
+  const date = state.clientRestaurantDate || new Date().toISOString().slice(0, 10);
+  const html = `
+  <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center" onclick="if(event.target===this) closeClientModal()">
+    <div class="modal-panel bg-white w-full sm:max-w-md">
+      <div class="modal-header bg-brand-400 text-white px-5 py-3"><h3 class="font-semibold">${mealLabel} · ${date}</h3></div>
+      <div class="modal-body p-5 space-y-3">
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="block text-xs mb-1">Heure souhaitée</label><input id="client_resa_time" type="time" class="w-full px-2 py-2 border rounded form-input-mobile"></div>
+          <div><label class="block text-xs mb-1">Personnes</label><input id="client_resa_count" type="number" min="1" max="10" value="2" class="w-full px-2 py-2 border rounded form-input-mobile"></div>
+        </div>
+        <div><label class="block text-xs mb-1">Demandes spéciales (optionnel)</label><textarea id="client_resa_notes" rows="2" class="w-full px-2 py-2 border rounded form-input-mobile" placeholder="Allergies, table à proximité de la fenêtre..."></textarea></div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button onclick="closeClientModal()" class="px-3 py-2 text-sm text-gray-600 rounded hover:bg-gray-100">Annuler</button>
+          <button onclick="confirmClientReservation('${mealType}')" class="px-3 py-2 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded font-semibold">Confirmer</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  // Crée un container client si pas déjà présent
+  let mc = document.getElementById('client-modal-container');
+  if (!mc) { mc = document.createElement('div'); mc.id = 'client-modal-container'; document.body.appendChild(mc); }
+  mc.innerHTML = html;
+}
+
+function closeClientModal() {
+  const mc = document.getElementById('client-modal-container');
+  if (mc) mc.innerHTML = '';
+}
+
+async function confirmClientReservation(mealType) {
+  const body = {
+    reservation_date: state.clientRestaurantDate,
+    meal_type: mealType,
+    time_slot: document.getElementById('client_resa_time').value || null,
+    guest_count: parseInt(document.getElementById('client_resa_count').value) || 1,
+    notes: document.getElementById('client_resa_notes').value || null
+  };
+  const data = await clientApi('/client/restaurant/reservations', { method: 'POST', body: JSON.stringify(body) });
+  if (data) {
+    showToast('Réservation confirmée !', 'success');
+    closeClientModal();
+    await loadClientRestaurant();
+  }
+}
+
+async function cancelClientReservation(id) {
+  if (!confirm('Annuler cette réservation ?')) return;
+  const data = await clientApi(`/client/restaurant/reservations/${id}`, { method: 'DELETE' });
+  if (data) { showToast('Réservation annulée', 'success'); await loadClientRestaurant(); }
+}
+
+async function ensureClientInfoLoaded() {
+  if (state._clientInfoLoaded) return;
+  state._clientInfoLoaded = true;
+  const data = await clientApi('/client/hotel-info');
+  if (data) {
+    state.clientHotelInfoCategories = data.categories || [];
+    state.clientHotelInfoItems = data.items || [];
+  }
+  render();
+}
+
+function renderClientInfo() {
+  const cats = state.clientHotelInfoCategories || [];
+  const items = state.clientHotelInfoItems || [];
+  if (cats.length === 0 && items.length === 0) {
+    return `<div class="bg-white rounded-2xl shadow-sm p-8 text-center text-gray-400"><i class="fas fa-info-circle text-3xl mb-2"></i><p class="text-sm">Aucune information n'a encore été publiée par l'hôtel.</p></div>`;
+  }
+  // Group items par catégorie
+  const grouped = {};
+  for (const item of items) {
+    const k = item.category_id || 0;
+    if (!grouped[k]) grouped[k] = [];
+    grouped[k].push(item);
+  }
+  return `
+  <div class="space-y-3">
+    ${cats.map(cat => {
+      const catItems = grouped[cat.id] || [];
+      if (catItems.length === 0) return '';
+      return `
+      <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b border-gray-100 flex items-center gap-2" style="background: ${cat.color || '#3B82F6'}10;">
+          <i class="fas ${cat.icon || 'fa-circle-info'}" style="color: ${cat.color || '#3B82F6'}"></i>
+          <h3 class="font-semibold text-navy-800">${escapeHtml(cat.name)}</h3>
+        </div>
+        <div class="divide-y divide-gray-100">
+          ${catItems.map(item => `
+            <div class="p-4">
+              <div class="font-semibold text-sm text-navy-800 mb-1">${escapeHtml(item.title)}</div>
+              <div class="text-sm text-gray-600 whitespace-pre-wrap">${escapeHtml(item.content || '')}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+    ${grouped[0] && grouped[0].length > 0 ? `
+      <div class="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b border-gray-100"><h3 class="font-semibold text-navy-800">Autres informations</h3></div>
+        <div class="divide-y divide-gray-100">
+          ${grouped[0].map(item => `<div class="p-4"><div class="font-semibold text-sm mb-1">${escapeHtml(item.title)}</div><div class="text-sm text-gray-600 whitespace-pre-wrap">${escapeHtml(item.content || '')}</div></div>`).join('')}
+        </div>
+      </div>` : ''}
+  </div>`;
+}
+
+// ============================================
+// Helper escapeHtml — au cas où il n'existe pas déjà
+// ============================================
+if (typeof window.escapeHtml === 'undefined') {
+  window.escapeHtml = function(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[ch]));
+  };
+}
 
 // ============================================
 // INITIALIZATION

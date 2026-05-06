@@ -15,10 +15,22 @@ type WikotUser = {
   can_edit_procedures: number
   can_edit_info: number
   can_manage_chat: number
+  can_edit_clients: number
+  can_edit_restaurant: number
+}
+
+type ClientUser = {
+  id: number              // client_account_id
+  hotel_id: number
+  room_id: number
+  room_number: string
+  guest_name: string
+  hotel_name: string
 }
 
 type Variables = {
   user: WikotUser
+  client: ClientUser
 }
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
@@ -36,7 +48,7 @@ const authMiddleware = async (c: any, next: any) => {
   try {
     const decoded = atob(sessionToken)
     const [userId] = decoded.split(':')
-    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, can_edit_info, can_manage_chat, is_active FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
+    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, can_edit_info, can_manage_chat, can_edit_clients, can_edit_restaurant, is_active FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
     if (!user) return c.json({ error: 'Utilisateur non trouvé' }, 401)
     c.set('user', user)
     await next()
@@ -46,11 +58,56 @@ const authMiddleware = async (c: any, next: any) => {
 }
 
 // ============================================
+// CLIENT AUTH MIDDLEWARE (Front Wikot — comptes clients)
+// ============================================
+// Sépare l'authentification client (token Bearer commençant par "client_")
+// de l'authentification staff. Vérifie l'expiration et la validité du compte.
+const clientAuthMiddleware = async (c: any, next: any) => {
+  const headerToken = c.req.header('Authorization')?.replace('Bearer ', '')
+  const token = headerToken && headerToken.startsWith('client_') ? headerToken.slice(7) : null
+  if (!token) return c.json({ error: 'Non authentifié' }, 401)
+
+  const session = await c.env.DB.prepare(`
+    SELECT cs.id as session_id, cs.expires_at, cs.client_account_id,
+           ca.id as account_id, ca.hotel_id, ca.room_id, ca.guest_name, ca.is_active,
+           r.room_number,
+           h.name as hotel_name
+    FROM client_sessions cs
+    JOIN client_accounts ca ON cs.client_account_id = ca.id
+    JOIN rooms r ON ca.room_id = r.id
+    JOIN hotels h ON ca.hotel_id = h.id
+    WHERE cs.token = ?
+  `).bind(token).first() as any
+  if (!session) return c.json({ error: 'Session invalide' }, 401)
+  if (session.is_active !== 1) return c.json({ error: 'Compte client désactivé' }, 401)
+
+  // Vérification expiration (à midi)
+  const now = new Date()
+  const expires = new Date(session.expires_at)
+  if (now >= expires) {
+    await c.env.DB.prepare('DELETE FROM client_sessions WHERE id = ?').bind(session.session_id).run()
+    return c.json({ error: 'Session expirée — veuillez vous reconnecter' }, 401)
+  }
+
+  await c.env.DB.prepare('UPDATE client_sessions SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?').bind(session.session_id).run()
+
+  c.set('client', {
+    id: session.account_id,
+    hotel_id: session.hotel_id,
+    room_id: session.room_id,
+    room_number: session.room_number,
+    guest_name: session.guest_name,
+    hotel_name: session.hotel_name
+  })
+  await next()
+}
+
+// ============================================
 // AUTH ROUTES
 // ============================================
 app.post('/api/auth/login', async (c) => {
   const { email, password } = await c.req.json()
-  const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, can_edit_info, can_manage_chat, password_hash FROM users WHERE email = ? AND is_active = 1').bind(email).first() as any
+  const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, can_edit_info, can_manage_chat, can_edit_clients, can_edit_restaurant, password_hash FROM users WHERE email = ? AND is_active = 1').bind(email).first() as any
   if (!user || user.password_hash !== password) {
     return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
   }
@@ -58,8 +115,79 @@ app.post('/api/auth/login', async (c) => {
   const token = btoa(`${user.id}:${user.email}`)
   return c.json({
     token,
-    user: { id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role, can_edit_procedures: user.can_edit_procedures, can_edit_info: user.can_edit_info, can_manage_chat: user.can_manage_chat }
+    user: {
+      id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role,
+      can_edit_procedures: user.can_edit_procedures, can_edit_info: user.can_edit_info, can_manage_chat: user.can_manage_chat,
+      can_edit_clients: user.can_edit_clients, can_edit_restaurant: user.can_edit_restaurant
+    }
   })
+})
+
+// ============================================
+// CLIENT AUTH ROUTES (Front Wikot)
+// ============================================
+// Le client tape : code hôtel (ex: GRDPARIS), numéro de chambre (ex: 12), nom du client.
+// On vérifie que le client_account de cette chambre est actif et que le nom (normalisé)
+// matche guest_name_normalized. Si OK, on crée une session valable jusqu'au prochain midi.
+// Plusieurs sessions simultanées sont autorisées (chambre partagée → plusieurs téléphones).
+app.post('/api/client/login', async (c) => {
+  const body = await c.req.json() as { hotel_code?: string; room_number?: string; guest_name?: string }
+  const hotelCode = (body.hotel_code || '').trim().toUpperCase()
+  const roomNumber = (body.room_number || '').trim()
+  const guestName = (body.guest_name || '').trim()
+
+  if (!hotelCode || !roomNumber || !guestName) {
+    return c.json({ error: 'Tous les champs sont obligatoires' }, 400)
+  }
+
+  const hotel = await c.env.DB.prepare('SELECT id, name FROM hotels WHERE client_login_code = ?').bind(hotelCode).first() as any
+  if (!hotel) return c.json({ error: 'Code hôtel invalide' }, 401)
+
+  const room = await c.env.DB.prepare('SELECT id, room_number FROM rooms WHERE hotel_id = ? AND room_number = ? AND is_active = 1').bind(hotel.id, roomNumber).first() as any
+  if (!room) return c.json({ error: 'Numéro de chambre invalide' }, 401)
+
+  const account = await c.env.DB.prepare('SELECT id, guest_name, guest_name_normalized, is_active FROM client_accounts WHERE hotel_id = ? AND room_id = ?').bind(hotel.id, room.id).first() as any
+  if (!account || account.is_active !== 1) {
+    return c.json({ error: 'Cette chambre n\'a pas encore de client enregistré aujourd\'hui' }, 401)
+  }
+
+  const normalizedInput = normalizeName(guestName)
+  if (!account.guest_name_normalized || account.guest_name_normalized !== normalizedInput) {
+    return c.json({ error: 'Le nom ne correspond pas au client de la chambre' }, 401)
+  }
+
+  // Création de la session — expire au prochain midi (UTC)
+  const token = generateRandomToken()
+  const expiresAt = nextNoonExpiration()
+  await c.env.DB.prepare(`
+    INSERT INTO client_sessions (token, client_account_id, hotel_id, room_id, expires_at)
+    VALUES (?, ?, ?, ?, ?)
+  `).bind(token, account.id, hotel.id, room.id, expiresAt).run()
+
+  await c.env.DB.prepare('UPDATE client_accounts SET last_login = CURRENT_TIMESTAMP WHERE id = ?').bind(account.id).run()
+
+  return c.json({
+    token: `client_${token}`,
+    client: {
+      id: account.id,
+      hotel_id: hotel.id,
+      hotel_name: hotel.name,
+      room_id: room.id,
+      room_number: room.room_number,
+      guest_name: account.guest_name,
+      expires_at: expiresAt
+    }
+  })
+})
+
+app.get('/api/client/me', clientAuthMiddleware, async (c) => {
+  return c.json({ client: c.get('client') })
+})
+
+app.post('/api/client/logout', clientAuthMiddleware, async (c) => {
+  const token = c.req.header('Authorization')?.replace('Bearer client_', '') || ''
+  await c.env.DB.prepare('DELETE FROM client_sessions WHERE token = ?').bind(token).run()
+  return c.json({ success: true })
 })
 
 app.get('/api/auth/me', authMiddleware, async (c) => {
@@ -102,6 +230,45 @@ function canEditInfo(user: { role: string; can_edit_info?: number }) {
 
 function canManageChat(user: { role: string; can_manage_chat?: number }) {
   return user.role === 'admin' || user.can_manage_chat === 1
+}
+
+function canEditClients(user: { role: string; can_edit_clients?: number }) {
+  return user.role === 'admin' || user.can_edit_clients === 1
+}
+
+function canEditRestaurant(user: { role: string; can_edit_restaurant?: number }) {
+  return user.role === 'admin' || user.can_edit_restaurant === 1
+}
+
+// Normalise un nom (suppression accents + lowercase + trim) pour comparaison
+// insensible à la casse / aux accents.
+function normalizeName(name: string): string {
+  return (name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// Calcule l'instant de prochaine expiration (12h00 du lendemain le plus proche).
+// Si on est avant midi, l'expiration est aujourd'hui à midi.
+// Si on est après midi, l'expiration est demain à midi.
+function nextNoonExpiration(): string {
+  const now = new Date()
+  const expires = new Date(now)
+  expires.setUTCHours(12, 0, 0, 0)
+  if (now >= expires) {
+    expires.setUTCDate(expires.getUTCDate() + 1)
+  }
+  return expires.toISOString().replace('T', ' ').replace('Z', '')
+}
+
+// Génère un token aléatoire pour les sessions client
+function generateRandomToken(): string {
+  const arr = new Uint8Array(24)
+  crypto.getRandomValues(arr)
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 // ============================================
@@ -193,6 +360,8 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
     can_edit_procedures?: boolean | number
     can_edit_info?: boolean | number
     can_manage_chat?: boolean | number
+    can_edit_clients?: boolean | number
+    can_edit_restaurant?: boolean | number
   }
 
   // Check the target user belongs to same hotel (for admin)
@@ -207,6 +376,8 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
   if (body.can_edit_procedures !== undefined) { fields.push('can_edit_procedures = ?'); values.push(body.can_edit_procedures ? 1 : 0) }
   if (body.can_edit_info !== undefined)       { fields.push('can_edit_info = ?');       values.push(body.can_edit_info ? 1 : 0) }
   if (body.can_manage_chat !== undefined)     { fields.push('can_manage_chat = ?');     values.push(body.can_manage_chat ? 1 : 0) }
+  if (body.can_edit_clients !== undefined)    { fields.push('can_edit_clients = ?');    values.push(body.can_edit_clients ? 1 : 0) }
+  if (body.can_edit_restaurant !== undefined) { fields.push('can_edit_restaurant = ?'); values.push(body.can_edit_restaurant ? 1 : 0) }
   if (fields.length === 0) return c.json({ error: 'Aucune permission à mettre à jour' }, 400)
 
   values.push(id)
@@ -2478,6 +2649,724 @@ app.post('/api/wikot/actions/:id/reject', authMiddleware, async (c) => {
   if (action.status !== 'pending') return c.json({ error: 'Action déjà traitée' }, 400)
   await c.env.DB.prepare(`UPDATE wikot_pending_actions SET status = 'rejected', resolved_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(id).run()
   return c.json({ success: true })
+})
+
+// ============================================
+// HOTELS — extension : code client + capacités resto
+// ============================================
+app.get('/api/hotels/:id/settings', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = parseInt(c.req.param('id'))
+  if (user.role !== 'super_admin' && user.hotel_id !== id) return c.json({ error: 'Non autorisé' }, 403)
+  const hotel = await c.env.DB.prepare('SELECT id, name, slug, client_login_code, breakfast_capacity, lunch_capacity, dinner_capacity FROM hotels WHERE id = ?').bind(id).first()
+  if (!hotel) return c.json({ error: 'Hôtel non trouvé' }, 404)
+  return c.json({ hotel })
+})
+
+app.put('/api/hotels/:id/settings', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = parseInt(c.req.param('id'))
+  if (user.role !== 'super_admin' && (user.role !== 'admin' || user.hotel_id !== id)) return c.json({ error: 'Non autorisé' }, 403)
+  const body = await c.req.json() as { client_login_code?: string; breakfast_capacity?: number; lunch_capacity?: number; dinner_capacity?: number }
+
+  const fields: string[] = []
+  const values: any[] = []
+  if (body.client_login_code !== undefined) {
+    const code = String(body.client_login_code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+    if (code.length < 3 || code.length > 12) return c.json({ error: 'Le code hôtel doit faire entre 3 et 12 caractères alphanumériques' }, 400)
+    // unicité
+    const existing = await c.env.DB.prepare('SELECT id FROM hotels WHERE client_login_code = ? AND id != ?').bind(code, id).first()
+    if (existing) return c.json({ error: 'Ce code est déjà utilisé par un autre hôtel' }, 400)
+    fields.push('client_login_code = ?'); values.push(code)
+  }
+  if (body.breakfast_capacity !== undefined) { fields.push('breakfast_capacity = ?'); values.push(parseInt(String(body.breakfast_capacity)) || 0) }
+  if (body.lunch_capacity !== undefined)     { fields.push('lunch_capacity = ?');     values.push(parseInt(String(body.lunch_capacity)) || 0) }
+  if (body.dinner_capacity !== undefined)    { fields.push('dinner_capacity = ?');    values.push(parseInt(String(body.dinner_capacity)) || 0) }
+  if (fields.length === 0) return c.json({ error: 'Aucune modification' }, 400)
+  fields.push("updated_at = CURRENT_TIMESTAMP")
+  values.push(id)
+  await c.env.DB.prepare(`UPDATE hotels SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+  return c.json({ success: true })
+})
+
+// ============================================
+// ROOMS ROUTES — chambres de l'hôtel
+// ============================================
+// Chaque chambre crée automatiquement un client_account associé (inactif tant
+// qu'aucun client n'est saisi). Le nombre de comptes clients = nombre de chambres.
+app.get('/api/rooms', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const hotelId = c.req.query('hotel_id') || user.hotel_id
+  const rooms = await c.env.DB.prepare(`
+    SELECT r.*,
+      ca.id as client_account_id,
+      ca.guest_name as current_guest,
+      ca.checkout_date,
+      ca.is_active as client_active,
+      ca.last_login as client_last_login
+    FROM rooms r
+    LEFT JOIN client_accounts ca ON ca.room_id = r.id
+    WHERE r.hotel_id = ?
+    ORDER BY r.sort_order, r.room_number
+  `).bind(hotelId).all()
+  return c.json({ rooms: rooms.results })
+})
+
+app.post('/api/rooms', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const body = await c.req.json() as { room_number: string; floor?: string; capacity?: number; sort_order?: number }
+  if (!body.room_number || !String(body.room_number).trim()) return c.json({ error: 'Numéro de chambre obligatoire' }, 400)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  try {
+    const result = await c.env.DB.prepare(`
+      INSERT INTO rooms (hotel_id, room_number, floor, capacity, sort_order, is_active)
+      VALUES (?, ?, ?, ?, ?, 1)
+    `).bind(hotelId, String(body.room_number).trim(), body.floor || null, body.capacity || 2, body.sort_order || 0).run()
+    const roomId = result.meta.last_row_id
+
+    // Création automatique du compte client associé (inactif au départ)
+    await c.env.DB.prepare(`
+      INSERT INTO client_accounts (hotel_id, room_id, is_active) VALUES (?, ?, 0)
+    `).bind(hotelId, roomId).run()
+
+    return c.json({ id: roomId, room_number: body.room_number })
+  } catch (e: any) {
+    if (String(e?.message || '').includes('UNIQUE')) return c.json({ error: 'Ce numéro de chambre existe déjà' }, 400)
+    return c.json({ error: e?.message || 'Erreur serveur' }, 500)
+  }
+})
+
+app.put('/api/rooms/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const body = await c.req.json() as { room_number?: string; floor?: string; capacity?: number; is_active?: boolean | number; sort_order?: number }
+
+  const room = await c.env.DB.prepare('SELECT id, hotel_id FROM rooms WHERE id = ?').bind(id).first() as any
+  if (!room) return c.json({ error: 'Chambre non trouvée' }, 404)
+  if (user.role !== 'super_admin' && room.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+
+  const fields: string[] = []
+  const values: any[] = []
+  if (body.room_number !== undefined) { fields.push('room_number = ?'); values.push(String(body.room_number).trim()) }
+  if (body.floor !== undefined) { fields.push('floor = ?'); values.push(body.floor || null) }
+  if (body.capacity !== undefined) { fields.push('capacity = ?'); values.push(parseInt(String(body.capacity)) || 2) }
+  if (body.is_active !== undefined) { fields.push('is_active = ?'); values.push(body.is_active ? 1 : 0) }
+  if (body.sort_order !== undefined) { fields.push('sort_order = ?'); values.push(parseInt(String(body.sort_order)) || 0) }
+  if (fields.length === 0) return c.json({ error: 'Aucune modification' }, 400)
+  fields.push("updated_at = CURRENT_TIMESTAMP")
+  values.push(id)
+  try {
+    await c.env.DB.prepare(`UPDATE rooms SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+    return c.json({ success: true })
+  } catch (e: any) {
+    if (String(e?.message || '').includes('UNIQUE')) return c.json({ error: 'Ce numéro de chambre existe déjà' }, 400)
+    return c.json({ error: e?.message || 'Erreur serveur' }, 500)
+  }
+})
+
+app.delete('/api/rooms/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const room = await c.env.DB.prepare('SELECT id, hotel_id FROM rooms WHERE id = ?').bind(id).first() as any
+  if (!room) return c.json({ error: 'Chambre non trouvée' }, 404)
+  if (user.role !== 'super_admin' && room.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+
+  // Cascade : on supprime les sessions, comptes et historiques liés
+  await c.env.DB.prepare('DELETE FROM client_sessions WHERE room_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM client_accounts WHERE room_id = ?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM rooms WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// ============================================
+// OCCUPANCY ROUTES — saisie quotidienne des clients (rotation 12h00)
+// ============================================
+// Vue d'ensemble du jour : pour chaque chambre, afficher si occupée ou libre,
+// + nom du client courant + date de checkout.
+app.get('/api/occupancy/today', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const rooms = await c.env.DB.prepare(`
+    SELECT r.id as room_id, r.room_number, r.floor, r.capacity,
+      ca.id as account_id, ca.guest_name, ca.checkout_date, ca.is_active, ca.last_login
+    FROM rooms r
+    LEFT JOIN client_accounts ca ON ca.room_id = r.id
+    WHERE r.hotel_id = ? AND r.is_active = 1
+    ORDER BY r.sort_order, r.room_number
+  `).bind(hotelId).all()
+
+  const hotel = await c.env.DB.prepare('SELECT id, name, client_login_code FROM hotels WHERE id = ?').bind(hotelId).first()
+  return c.json({ today: todayStr, hotel, rooms: rooms.results })
+})
+
+// Saisie groupée du jour (12h00, par admin ou employé autorisé).
+// Body : { entries: [{room_id, guest_name, checkout_date, action?: 'set'|'clear'}] }
+// - action='set' (défaut si guest_name présent) : enregistre le nom = MdP du jour
+// - action='clear' : marque la chambre comme libre (compte désactivé)
+app.post('/api/occupancy/day', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const body = await c.req.json() as { entries: Array<{ room_id: number; guest_name?: string; checkout_date?: string; action?: string }> }
+  if (!Array.isArray(body.entries)) return c.json({ error: 'Format invalide' }, 400)
+
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const results: any[] = []
+
+  for (const entry of body.entries) {
+    const room = await c.env.DB.prepare('SELECT id, hotel_id FROM rooms WHERE id = ?').bind(entry.room_id).first() as any
+    if (!room || room.hotel_id !== hotelId) {
+      results.push({ room_id: entry.room_id, ok: false, error: 'Chambre invalide' })
+      continue
+    }
+
+    if (entry.action === 'clear' || (!entry.guest_name && entry.action !== 'set')) {
+      // Libération : on désactive le compte (toutes les sessions tombent)
+      await c.env.DB.prepare(`
+        UPDATE client_accounts
+        SET guest_name = NULL, guest_name_normalized = NULL, checkout_date = NULL,
+            is_active = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE hotel_id = ? AND room_id = ?
+      `).bind(hotelId, entry.room_id).run()
+      await c.env.DB.prepare('DELETE FROM client_sessions WHERE client_account_id IN (SELECT id FROM client_accounts WHERE hotel_id = ? AND room_id = ?)').bind(hotelId, entry.room_id).run()
+      results.push({ room_id: entry.room_id, ok: true, status: 'cleared' })
+      continue
+    }
+
+    const guestName = String(entry.guest_name || '').trim()
+    if (!guestName) {
+      results.push({ room_id: entry.room_id, ok: false, error: 'Nom manquant' })
+      continue
+    }
+    const normalized = normalizeName(guestName)
+    const checkoutDate = entry.checkout_date || todayStr  // défaut : aujourd'hui (1 nuit)
+
+    // Mise à jour du compte client (1 par chambre, déjà créé à la création de la chambre)
+    await c.env.DB.prepare(`
+      UPDATE client_accounts
+      SET guest_name = ?, guest_name_normalized = ?, checkout_date = ?, is_active = 1,
+          session_valid_until = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE hotel_id = ? AND room_id = ?
+    `).bind(guestName, normalized, checkoutDate, checkoutDate + ' 12:00:00', hotelId, entry.room_id).run()
+
+    // Tuer les sessions précédentes (changement de client = nouveau MdP)
+    await c.env.DB.prepare('DELETE FROM client_sessions WHERE client_account_id IN (SELECT id FROM client_accounts WHERE hotel_id = ? AND room_id = ?)').bind(hotelId, entry.room_id).run()
+
+    // Journal d'occupation
+    await c.env.DB.prepare(`
+      INSERT INTO room_occupancy (hotel_id, room_id, occupancy_date, guest_name, guest_name_normalized, checkout_date, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(hotelId, entry.room_id, todayStr, guestName, normalized, checkoutDate, user.id).run()
+
+    results.push({ room_id: entry.room_id, ok: true, status: 'set', guest_name: guestName })
+  }
+
+  return c.json({ success: true, results })
+})
+
+// Régénérer / réinitialiser une chambre individuellement
+app.post('/api/occupancy/room/:room_id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const roomId = parseInt(c.req.param('room_id'))
+  const body = await c.req.json() as { guest_name?: string; checkout_date?: string; action?: string }
+  // Réutilise la logique groupée
+  const fakeReq = { room_id: roomId, guest_name: body.guest_name, checkout_date: body.checkout_date, action: body.action }
+  // Inline pour simplicité
+  const room = await c.env.DB.prepare('SELECT id, hotel_id FROM rooms WHERE id = ?').bind(roomId).first() as any
+  if (!room || room.hotel_id !== user.hotel_id) return c.json({ error: 'Chambre invalide' }, 404)
+
+  if (fakeReq.action === 'clear' || !fakeReq.guest_name) {
+    await c.env.DB.prepare(`
+      UPDATE client_accounts SET guest_name = NULL, guest_name_normalized = NULL, checkout_date = NULL, is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE hotel_id = ? AND room_id = ?
+    `).bind(user.hotel_id, roomId).run()
+    await c.env.DB.prepare('DELETE FROM client_sessions WHERE client_account_id IN (SELECT id FROM client_accounts WHERE hotel_id = ? AND room_id = ?)').bind(user.hotel_id, roomId).run()
+    return c.json({ success: true, status: 'cleared' })
+  }
+
+  const guestName = String(fakeReq.guest_name || '').trim()
+  const normalized = normalizeName(guestName)
+  const todayStr = new Date().toISOString().slice(0, 10)
+  const checkoutDate = fakeReq.checkout_date || todayStr
+
+  await c.env.DB.prepare(`
+    UPDATE client_accounts SET guest_name = ?, guest_name_normalized = ?, checkout_date = ?, is_active = 1, session_valid_until = ?, updated_at = CURRENT_TIMESTAMP WHERE hotel_id = ? AND room_id = ?
+  `).bind(guestName, normalized, checkoutDate, checkoutDate + ' 12:00:00', user.hotel_id, roomId).run()
+  await c.env.DB.prepare('DELETE FROM client_sessions WHERE client_account_id IN (SELECT id FROM client_accounts WHERE hotel_id = ? AND room_id = ?)').bind(user.hotel_id, roomId).run()
+  await c.env.DB.prepare(`
+    INSERT INTO room_occupancy (hotel_id, room_id, occupancy_date, guest_name, guest_name_normalized, checkout_date, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(user.hotel_id, roomId, todayStr, guestName, normalized, checkoutDate, user.id).run()
+  return c.json({ success: true, status: 'set' })
+})
+
+// Données pour les fiches plastifiées (1 par chambre active occupée)
+// Renvoie chambre + code hôtel + nom client courant. Le HTML imprimable
+// est généré côté front (template print).
+app.get('/api/occupancy/print-cards', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const hotel = await c.env.DB.prepare('SELECT id, name, client_login_code FROM hotels WHERE id = ?').bind(hotelId).first() as any
+  const rooms = await c.env.DB.prepare(`
+    SELECT r.id as room_id, r.room_number, ca.guest_name, ca.checkout_date, ca.is_active
+    FROM rooms r
+    LEFT JOIN client_accounts ca ON ca.room_id = r.id
+    WHERE r.hotel_id = ? AND r.is_active = 1
+    ORDER BY r.sort_order, r.room_number
+  `).bind(hotelId).all()
+  return c.json({ hotel, rooms: rooms.results })
+})
+
+// ============================================
+// RESTAURANT ROUTES — planning + exceptions + réservations
+// ============================================
+app.get('/api/restaurant/schedule', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const hotelId = user.hotel_id
+  const schedule = await c.env.DB.prepare(`
+    SELECT id, weekday, meal_type, is_open, open_time, close_time, capacity
+    FROM restaurant_schedule WHERE hotel_id = ?
+    ORDER BY weekday, CASE meal_type WHEN 'breakfast' THEN 1 WHEN 'lunch' THEN 2 ELSE 3 END
+  `).bind(hotelId).all()
+  return c.json({ schedule: schedule.results })
+})
+
+app.put('/api/restaurant/schedule/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const body = await c.req.json() as { is_open?: boolean | number; open_time?: string; close_time?: string; capacity?: number }
+  const row = await c.env.DB.prepare('SELECT hotel_id FROM restaurant_schedule WHERE id = ?').bind(id).first() as any
+  if (!row || row.hotel_id !== user.hotel_id) return c.json({ error: 'Non trouvé' }, 404)
+  const fields: string[] = []
+  const values: any[] = []
+  if (body.is_open !== undefined)   { fields.push('is_open = ?');   values.push(body.is_open ? 1 : 0) }
+  if (body.open_time !== undefined) { fields.push('open_time = ?'); values.push(body.open_time || null) }
+  if (body.close_time !== undefined){ fields.push('close_time = ?');values.push(body.close_time || null) }
+  if (body.capacity !== undefined)  { fields.push('capacity = ?');  values.push(parseInt(String(body.capacity)) || 0) }
+  if (fields.length === 0) return c.json({ error: 'Aucune modification' }, 400)
+  fields.push("updated_at = CURRENT_TIMESTAMP")
+  values.push(id)
+  await c.env.DB.prepare(`UPDATE restaurant_schedule SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+  return c.json({ success: true })
+})
+
+app.get('/api/restaurant/exceptions', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const from = c.req.query('from') || new Date().toISOString().slice(0, 10)
+  const exceptions = await c.env.DB.prepare(`
+    SELECT id, exception_date, meal_type, is_open, open_time, close_time, capacity, notes
+    FROM restaurant_exceptions WHERE hotel_id = ? AND exception_date >= ?
+    ORDER BY exception_date, meal_type
+  `).bind(user.hotel_id, from).all()
+  return c.json({ exceptions: exceptions.results })
+})
+
+app.post('/api/restaurant/exceptions', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const body = await c.req.json() as { exception_date: string; meal_type: string; is_open: boolean; open_time?: string; close_time?: string; capacity?: number; notes?: string }
+  if (!body.exception_date || !body.meal_type) return c.json({ error: 'Champs manquants' }, 400)
+  try {
+    const result = await c.env.DB.prepare(`
+      INSERT INTO restaurant_exceptions (hotel_id, exception_date, meal_type, is_open, open_time, close_time, capacity, notes, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(user.hotel_id, body.exception_date, body.meal_type, body.is_open ? 1 : 0, body.open_time || null, body.close_time || null, body.capacity || null, body.notes || null, user.id).run()
+    return c.json({ id: result.meta.last_row_id })
+  } catch (e: any) {
+    if (String(e?.message || '').includes('UNIQUE')) return c.json({ error: 'Une exception existe déjà pour cette date et ce repas' }, 400)
+    return c.json({ error: e?.message || 'Erreur serveur' }, 500)
+  }
+})
+
+app.delete('/api/restaurant/exceptions/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const row = await c.env.DB.prepare('SELECT hotel_id FROM restaurant_exceptions WHERE id = ?').bind(id).first() as any
+  if (!row || row.hotel_id !== user.hotel_id) return c.json({ error: 'Non trouvé' }, 404)
+  await c.env.DB.prepare('DELETE FROM restaurant_exceptions WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// Helper : pour un hôtel + une date + un repas, retourne {is_open, capacity, current_count, slots_left}
+async function getMealAvailability(db: D1Database, hotelId: number, date: string, mealType: string) {
+  const d = new Date(date + 'T00:00:00')
+  const weekday = d.getUTCDay()
+  // Exception prioritaire
+  const exception = await db.prepare(`
+    SELECT is_open, open_time, close_time, capacity FROM restaurant_exceptions
+    WHERE hotel_id = ? AND exception_date = ? AND meal_type = ?
+  `).bind(hotelId, date, mealType).first() as any
+  let baseConfig: any
+  if (exception) {
+    baseConfig = exception
+  } else {
+    baseConfig = await db.prepare(`
+      SELECT is_open, open_time, close_time, capacity FROM restaurant_schedule
+      WHERE hotel_id = ? AND weekday = ? AND meal_type = ?
+    `).bind(hotelId, weekday, mealType).first()
+  }
+  if (!baseConfig) return { is_open: false, capacity: 0, current_count: 0, slots_left: 0, open_time: null, close_time: null }
+
+  // Réservations existantes confirmées
+  const counter = await db.prepare(`
+    SELECT COALESCE(SUM(guest_count), 0) as total FROM restaurant_reservations
+    WHERE hotel_id = ? AND reservation_date = ? AND meal_type = ? AND status = 'confirmed'
+  `).bind(hotelId, date, mealType).first() as any
+  const current = parseInt(counter?.total || 0)
+
+  return {
+    is_open: baseConfig.is_open === 1,
+    capacity: baseConfig.capacity || 0,
+    current_count: current,
+    slots_left: Math.max(0, (baseConfig.capacity || 0) - current),
+    open_time: baseConfig.open_time,
+    close_time: baseConfig.close_time
+  }
+}
+
+// Disponibilité globale sur une date (les 3 repas)
+app.get('/api/restaurant/availability', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const date = c.req.query('date') || new Date().toISOString().slice(0, 10)
+  const meals = ['breakfast', 'lunch', 'dinner']
+  const out: any = { date }
+  for (const m of meals) {
+    out[m] = await getMealAvailability(c.env.DB, user.hotel_id!, date, m)
+  }
+  return c.json(out)
+})
+
+// Liste des réservations (admin/staff)
+app.get('/api/restaurant/reservations', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const from = c.req.query('from') || new Date().toISOString().slice(0, 10)
+  const to = c.req.query('to') || from
+  const meal = c.req.query('meal')
+
+  let query = `
+    SELECT rr.*,
+      r.room_number,
+      u.name as created_by_user_name,
+      ca.guest_name as client_guest_name
+    FROM restaurant_reservations rr
+    LEFT JOIN rooms r ON rr.room_id = r.id
+    LEFT JOIN users u ON rr.created_by_user_id = u.id
+    LEFT JOIN client_accounts ca ON rr.created_by_client_id = ca.id
+    WHERE rr.hotel_id = ? AND rr.reservation_date BETWEEN ? AND ? AND rr.status = 'confirmed'
+  `
+  const params: any[] = [user.hotel_id, from, to]
+  if (meal) { query += ' AND rr.meal_type = ?'; params.push(meal) }
+  query += ' ORDER BY rr.reservation_date, rr.meal_type, rr.time_slot'
+
+  const reservations = await c.env.DB.prepare(query).bind(...params).all()
+  return c.json({ reservations: reservations.results })
+})
+
+// Création staff d'une réservation (pour un client externe ou interne)
+app.post('/api/restaurant/reservations', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const body = await c.req.json() as { room_id?: number; reservation_date: string; meal_type: string; time_slot?: string; guest_count: number; guest_name?: string; notes?: string }
+  if (!body.reservation_date || !body.meal_type || !body.guest_count) return c.json({ error: 'Champs manquants' }, 400)
+
+  const avail = await getMealAvailability(c.env.DB, user.hotel_id!, body.reservation_date, body.meal_type)
+  if (!avail.is_open) return c.json({ error: 'Le service est fermé ce jour-là' }, 400)
+  if (avail.slots_left < body.guest_count) return c.json({ error: `Plus que ${avail.slots_left} place(s) disponible(s)` }, 400)
+
+  const result = await c.env.DB.prepare(`
+    INSERT INTO restaurant_reservations (hotel_id, room_id, reservation_date, meal_type, time_slot, guest_count, guest_name, notes, status, created_by_user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)
+  `).bind(user.hotel_id, body.room_id || null, body.reservation_date, body.meal_type, body.time_slot || null, body.guest_count, body.guest_name || null, body.notes || null, user.id).run()
+  return c.json({ id: result.meta.last_row_id })
+})
+
+app.delete('/api/restaurant/reservations/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const row = await c.env.DB.prepare('SELECT hotel_id FROM restaurant_reservations WHERE id = ?').bind(id).first() as any
+  if (!row || row.hotel_id !== user.hotel_id) return c.json({ error: 'Non trouvée' }, 404)
+  await c.env.DB.prepare(`UPDATE restaurant_reservations SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(id).run()
+  return c.json({ success: true })
+})
+
+// Tableau de bord agrégé : stats par jour × repas pour visualisation
+app.get('/api/restaurant/dashboard', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const from = c.req.query('from') || new Date().toISOString().slice(0, 10)
+  const toDefault = new Date()
+  toDefault.setUTCDate(toDefault.getUTCDate() + 13)
+  const to = c.req.query('to') || toDefault.toISOString().slice(0, 10)
+
+  const stats = await c.env.DB.prepare(`
+    SELECT reservation_date, meal_type,
+           COUNT(*) as bookings,
+           COALESCE(SUM(guest_count), 0) as total_guests
+    FROM restaurant_reservations
+    WHERE hotel_id = ? AND reservation_date BETWEEN ? AND ? AND status = 'confirmed'
+    GROUP BY reservation_date, meal_type
+    ORDER BY reservation_date, meal_type
+  `).bind(user.hotel_id, from, to).all()
+
+  // Capacité prévue par jour × repas (en tenant compte des exceptions)
+  const days: string[] = []
+  const dStart = new Date(from + 'T00:00:00Z')
+  const dEnd = new Date(to + 'T00:00:00Z')
+  for (let d = new Date(dStart); d <= dEnd; d.setUTCDate(d.getUTCDate() + 1)) {
+    days.push(d.toISOString().slice(0, 10))
+  }
+  const meals = ['breakfast', 'lunch', 'dinner']
+  const capacityMap: Record<string, number> = {}
+  for (const day of days) {
+    for (const m of meals) {
+      const a = await getMealAvailability(c.env.DB, user.hotel_id!, day, m)
+      capacityMap[`${day}|${m}`] = a.is_open ? a.capacity : 0
+    }
+  }
+
+  return c.json({ from, to, stats: stats.results, capacityMap })
+})
+
+// ============================================
+// CLIENT ROUTES — Front Wikot (chambre client)
+// ============================================
+// Hotel info accessible au client (lecture seule, items publiés uniquement)
+app.get('/api/client/hotel-info', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  const categories = await c.env.DB.prepare(`
+    SELECT id, name, icon, color FROM hotel_info_categories WHERE hotel_id = ? ORDER BY sort_order, name
+  `).bind(client.hotel_id).all()
+  const items = await c.env.DB.prepare(`
+    SELECT id, category_id, title, content FROM hotel_info_items WHERE hotel_id = ? ORDER BY sort_order, title
+  `).bind(client.hotel_id).all()
+  return c.json({ categories: categories.results, items: items.results })
+})
+
+// Disponibilité resto (côté client) — même logique que côté staff
+app.get('/api/client/restaurant/availability', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  const date = c.req.query('date') || new Date().toISOString().slice(0, 10)
+  const meals = ['breakfast', 'lunch', 'dinner']
+  const out: any = { date }
+  for (const m of meals) {
+    out[m] = await getMealAvailability(c.env.DB, client.hotel_id, date, m)
+  }
+  return c.json(out)
+})
+
+// Mes réservations (du client connecté)
+app.get('/api/client/restaurant/reservations', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  const reservations = await c.env.DB.prepare(`
+    SELECT id, reservation_date, meal_type, time_slot, guest_count, guest_name, notes, status, created_at
+    FROM restaurant_reservations
+    WHERE created_by_client_id = ? AND status = 'confirmed'
+      AND reservation_date >= date('now', '-1 day')
+    ORDER BY reservation_date, meal_type
+  `).bind(client.id).all()
+  return c.json({ reservations: reservations.results })
+})
+
+// Création réservation client
+app.post('/api/client/restaurant/reservations', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  const body = await c.req.json() as { reservation_date: string; meal_type: string; time_slot?: string; guest_count: number; notes?: string }
+  if (!body.reservation_date || !body.meal_type || !body.guest_count) return c.json({ error: 'Champs manquants' }, 400)
+  if (body.guest_count < 1 || body.guest_count > 20) return c.json({ error: 'Nombre de personnes invalide (1 à 20)' }, 400)
+
+  const avail = await getMealAvailability(c.env.DB, client.hotel_id, body.reservation_date, body.meal_type)
+  if (!avail.is_open) return c.json({ error: 'Le service est fermé ce jour-là' }, 400)
+  if (avail.slots_left < body.guest_count) return c.json({ error: `Plus que ${avail.slots_left} place(s) disponible(s)` }, 400)
+
+  const result = await c.env.DB.prepare(`
+    INSERT INTO restaurant_reservations (hotel_id, room_id, reservation_date, meal_type, time_slot, guest_count, guest_name, notes, status, created_by_client_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)
+  `).bind(client.hotel_id, client.room_id, body.reservation_date, body.meal_type, body.time_slot || null, body.guest_count, client.guest_name, body.notes || null, client.id).run()
+  return c.json({ id: result.meta.last_row_id })
+})
+
+// Annulation client
+app.delete('/api/client/restaurant/reservations/:id', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  const id = c.req.param('id')
+  const row = await c.env.DB.prepare('SELECT id, created_by_client_id FROM restaurant_reservations WHERE id = ?').bind(id).first() as any
+  if (!row || row.created_by_client_id !== client.id) return c.json({ error: 'Non autorisée' }, 403)
+  await c.env.DB.prepare(`UPDATE restaurant_reservations SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(id).run()
+  return c.json({ success: true })
+})
+
+// ============================================
+// FRONT WIKOT — chat IA pour le client (mode 'concierge')
+// ============================================
+// Le client peut poser des questions sur l'hôtel, l'IA répond UNIQUEMENT depuis
+// les hotel_info_items déjà publiés. Conversations isolées par client_account.
+app.get('/api/client/wikot/conversations', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  const conversations = await c.env.DB.prepare(`
+    SELECT id, title, created_at, updated_at
+    FROM wikot_conversations
+    WHERE client_account_id = ? AND mode = 'concierge' AND is_archived = 0
+    ORDER BY updated_at DESC
+    LIMIT 20
+  `).bind(client.id).all()
+  return c.json({ conversations: conversations.results })
+})
+
+app.post('/api/client/wikot/conversations', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  const result = await c.env.DB.prepare(`
+    INSERT INTO wikot_conversations (hotel_id, user_id, client_account_id, title, mode)
+    VALUES (?, NULL, ?, ?, 'concierge')
+  `).bind(client.hotel_id, client.id, 'Nouvelle conversation').run()
+  return c.json({ id: result.meta.last_row_id })
+})
+
+app.get('/api/client/wikot/conversations/:id', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  const id = c.req.param('id')
+  const conv = await c.env.DB.prepare(`
+    SELECT id, title, created_at, updated_at
+    FROM wikot_conversations
+    WHERE id = ? AND client_account_id = ? AND mode = 'concierge'
+  `).bind(id, client.id).first()
+  if (!conv) return c.json({ error: 'Conversation non trouvée' }, 404)
+  const messages = await c.env.DB.prepare(`
+    SELECT id, role, content, references_json, created_at
+    FROM wikot_messages
+    WHERE conversation_id = ? AND role IN ('user', 'assistant')
+    ORDER BY created_at ASC
+  `).bind(id).all()
+  return c.json({ conversation: conv, messages: messages.results })
+})
+
+app.post('/api/client/wikot/conversations/:id/message', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  const convId = c.req.param('id')
+  const body = await c.req.json() as { content: string }
+  const userMessage = String(body.content || '').trim()
+  if (!userMessage) return c.json({ error: 'Message vide' }, 400)
+
+  const conv = await c.env.DB.prepare(`
+    SELECT id FROM wikot_conversations WHERE id = ? AND client_account_id = ? AND mode = 'concierge'
+  `).bind(convId, client.id).first()
+  if (!conv) return c.json({ error: 'Conversation non trouvée' }, 404)
+
+  // Stocker le message utilisateur
+  const userInsert = await c.env.DB.prepare(`
+    INSERT INTO wikot_messages (conversation_id, role, content) VALUES (?, 'user', ?)
+  `).bind(convId, userMessage).run()
+
+  // Construire le contexte : toutes les hotel_info de l'hôtel
+  const categories = await c.env.DB.prepare(`
+    SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY sort_order, name
+  `).bind(client.hotel_id).all()
+  const items = await c.env.DB.prepare(`
+    SELECT id, category_id, title, content FROM hotel_info_items WHERE hotel_id = ? ORDER BY sort_order, title
+  `).bind(client.hotel_id).all()
+
+  const catMap: Record<number, string> = {}
+  for (const cat of categories.results as any[]) catMap[cat.id] = cat.name
+  const knowledgeBase = (items.results as any[]).map((it: any) =>
+    `### ${catMap[it.category_id] || 'Général'} — ${it.title}\n${it.content || ''}`
+  ).join('\n\n')
+
+  // Historique récent (10 derniers messages)
+  const history = await c.env.DB.prepare(`
+    SELECT role, content FROM wikot_messages
+    WHERE conversation_id = ? AND role IN ('user', 'assistant')
+    ORDER BY created_at DESC LIMIT 10
+  `).bind(convId).all()
+  const historyMessages = (history.results as any[]).reverse()
+
+  const systemPrompt = `Tu es Wikot, le concierge virtuel de l'hôtel ${client.hotel_name}.
+Tu aides ${client.guest_name} (chambre ${client.room_number}) avec des informations pratiques sur l'hôtel.
+
+## Ton rôle
+- Réponds UNIQUEMENT à partir des informations ci-dessous fournies par l'hôtel.
+- Si la question dépasse ces informations, dis poliment que tu n'as pas l'info et invite à contacter la réception.
+- Sois chaleureux, concis, et utilise le vouvoiement.
+- Pour les réservations restaurant, indique au client qu'il peut les faire directement dans la section "Restaurant" de l'application.
+
+## Informations disponibles sur l'hôtel ${client.hotel_name}
+
+${knowledgeBase || '(Aucune information n\'a encore été publiée par l\'hôtel.)'}
+
+## Règles strictes
+- Ne JAMAIS inventer d'information non présente ci-dessus.
+- Ne JAMAIS parler d'autres hôtels, d'autres clients, ni des procédures internes du staff.
+- Ne JAMAIS révéler que tu es un système IA basé sur OpenRouter ou un LLM.`
+
+  let assistantText = "Je suis désolé, le service de chat n'est pas configuré actuellement. Veuillez contacter la réception."
+  const apiKey = c.env.OPENROUTER_API_KEY
+  if (apiKey) {
+    try {
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        ...historyMessages.map((m: any) => ({ role: m.role, content: m.content }))
+      ]
+      const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'openai/gpt-4o-mini',
+          messages,
+          temperature: 0.4
+        })
+      })
+      const data: any = await resp.json()
+      assistantText = data?.choices?.[0]?.message?.content || assistantText
+    } catch (e) {
+      assistantText = "Désolé, je rencontre un problème technique. Réessayez dans un instant."
+    }
+  }
+
+  // Stocker la réponse
+  const assistantInsert = await c.env.DB.prepare(`
+    INSERT INTO wikot_messages (conversation_id, role, content) VALUES (?, 'assistant', ?)
+  `).bind(convId, assistantText).run()
+
+  // Mettre à jour le titre si premier message
+  const msgCount = await c.env.DB.prepare(`SELECT COUNT(*) as n FROM wikot_messages WHERE conversation_id = ? AND role='user'`).bind(convId).first() as any
+  if (msgCount?.n === 1) {
+    const newTitle = userMessage.slice(0, 60)
+    await c.env.DB.prepare(`UPDATE wikot_conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(newTitle, convId).run()
+  } else {
+    await c.env.DB.prepare(`UPDATE wikot_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(convId).run()
+  }
+
+  return c.json({
+    user_message_id: userInsert.meta.last_row_id,
+    assistant_message: {
+      id: assistantInsert.meta.last_row_id,
+      role: 'assistant',
+      content: assistantText
+    }
+  })
 })
 
 // ============================================

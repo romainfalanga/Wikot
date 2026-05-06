@@ -6485,10 +6485,10 @@ function renderSettingsIdentity(h) {
   return `
     <h3 class="text-base font-bold text-navy-800 mb-4"><i class="fas fa-hotel text-brand-400 mr-2"></i>Identité de l'hôtel</h3>
     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      ${settingsField('s_name', 'Nom de l\\'hôtel', h.name, { placeholder: 'Grand Hôtel des Lecques' })}
+      ${settingsField('s_name', "Nom de l'hôtel", h.name, { placeholder: 'Grand Hôtel des Lecques' })}
       ${settingsField('s_brand_color', 'Couleur de marque', h.brand_color || '#f59e0b', { type: 'color', inputExtra: 'h-10 cursor-pointer' })}
       <div class="sm:col-span-2">
-        ${settingsField('s_description', 'Description', h.description, { type: 'textarea', rows: 3, placeholder: 'Quelques lignes pour présenter l\\'hôtel.', help: 'Affiché dans le portail client (Front Wikot).' })}
+        ${settingsField('s_description', 'Description', h.description, { type: 'textarea', rows: 3, placeholder: "Quelques lignes pour présenter l'hôtel.", help: 'Affiché dans le portail client (Front Wikot).' })}
       </div>
       ${settingsField('s_logo_url', 'URL du logo', h.logo_url, { placeholder: 'https://...' })}
       ${settingsField('s_currency', 'Devise', h.currency || 'EUR', { placeholder: 'EUR' })}
@@ -6550,7 +6550,7 @@ function renderSettingsStay(h) {
 
     <!-- Politique d'annulation + message d'accueil -->
     <div class="space-y-4 mb-5">
-      ${settingsField('s_cancellation_policy', 'Politique d\\'annulation', h.cancellation_policy, { type: 'textarea', rows: 2, placeholder: 'Annulation gratuite jusqu\\'à 18h la veille...' })}
+      ${settingsField('s_cancellation_policy', "Politique d'annulation", h.cancellation_policy, { type: 'textarea', rows: 2, placeholder: "Annulation gratuite jusqu'à 18h la veille..." })}
       ${settingsField('s_welcome_message', 'Message de bienvenue (Front Wikot)', h.welcome_message, { type: 'textarea', rows: 3, placeholder: 'Bienvenue au Grand Hôtel des Lecques ! Profitez de votre séjour...', help: 'Affiché aux clients après leur connexion.' })}
     </div>
 

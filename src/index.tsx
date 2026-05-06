@@ -2513,6 +2513,16 @@ app.get('*', (c) => {
     @keyframes slideIn { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     .pulse-dot { animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+    /* Highlight visuel pour les champs Back Wikot que l'IA vient de modifier */
+    .back-wikot-touched {
+      animation: backWikotTouched 1.8s ease-out;
+      box-shadow: 0 0 0 2px rgba(251, 146, 60, 0.55);
+    }
+    @keyframes backWikotTouched {
+      0%   { background-color: #fff7ed; box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.85); }
+      40%  { background-color: #ffedd5; box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.65); }
+      100% { background-color: inherit; box-shadow: 0 0 0 0 rgba(251, 146, 60, 0); }
+    }
     .step-connector { position: relative; }
     .step-connector::before { content: ''; position: absolute; left: 19px; top: 40px; bottom: -8px; width: 2px; background: #e5e7eb; }
     .step-connector:last-child::before { display: none; }

@@ -2873,25 +2873,51 @@ function collectBackWikotFormContext() {
 }
 
 // Applique les patches renvoyés par le tool update_form
-// form_updates est un tableau de { field, value } produit par le backend
+// FORMAT BACKEND : tableau d'objets, chaque objet contient les champs modifiés.
+// Ex: [ { title: "Effectuer un check-out", trigger_event: "Quand…", steps: [...] } ]
+// On merge chaque patch dans state.backWikotForm et on tracke les champs touchés
+// pour le feedback visuel (highlight flash 1.5s).
 function applyBackWikotFormUpdates(updates) {
   if (!state.backWikotForm) return;
   const f = state.backWikotForm;
-  for (const u of updates) {
-    if (!u || !u.field) continue;
-    if (u.field === 'steps' && Array.isArray(u.value)) {
-      // Re-numéroter les étapes (1..N)
-      f.steps = u.value.map((s, i) => ({
-        step_number: i + 1,
-        title: s.title || '',
-        content: s.content || '',
-        linked_procedure_id: s.linked_procedure_id || null
-      }));
-    } else if (u.field in f) {
-      f[u.field] = u.value;
+  const touchedFields = new Set();
+
+  // Définir les champs autorisés selon le type de form (sécurité côté UI aussi)
+  const allowedKeys = f.kind === 'procedure'
+    ? ['title', 'trigger_event', 'description', 'category_id', 'steps']
+    : ['title', 'content', 'category_id'];
+
+  for (const patch of updates) {
+    if (!patch || typeof patch !== 'object') continue;
+    for (const key of Object.keys(patch)) {
+      if (!allowedKeys.includes(key)) continue;
+      const value = patch[key];
+      if (key === 'steps' && Array.isArray(value)) {
+        f.steps = value.map((s, i) => ({
+          step_number: i + 1,
+          title: s.title || '',
+          content: s.content || '',
+          linked_procedure_id: s.linked_procedure_id || null
+        }));
+        touchedFields.add('steps');
+      } else {
+        f[key] = value;
+        touchedFields.add(key);
+      }
     }
   }
+
+  // Tracker les champs récemment modifiés (utilisé par le rendu pour highlight)
+  state.backWikotRecentlyTouched = Array.from(touchedFields);
+  state.backWikotTouchedAt = Date.now();
   state.backWikotFormDirty = true;
+
+  // Auto-clear du highlight après 2s
+  if (state._backWikotTouchedTimer) clearTimeout(state._backWikotTouchedTimer);
+  state._backWikotTouchedTimer = setTimeout(() => {
+    state.backWikotRecentlyTouched = [];
+    render();
+  }, 2000);
 }
 
 // Démarre un workflow Back Wikot : vérifie permissions + crée une conversation neuve
@@ -3804,89 +3830,86 @@ function toggleBackWikotHistorySidebar() {
 }
 
 // Form procédure : titre, déclencheur, description, catégorie, étapes
+// Helper : retourne les classes CSS pour le highlight d'un champ récemment modifié par l'IA
+function fieldHighlightClass(fieldName) {
+  const touched = state.backWikotRecentlyTouched || [];
+  return touched.includes(fieldName) ? 'back-wikot-touched' : '';
+}
+
+// Helper : trouve une catégorie par ID dans la liste donnée
+function findCatById(cats, id) {
+  return (cats || []).find(c => c.id === id);
+}
+
 function renderBackWikotProcedureForm(f) {
   const cats = state.categories || [];
   const allProcs = state.backWikotProceduresCache || state.procedures || [];
-  // Pour le picker de sous-procédure, on autorise toutes les procédures sauf soi-même
   const linkable = allProcs.filter(p => p.id !== f.id);
 
-  const stepsHtml = (f.steps || []).map((st, idx) => `
-    <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
-      <div class="flex items-center gap-2">
-        <span class="w-7 h-7 rounded-full bg-gradient-to-br from-orange-400 to-rose-500 text-white text-xs font-bold flex items-center justify-center shrink-0">${idx + 1}</span>
-        <input type="text" value="${escapeHtml(st.title || '')}"
-          oninput="updateBackWikotStepField(${idx}, 'title', this.value)"
-          placeholder="Titre de l'étape (verbe à l'impératif)"
-          class="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400" />
-        <button onclick="moveBackWikotStep(${idx}, -1)" ${idx === 0 ? 'disabled' : ''}
-          class="w-7 h-7 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-navy-500 flex items-center justify-center" title="Monter">
-          <i class="fas fa-arrow-up text-xs"></i>
-        </button>
-        <button onclick="moveBackWikotStep(${idx}, 1)" ${idx === (f.steps.length - 1) ? 'disabled' : ''}
-          class="w-7 h-7 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-navy-500 flex items-center justify-center" title="Descendre">
-          <i class="fas fa-arrow-down text-xs"></i>
-        </button>
-        <button onclick="removeBackWikotStep(${idx})"
-          class="w-7 h-7 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 flex items-center justify-center" title="Supprimer">
-          <i class="fas fa-trash text-xs"></i>
-        </button>
+  const stepsHtml = (f.steps || []).map((st, idx) => {
+    const linkedProc = st.linked_procedure_id ? linkable.find(p => p.id === st.linked_procedure_id) : null;
+    return `
+      <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 ${fieldHighlightClass('steps')}">
+        <div class="flex items-start gap-2">
+          <span class="w-7 h-7 rounded-full bg-gradient-to-br from-orange-400 to-rose-500 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">${idx + 1}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-semibold text-navy-900 leading-snug">${st.title ? escapeHtml(st.title) : '<span class="italic text-navy-300">(titre vide)</span>'}</div>
+            ${st.content ? `<div class="text-[13px] text-navy-700 mt-1 whitespace-pre-wrap leading-relaxed">${formatHotelInfoContent(st.content)}</div>` : ''}
+            ${linkedProc ? `
+              <div class="mt-2 inline-flex items-center gap-1.5 text-[11px] bg-purple-50 text-purple-700 border border-purple-200 px-2 py-0.5 rounded-full">
+                <i class="fas fa-link text-[10px]"></i>Sous-procédure liée : ${escapeHtml(linkedProc.title)}
+              </div>
+            ` : ''}
+          </div>
+        </div>
       </div>
-      <textarea oninput="updateBackWikotStepField(${idx}, 'content', this.value)"
-        placeholder="Détail de l'étape (instructions concrètes au présent, à la 2e personne)"
-        rows="3"
-        class="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400 resize-y">${escapeHtml(st.content || '')}</textarea>
-      <div class="flex items-center gap-2">
-        <label class="text-[11px] text-navy-500 shrink-0"><i class="fas fa-link mr-1"></i>Sous-procédure liée :</label>
-        <select onchange="updateBackWikotStepField(${idx}, 'linked_procedure_id', this.value ? parseInt(this.value) : null); render();"
-          class="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-orange-400">
-          <option value="">Aucune</option>
-          ${linkable.map(p => `<option value="${p.id}" ${st.linked_procedure_id === p.id ? 'selected' : ''}>${escapeHtml(p.title)}${p.is_subprocedure ? ' (sous-proc)' : ''}</option>`).join('')}
-        </select>
-      </div>
-    </div>
-  `).join('');
+    `;
+  }).join('');
+
+  const cat = findCatById(cats, f.category_id);
 
   return `
     <div class="space-y-4">
       <div>
-        <label class="text-xs font-semibold text-navy-700 mb-1 block">Titre <span class="text-red-500">*</span></label>
-        <input type="text" value="${escapeHtml(f.title || '')}"
-          oninput="updateBackWikotFormField('title', this.value)"
-          placeholder="Verbe à l'infinitif (ex: Effectuer un check-in)"
-          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400" />
+        <label class="text-xs font-semibold text-navy-700 mb-1 block flex items-center gap-1.5">
+          Titre <span class="text-red-500">*</span>
+        </label>
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] ${fieldHighlightClass('title')}">
+          ${f.title ? escapeHtml(f.title) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+        </div>
       </div>
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Déclencheur <span class="text-red-500">*</span></label>
-        <input type="text" value="${escapeHtml(f.trigger_event || '')}"
-          oninput="updateBackWikotFormField('trigger_event', this.value)"
-          placeholder="Quand… ou Lorsque…"
-          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400" />
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] ${fieldHighlightClass('trigger_event')}">
+          ${f.trigger_event ? escapeHtml(f.trigger_event) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+        </div>
       </div>
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Description</label>
-        <textarea oninput="updateBackWikotFormField('description', this.value)"
-          placeholder="1 à 2 phrases pour situer la procédure"
-          rows="2"
-          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400 resize-y">${escapeHtml(f.description || '')}</textarea>
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] whitespace-pre-wrap ${fieldHighlightClass('description')}">
+          ${f.description ? escapeHtml(f.description) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+        </div>
       </div>
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Catégorie</label>
-        <select onchange="updateBackWikotFormField('category_id', this.value ? parseInt(this.value) : null)"
-          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400">
-          <option value="">Sans catégorie</option>
-          ${cats.map(c => `<option value="${c.id}" ${f.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-        </select>
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 ${fieldHighlightClass('category_id')}">
+          ${cat ? `<i class="fas ${cat.icon || 'fa-folder'} mr-1.5" style="color:${cat.color || '#7C3AED'}"></i>${escapeHtml(cat.name)}` : '<span class="italic text-navy-400">Sans catégorie</span>'}
+        </div>
       </div>
 
       <div class="pt-2 border-t border-gray-200">
-        <div class="flex items-center justify-between mb-2">
-          <label class="text-xs font-semibold text-navy-700">Étapes <span class="text-red-500">*</span> <span class="text-navy-400 font-normal">(${(f.steps || []).length})</span></label>
-          <button onclick="addBackWikotStep()" class="text-xs bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-lg inline-flex items-center gap-1">
-            <i class="fas fa-plus text-[10px]"></i>Ajouter une étape
-          </button>
-        </div>
+        <label class="text-xs font-semibold text-navy-700 block mb-2">
+          Étapes <span class="text-red-500">*</span> <span class="text-navy-400 font-normal">(${(f.steps || []).length})</span>
+        </label>
         <div class="space-y-2">
-          ${stepsHtml || '<div class="text-center py-6 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">Aucune étape. Demande à Back Wikot ou clique sur « Ajouter une étape ».</div>'}
+          ${stepsHtml || '<div class="text-center py-6 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">Aucune étape pour le moment. Demande à Back Wikot d\'ajouter ou de modifier les étapes.</div>'}
+        </div>
+      </div>
+
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
+        <i class="fas fa-circle-info mt-0.5"></i>
+        <div>
+          <strong>Formulaire en lecture seule.</strong> Seul Back Wikot peut écrire dedans. Pour modifier un champ, demande-lui dans le chat à droite. Quand tout te convient, clique sur <strong>Enregistrer</strong> en haut.
         </div>
       </div>
     </div>
@@ -3896,30 +3919,33 @@ function renderBackWikotProcedureForm(f) {
 // Form info : titre, contenu, catégorie
 function renderBackWikotInfoForm(f) {
   const cats = state.hotelInfoCategories || [];
+  const cat = findCatById(cats, f.category_id);
   return `
     <div class="space-y-4">
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Titre <span class="text-red-500">*</span></label>
-        <input type="text" value="${escapeHtml(f.title || '')}"
-          oninput="updateBackWikotFormField('title', this.value)"
-          placeholder="Titre court et factuel"
-          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400" />
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] ${fieldHighlightClass('title')}">
+          ${f.title ? escapeHtml(f.title) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+        </div>
       </div>
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Catégorie</label>
-        <select onchange="updateBackWikotFormField('category_id', this.value ? parseInt(this.value) : null)"
-          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400">
-          <option value="">Sans catégorie</option>
-          ${cats.map(c => `<option value="${c.id}" ${f.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
-        </select>
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 ${fieldHighlightClass('category_id')}">
+          ${cat ? `<i class="fas ${cat.icon || 'fa-circle-info'} mr-1.5" style="color:${cat.color || '#3B82F6'}"></i>${escapeHtml(cat.name)}` : '<span class="italic text-navy-400">Sans catégorie</span>'}
+        </div>
       </div>
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Contenu <span class="text-red-500">*</span></label>
-        <textarea oninput="updateBackWikotFormField('content', this.value)"
-          placeholder="Bullets factuels. **gras** pour les valeurs clés. Format horaires : 09:00 – 18:00."
-          rows="14"
-          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400 resize-y font-mono">${escapeHtml(f.content || '')}</textarea>
-        <p class="text-[10px] text-navy-400 mt-1">Astuce : commence chaque bullet par <code>•</code> ou <code>-</code>. Utilise <code>**texte**</code> pour mettre en gras.</p>
+        <div class="w-full px-3 py-3 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[10rem] whitespace-pre-wrap leading-relaxed ${fieldHighlightClass('content')}">
+          ${f.content ? formatHotelInfoContent(f.content) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+        </div>
+      </div>
+
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
+        <i class="fas fa-circle-info mt-0.5"></i>
+        <div>
+          <strong>Formulaire en lecture seule.</strong> Seul Back Wikot peut écrire dedans. Pour modifier un champ, demande-lui dans le chat à droite. Quand tout te convient, clique sur <strong>Enregistrer</strong> en haut.
+        </div>
       </div>
     </div>
   `;

@@ -156,6 +156,11 @@ function userCanEditRestaurant() {
   return state.user.role === 'admin' || Number(state.user.can_edit_restaurant) === 1;
 }
 
+function userCanEditSettings() {
+  if (!state.user) return false;
+  return state.user.role === 'admin' || Number(state.user.can_edit_settings) === 1;
+}
+
 // ============================================
 // CLIENT API HELPER (token séparé du staff)
 // ============================================
@@ -724,6 +729,9 @@ function renderMainLayout() {
       ] : []),
       ...(userCanEditRestaurant() ? [
         { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' }
+      ] : []),
+      ...(userCanEditSettings() ? [
+        { id: 'hotel-settings', icon: 'fa-gear', label: 'Paramètres hôtel' }
       ] : []),
     ];
   }
@@ -1447,7 +1455,10 @@ async function togglePermission(userId, permKey, newValue) {
   const labels = {
     can_edit_procedures: 'modifier les procédures',
     can_edit_info: 'modifier les informations',
-    can_manage_chat: 'gérer les salons et conversations'
+    can_manage_chat: 'gérer les salons et conversations',
+    can_edit_clients: 'gérer les chambres et présents du jour',
+    can_edit_restaurant: 'gérer le restaurant',
+    can_edit_settings: 'modifier les paramètres de l\'hôtel'
   };
   const verb = newValue === 1 ? 'accorder' : 'retirer';
   if (!confirm(`Voulez-vous ${verb} le droit de ${labels[permKey] || permKey} à cet employé ?`)) return;
@@ -1461,23 +1472,27 @@ async function togglePermission(userId, permKey, newValue) {
   }
 }
 
-// Composant : 3 cases à cocher pour un employé (versions desktop/mobile)
+// Composant : 6 cases à cocher pour un employé (versions desktop/mobile)
+// Couvre : procédures, infos, chat, chambres, restaurant, paramètres
 function permissionCheckboxes(u, compact = false) {
   const perms = [
-    { key: 'can_edit_procedures', label: 'Procédures', icon: 'fa-sitemap' },
-    { key: 'can_edit_info', label: 'Informations', icon: 'fa-circle-info' },
-    { key: 'can_manage_chat', label: 'Salons / chat', icon: 'fa-comments' }
+    { key: 'can_edit_procedures',  label: 'Procédures',         icon: 'fa-sitemap' },
+    { key: 'can_edit_info',        label: 'Informations',       icon: 'fa-circle-info' },
+    { key: 'can_manage_chat',      label: 'Salons / chat',      icon: 'fa-comments' },
+    { key: 'can_edit_clients',     label: 'Chambres & présents',icon: 'fa-door-closed' },
+    { key: 'can_edit_restaurant',  label: 'Restaurant',         icon: 'fa-utensils' },
+    { key: 'can_edit_settings',    label: 'Paramètres hôtel',   icon: 'fa-gear' }
   ];
   return `
     <div class="flex flex-col gap-1.5">
       ${perms.map(p => {
-        const checked = u[p.key] === 1;
+        const checked = Number(u[p.key]) === 1;
         return `
           <label class="flex items-center gap-2 cursor-pointer text-xs text-navy-700 hover:bg-gray-50 rounded px-1 py-0.5 transition-colors">
             <input type="checkbox" ${checked ? 'checked' : ''}
               onchange="togglePermission(${u.id}, '${p.key}', this.checked ? 1 : 0)"
               class="w-3.5 h-3.5 rounded border-gray-300 text-brand-500 focus:ring-brand-400">
-            <i class="fas ${p.icon} text-navy-400 text-[10px]"></i>
+            <i class="fas ${p.icon} text-navy-400 text-[10px] w-3 text-center"></i>
             <span class="${compact ? 'text-[11px]' : ''}">${p.label}</span>
           </label>
         `;
@@ -1644,11 +1659,14 @@ function renderUsersView() {
       <i class="fas fa-circle-info text-blue-400 mt-0.5"></i>
       <div class="text-xs text-blue-700 space-y-1">
         <p class="font-semibold mb-1">Permissions des employés</p>
-        <p>Tu peux activer / désactiver indépendamment trois droits pour chaque employé :</p>
+        <p>Tu peux activer / désactiver indépendamment <strong>six droits</strong> pour chaque employé :</p>
         <ul class="list-disc pl-5 space-y-0.5">
           <li><strong>Procédures</strong> — créer, modifier et supprimer les procédures.</li>
-          <li><strong>Informations</strong> — créer et modifier les informations de l'hôtel (catégories + items).</li>
-          <li><strong>Salons / chat</strong> — créer, modifier et organiser les salons et conversations.</li>
+          <li><strong>Informations</strong> — créer et modifier les informations de l'hôtel.</li>
+          <li><strong>Salons / chat</strong> — créer, modifier et organiser les conversations.</li>
+          <li><strong>Chambres &amp; présents</strong> — gérer les chambres et saisir les clients du jour.</li>
+          <li><strong>Restaurant</strong> — planning hebdo, exceptions, réservations, dashboard.</li>
+          <li><strong>Paramètres hôtel</strong> — modifier l'identité, contact, séjour, wifi.</li>
         </ul>
         <p class="mt-1">Les <strong>admins</strong> ont toujours accès complet à tout, sans cases à cocher.</p>
       </div>
@@ -4473,7 +4491,9 @@ function ensureChatGlobalPolling() {
   if (chatGlobalPollingTimer) return;
   if (!state.user || state.user.role === 'super_admin') return;
   // Toutes les 15s, refresh des compteurs globaux (sauf si on est dans un salon où le polling salon prend le relais)
+  // Optimisation : pas de poll si l'onglet est en arrière-plan (économie batterie + serveur)
   chatGlobalPollingTimer = setInterval(() => {
+    if (document.hidden) return;
     if (!state.selectedChannelId) {
       refreshChatBadges();
     }
@@ -4487,8 +4507,11 @@ function stopChatPolling() {
 
 function startChannelPolling() {
   stopChannelPolling();
-  // Toutes les 4s, check les nouveaux messages
-  chatChannelPollingTimer = setInterval(pollNewMessages, 4000);
+  // Toutes les 4s, check les nouveaux messages — pause si onglet en arrière-plan
+  chatChannelPollingTimer = setInterval(() => {
+    if (document.hidden) return;
+    pollNewMessages();
+  }, 4000);
 }
 
 function stopChannelPolling() {
@@ -5662,7 +5685,13 @@ function renderRoomsView() {
       <h2 class="text-2xl font-bold text-navy-800"><i class="fas fa-door-closed text-brand-400 mr-2"></i>Chambres</h2>
       <p class="text-sm text-gray-500 mt-1">${state.rooms.length} chambre(s) · ${state.rooms.filter(r => r.is_active).length} active(s)</p>
     </div>
-    ${canEdit ? `<button onclick="showRoomModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-plus mr-2"></i>Nouvelle chambre</button>` : ''}
+    ${canEdit ? `
+      <div class="flex flex-wrap gap-2">
+        ${state.rooms.length === 0 ? `<button onclick="seedLecquesRooms()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow" title="Crée les 56 chambres du Grand Hôtel des Lecques (étage 1: 01-09, étage 2: 101-109, étage 3: 201-219, étage 4: 301-319)"><i class="fas fa-magic mr-2"></i>Seed Lecques (56)</button>` : ''}
+        <button onclick="showBulkRoomsModal()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-file-import mr-2"></i>Import en masse</button>
+        <button onclick="showRoomModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-plus mr-2"></i>Nouvelle chambre</button>
+      </div>
+    ` : ''}
   </div>
   <div class="bg-white rounded-xl shadow-sm overflow-hidden">
     <div class="table-scroll-wrapper">
@@ -5757,6 +5786,109 @@ async function deleteRoom(roomId, label) {
   if (!confirm(`Supprimer la chambre ${label} ? Le compte client associé sera également supprimé.`)) return;
   const data = await api(`/rooms/${roomId}`, { method: 'DELETE' });
   if (data) { showToast('Chambre supprimée', 'success'); await loadRooms(); render(); }
+}
+
+// ============================================
+// IMPORT EN MASSE — coller une liste de chambres (1 par ligne)
+// Format accepté par ligne :
+//   "101"           → numéro seul, étage = '', capacité = 2
+//   "101,1"         → numéro + étage
+//   "101,1,2"       → numéro + étage + capacité
+//   "101 ; 1 ; 2"   → séparateur ; aussi accepté (FR)
+// ============================================
+function showBulkRoomsModal() {
+  const html = `
+  <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-2" onclick="if(event.target===this) closeModal()">
+    <div class="modal-panel bg-white w-full sm:max-w-lg max-h-[95vh] flex flex-col">
+      <div class="modal-header bg-blue-500 text-white px-5 py-3 flex items-center justify-between">
+        <h3 class="font-semibold"><i class="fas fa-file-import mr-2"></i>Import en masse de chambres</h3>
+        <button onclick="closeModal()" class="text-white/80 hover:text-white"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="modal-body p-5 space-y-4 overflow-y-auto">
+        <div class="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
+          <p class="font-semibold mb-1"><i class="fas fa-info-circle mr-1"></i>Format accepté (1 chambre par ligne)</p>
+          <ul class="list-disc pl-5 space-y-0.5">
+            <li><code>101</code> — numéro seul (étage vide, 2 personnes)</li>
+            <li><code>101,1</code> — numéro + étage</li>
+            <li><code>101,1,2</code> — numéro + étage + capacité</li>
+          </ul>
+          <p class="mt-1.5">Les chambres déjà existantes sont automatiquement ignorées.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-navy-700 mb-1">Liste des chambres</label>
+          <textarea id="bulk_rooms_text" rows="12" placeholder="01,1&#10;02,1&#10;03,1&#10;..." class="w-full px-3 py-2 border border-gray-200 rounded-lg form-input-mobile font-mono text-sm"></textarea>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Annuler</button>
+          <button onclick="bulkCreateRooms()" class="px-5 py-2 text-sm bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold"><i class="fas fa-check mr-1"></i>Créer les chambres</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+}
+
+// Parse une ligne au format "num[,étage[,capacité]]" (séparateurs , ; ou tab)
+function parseRoomLine(line) {
+  const parts = line.split(/[,;\t]+/).map(s => s.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+  return {
+    room_number: parts[0],
+    floor: parts[1] || null,
+    capacity: parts[2] ? parseInt(parts[2]) || 2 : 2
+  };
+}
+
+async function bulkCreateRooms() {
+  const text = document.getElementById('bulk_rooms_text').value;
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length === 0) { showToast('Liste vide', 'error'); return; }
+  const rooms = lines.map(parseRoomLine).filter(Boolean);
+  if (rooms.length === 0) { showToast('Aucune chambre valide', 'error'); return; }
+  const data = await api('/rooms/bulk', { method: 'POST', body: JSON.stringify({ rooms }) });
+  if (data) {
+    let msg = `${data.created} créée(s)`;
+    if (data.skipped) msg += ` · ${data.skipped} ignorée(s) (déjà existantes)`;
+    if (data.errors && data.errors.length) msg += ` · ${data.errors.length} erreur(s)`;
+    showToast(msg, data.created > 0 ? 'success' : 'warning');
+    closeModal();
+    await loadRooms();
+    render();
+  }
+}
+
+// Seed initial dédié au Grand Hôtel des Lecques :
+//   Étage 1 : 01-09 (9 chambres)
+//   Étage 2 : 101-109 (9 chambres)
+//   Étage 3 : 201-219 (19 chambres)
+//   Étage 4 : 301-319 (19 chambres)
+//   Total : 56
+async function seedLecquesRooms() {
+  if (!confirm('Créer automatiquement les 56 chambres du Grand Hôtel des Lecques ?\n\n• Étage 1 : 01 à 09 (9 chambres)\n• Étage 2 : 101 à 109 (9 chambres)\n• Étage 3 : 201 à 219 (19 chambres)\n• Étage 4 : 301 à 319 (19 chambres)')) return;
+  const rooms = [];
+  let order = 0;
+  // Étage 1 : 01-09 (numéros formatés sur 2 chiffres)
+  for (let i = 1; i <= 9; i++) {
+    rooms.push({ room_number: String(i).padStart(2, '0'), floor: '1', capacity: 2, sort_order: order++ });
+  }
+  // Étage 2 : 101-109
+  for (let i = 101; i <= 109; i++) {
+    rooms.push({ room_number: String(i), floor: '2', capacity: 2, sort_order: order++ });
+  }
+  // Étage 3 : 201-219
+  for (let i = 201; i <= 219; i++) {
+    rooms.push({ room_number: String(i), floor: '3', capacity: 2, sort_order: order++ });
+  }
+  // Étage 4 : 301-319
+  for (let i = 301; i <= 319; i++) {
+    rooms.push({ room_number: String(i), floor: '4', capacity: 2, sort_order: order++ });
+  }
+  const data = await api('/rooms/bulk', { method: 'POST', body: JSON.stringify({ rooms }) });
+  if (data) {
+    showToast(`${data.created} chambre(s) créée(s) · ${data.skipped} ignorée(s)`, 'success');
+    await loadRooms();
+    render();
+  }
 }
 
 // ============================================
@@ -6274,7 +6406,7 @@ async function cancelStaffReservation(id) {
 }
 
 // ============================================
-// VIEW: HOTEL SETTINGS — code client + capacités resto
+// VIEW: HOTEL SETTINGS — Identité, Contact, Séjour, Wifi
 // ============================================
 async function loadHotelSettings() {
   const id = state.user.hotel_id;
@@ -6289,63 +6421,201 @@ function renderHotelSettingsView() {
     loadHotelSettings().then(() => render());
     return `<div class="text-center py-12 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl mb-2"></i><p>Chargement...</p></div>`;
   }
-  if (state.user.role !== 'admin' && state.user.role !== 'super_admin') {
-    return `<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800">Réservé aux administrateurs.</div>`;
+  if (!userCanEditSettings() && state.user.role !== 'super_admin') {
+    return `<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800"><i class="fas fa-lock mr-2"></i>Tu n'as pas la permission de modifier les paramètres. Demande à un administrateur de t'activer le droit "Paramètres hôtel".</div>`;
   }
   const h = state.hotelSettings || {};
+  const tab = state.settingsTab || 'identity';
+  const tabs = [
+    { id: 'identity', label: 'Identité',  icon: 'fa-hotel' },
+    { id: 'contact',  label: 'Contact',   icon: 'fa-address-book' },
+    { id: 'stay',     label: 'Séjour',    icon: 'fa-suitcase' },
+    { id: 'wifi',     label: 'Wifi',      icon: 'fa-wifi' },
+  ];
+
   return `
-  <div class="mb-6">
-    <h2 class="text-2xl font-bold text-navy-800"><i class="fas fa-gear text-brand-400 mr-2"></i>Paramètres de l'hôtel</h2>
+  <div class="mb-5">
+    <h2 class="text-xl sm:text-2xl font-bold text-navy-800"><i class="fas fa-gear text-brand-400 mr-2"></i>Paramètres de l'hôtel</h2>
     <p class="text-sm text-gray-500 mt-1">${escapeHtml(h.name || '')}</p>
   </div>
-  <div class="bg-white rounded-xl shadow-sm p-6 max-w-2xl space-y-5">
-    <div>
-      <label class="block text-sm font-semibold text-navy-700 mb-1">Code de connexion client</label>
-      <p class="text-xs text-gray-500 mb-2">Code court (3-12 caractères, lettres et chiffres) que vos clients tapent pour se connecter à Wikot. Ce code sera imprimé sur les fiches plastifiées.</p>
-      <div class="flex gap-2">
-        <input id="hotel_code" type="text" value="${escapeHtml(h.client_login_code || '')}" placeholder="Ex: GRDPARIS"
-          style="text-transform: uppercase; letter-spacing: 1px;"
-          class="flex-1 px-3 py-2 border border-gray-200 rounded-lg form-input-mobile font-mono font-bold text-brand-500">
-        <button onclick="saveHotelCode()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-save mr-1"></i>Sauver</button>
-      </div>
+
+  <!-- Onglets -->
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 mb-5 overflow-hidden">
+    <div class="flex overflow-x-auto">
+      ${tabs.map(t => `
+        <button onclick="state.settingsTab='${t.id}'; render()"
+          class="flex-1 min-w-[120px] flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap
+            ${tab === t.id ? 'bg-brand-50 text-brand-600 border-b-2 border-brand-400' : 'text-navy-500 hover:bg-gray-50 border-b-2 border-transparent'}">
+          <i class="fas ${t.icon}"></i>${t.label}
+        </button>
+      `).join('')}
     </div>
-    <div class="border-t border-gray-200 pt-4">
-      <h3 class="font-semibold text-navy-700 mb-3">Capacités par défaut du restaurant</h3>
-      <p class="text-xs text-gray-500 mb-3">Ces capacités servent de base au planning hebdomadaire. Modifiable jour par jour dans Restaurant → Planning.</p>
-      <div class="grid grid-cols-3 gap-3">
-        <div>
-          <label class="block text-xs text-gray-600 mb-1">☕ Petit-déj</label>
-          <input id="cap_breakfast" type="number" min="0" value="${h.breakfast_capacity || 30}" class="w-full px-2 py-1.5 border rounded form-input-mobile">
-        </div>
-        <div>
-          <label class="block text-xs text-gray-600 mb-1">🍽️ Déjeuner</label>
-          <input id="cap_lunch" type="number" min="0" value="${h.lunch_capacity || 30}" class="w-full px-2 py-1.5 border rounded form-input-mobile">
-        </div>
-        <div>
-          <label class="block text-xs text-gray-600 mb-1">🍷 Dîner</label>
-          <input id="cap_dinner" type="number" min="0" value="${h.dinner_capacity || 30}" class="w-full px-2 py-1.5 border rounded form-input-mobile">
-        </div>
-      </div>
-      <button onclick="saveHotelCapacities()" class="mt-3 bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold"><i class="fas fa-save mr-1"></i>Enregistrer les capacités</button>
-    </div>
+  </div>
+
+  <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 sm:p-6 max-w-3xl">
+    ${tab === 'identity' ? renderSettingsIdentity(h) : ''}
+    ${tab === 'contact'  ? renderSettingsContact(h)  : ''}
+    ${tab === 'stay'     ? renderSettingsStay(h)     : ''}
+    ${tab === 'wifi'     ? renderSettingsWifi(h)     : ''}
   </div>`;
 }
 
-async function saveHotelCode() {
-  const code = document.getElementById('hotel_code').value.trim().toUpperCase();
-  if (!code) { showToast('Code requis', 'error'); return; }
-  const data = await api(`/hotels/${state.user.hotel_id}/settings`, { method: 'PUT', body: JSON.stringify({ client_login_code: code }) });
-  if (data) { showToast('Code mis à jour', 'success'); state._hotelSettingsLoaded = false; await loadHotelSettings(); render(); }
+function settingsField(id, label, value, opts = {}) {
+  const type = opts.type || 'text';
+  const placeholder = opts.placeholder || '';
+  const help = opts.help || '';
+  const inputClass = `w-full px-3 py-2 border border-gray-200 rounded-lg form-input-mobile text-sm ${opts.inputExtra || ''}`;
+  if (type === 'textarea') {
+    return `
+      <div>
+        <label class="block text-xs font-semibold text-navy-700 mb-1">${label}</label>
+        ${help ? `<p class="text-[11px] text-gray-500 mb-1.5">${help}</p>` : ''}
+        <textarea id="${id}" rows="${opts.rows || 3}" placeholder="${escapeHtml(placeholder)}" class="${inputClass}">${escapeHtml(value || '')}</textarea>
+      </div>`;
+  }
+  return `
+    <div>
+      <label class="block text-xs font-semibold text-navy-700 mb-1">${label}</label>
+      ${help ? `<p class="text-[11px] text-gray-500 mb-1.5">${help}</p>` : ''}
+      <input id="${id}" type="${type}" value="${escapeHtml(value || '')}" placeholder="${escapeHtml(placeholder)}" class="${inputClass}">
+    </div>`;
 }
 
-async function saveHotelCapacities() {
-  const body = {
-    breakfast_capacity: parseInt(document.getElementById('cap_breakfast').value) || 0,
-    lunch_capacity: parseInt(document.getElementById('cap_lunch').value) || 0,
-    dinner_capacity: parseInt(document.getElementById('cap_dinner').value) || 0
-  };
+function renderSettingsIdentity(h) {
+  return `
+    <h3 class="text-base font-bold text-navy-800 mb-4"><i class="fas fa-hotel text-brand-400 mr-2"></i>Identité de l'hôtel</h3>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      ${settingsField('s_name', 'Nom de l\\'hôtel', h.name, { placeholder: 'Grand Hôtel des Lecques' })}
+      ${settingsField('s_brand_color', 'Couleur de marque', h.brand_color || '#f59e0b', { type: 'color', inputExtra: 'h-10 cursor-pointer' })}
+      <div class="sm:col-span-2">
+        ${settingsField('s_description', 'Description', h.description, { type: 'textarea', rows: 3, placeholder: 'Quelques lignes pour présenter l\\'hôtel.', help: 'Affiché dans le portail client (Front Wikot).' })}
+      </div>
+      ${settingsField('s_logo_url', 'URL du logo', h.logo_url, { placeholder: 'https://...' })}
+      ${settingsField('s_currency', 'Devise', h.currency || 'EUR', { placeholder: 'EUR' })}
+      ${settingsField('s_timezone', 'Fuseau horaire', h.timezone || 'Europe/Paris', { placeholder: 'Europe/Paris' })}
+      ${settingsField('s_language', 'Langue', h.language || 'fr', { placeholder: 'fr' })}
+    </div>
+    <div class="mt-5 flex justify-end">
+      <button onclick="saveHotelSettings(['name','brand_color','description','logo_url','currency','timezone','language'])" class="bg-brand-400 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-sm font-semibold">
+        <i class="fas fa-save mr-1"></i>Enregistrer
+      </button>
+    </div>`;
+}
+
+function renderSettingsContact(h) {
+  return `
+    <h3 class="text-base font-bold text-navy-800 mb-4"><i class="fas fa-address-book text-brand-400 mr-2"></i>Contact &amp; réseaux</h3>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div class="sm:col-span-2">
+        ${settingsField('s_address', 'Adresse', h.address, { type: 'textarea', rows: 2, placeholder: '12 rue de la Mer, 83270 Saint-Cyr-sur-Mer' })}
+      </div>
+      ${settingsField('s_phone', 'Téléphone', h.phone, { placeholder: '+33 4 94 ...' })}
+      ${settingsField('s_email', 'Email', h.email, { type: 'email', placeholder: 'contact@hotel.com' })}
+      <div class="sm:col-span-2">
+        ${settingsField('s_website', 'Site web', h.website, { placeholder: 'https://...' })}
+      </div>
+      ${settingsField('s_instagram_url', 'Instagram', h.instagram_url, { placeholder: 'https://instagram.com/...' })}
+      ${settingsField('s_facebook_url', 'Facebook', h.facebook_url, { placeholder: 'https://facebook.com/...' })}
+      ${settingsField('s_tripadvisor_url', 'TripAdvisor', h.tripadvisor_url, { placeholder: 'https://tripadvisor.com/...' })}
+      ${settingsField('s_booking_url', 'Booking.com', h.booking_url, { placeholder: 'https://booking.com/...' })}
+    </div>
+    <div class="mt-5 flex justify-end">
+      <button onclick="saveHotelSettings(['address','phone','email','website','instagram_url','facebook_url','tripadvisor_url','booking_url'])" class="bg-brand-400 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-sm font-semibold">
+        <i class="fas fa-save mr-1"></i>Enregistrer
+      </button>
+    </div>`;
+}
+
+function renderSettingsStay(h) {
+  return `
+    <h3 class="text-base font-bold text-navy-800 mb-4"><i class="fas fa-suitcase text-brand-400 mr-2"></i>Séjour &amp; restaurant</h3>
+
+    <!-- Code client -->
+    <div class="bg-brand-50 border border-brand-100 rounded-lg p-4 mb-5">
+      <label class="block text-sm font-semibold text-navy-700 mb-1">🔑 Code de connexion client</label>
+      <p class="text-xs text-gray-600 mb-2">Code court (3-16 caractères) que vos clients tapent pour se connecter. Sera imprimé sur les fiches plastifiées des chambres.</p>
+      <div class="flex gap-2">
+        <input id="s_client_login_code" type="text" value="${escapeHtml(h.client_login_code || '')}" placeholder="GRDPARIS"
+          style="text-transform: uppercase; letter-spacing: 2px;"
+          class="flex-1 px-3 py-2 border border-gray-200 rounded-lg form-input-mobile font-mono font-bold text-brand-600">
+        <button onclick="saveHotelSettings(['client_login_code'])" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap"><i class="fas fa-save mr-1"></i>Sauver</button>
+      </div>
+    </div>
+
+    <!-- Heures check-in / check-out -->
+    <div class="grid grid-cols-2 gap-4 mb-5">
+      ${settingsField('s_checkin_time', '🛬 Check-in', h.checkin_time || '15:00', { type: 'time' })}
+      ${settingsField('s_checkout_time', '🛫 Check-out', h.checkout_time || '12:00', { type: 'time', help: 'Le client doit rendre la chambre à cette heure.' })}
+    </div>
+
+    <!-- Politique d'annulation + message d'accueil -->
+    <div class="space-y-4 mb-5">
+      ${settingsField('s_cancellation_policy', 'Politique d\\'annulation', h.cancellation_policy, { type: 'textarea', rows: 2, placeholder: 'Annulation gratuite jusqu\\'à 18h la veille...' })}
+      ${settingsField('s_welcome_message', 'Message de bienvenue (Front Wikot)', h.welcome_message, { type: 'textarea', rows: 3, placeholder: 'Bienvenue au Grand Hôtel des Lecques ! Profitez de votre séjour...', help: 'Affiché aux clients après leur connexion.' })}
+    </div>
+
+    <!-- Capacités restaurant -->
+    <div class="border-t border-gray-100 pt-4 mb-2">
+      <h4 class="font-semibold text-navy-700 mb-1">🍽️ Capacités restaurant par défaut</h4>
+      <p class="text-xs text-gray-500 mb-3">Base utilisée pour le planning hebdo (modifiable jour par jour dans Restaurant → Planning).</p>
+      <div class="grid grid-cols-3 gap-3">
+        <div>
+          <label class="block text-xs text-gray-600 mb-1">☕ Petit-déj</label>
+          <input id="s_breakfast_capacity" type="number" min="0" max="500" value="${h.breakfast_capacity || 30}" class="w-full px-2 py-1.5 border border-gray-200 rounded form-input-mobile text-sm">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-600 mb-1">🍽️ Déjeuner</label>
+          <input id="s_lunch_capacity" type="number" min="0" max="500" value="${h.lunch_capacity || 30}" class="w-full px-2 py-1.5 border border-gray-200 rounded form-input-mobile text-sm">
+        </div>
+        <div>
+          <label class="block text-xs text-gray-600 mb-1">🍷 Dîner</label>
+          <input id="s_dinner_capacity" type="number" min="0" max="500" value="${h.dinner_capacity || 30}" class="w-full px-2 py-1.5 border border-gray-200 rounded form-input-mobile text-sm">
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-5 flex justify-end">
+      <button onclick="saveHotelSettings(['checkin_time','checkout_time','cancellation_policy','welcome_message','breakfast_capacity','lunch_capacity','dinner_capacity'])" class="bg-brand-400 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-sm font-semibold">
+        <i class="fas fa-save mr-1"></i>Enregistrer les horaires &amp; capacités
+      </button>
+    </div>`;
+}
+
+function renderSettingsWifi(h) {
+  return `
+    <h3 class="text-base font-bold text-navy-800 mb-4"><i class="fas fa-wifi text-brand-400 mr-2"></i>Wifi de l'hôtel</h3>
+    <p class="text-xs text-gray-600 mb-4">Ces informations seront affichées au client dans son espace Front Wikot.</p>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      ${settingsField('s_wifi_ssid', 'Nom du réseau (SSID)', h.wifi_ssid, { placeholder: 'Hotel-Lecques-Guest' })}
+      ${settingsField('s_wifi_password', 'Mot de passe wifi', h.wifi_password, { placeholder: 'mot-de-passe' })}
+      <div class="sm:col-span-2">
+        ${settingsField('s_wifi_instructions', 'Instructions complémentaires', h.wifi_instructions, { type: 'textarea', rows: 3, placeholder: 'Acceptez les conditions sur le portail captif après connexion.', help: 'Optionnel — instructions à afficher sous le SSID.' })}
+      </div>
+    </div>
+    <div class="mt-5 flex justify-end">
+      <button onclick="saveHotelSettings(['wifi_ssid','wifi_password','wifi_instructions'])" class="bg-brand-400 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-sm font-semibold">
+        <i class="fas fa-save mr-1"></i>Enregistrer
+      </button>
+    </div>`;
+}
+
+// Sauvegarde générique : prend un tableau de clés, lit les valeurs des inputs s_<key>
+async function saveHotelSettings(keys) {
+  const body = {};
+  for (const k of keys) {
+    const el = document.getElementById('s_' + k);
+    if (!el) continue;
+    let v = el.value;
+    if (k === 'client_login_code') v = String(v).trim().toUpperCase();
+    body[k] = v;
+  }
   const data = await api(`/hotels/${state.user.hotel_id}/settings`, { method: 'PUT', body: JSON.stringify(body) });
-  if (data) { showToast('Capacités enregistrées', 'success'); state._hotelSettingsLoaded = false; await loadHotelSettings(); render(); }
+  if (data) {
+    showToast('Paramètres enregistrés', 'success');
+    state._hotelSettingsLoaded = false;
+    await loadHotelSettings();
+    render();
+  }
 }
 
 // ============================================

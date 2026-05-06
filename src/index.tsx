@@ -313,13 +313,12 @@ app.get('/api/procedures', authMiddleware, async (c) => {
   // Pour récupérer aussi les sous-procédures (par exemple pour le picker du modal),
   // utiliser ?include_subprocedures=1.
   let query = `SELECT p.*, c.name as category_name, c.icon as category_icon, c.color as category_color, 
-    u1.name as created_by_name, u2.name as approved_by_name,
+    u1.name as created_by_name,
     (SELECT COUNT(*) FROM steps WHERE procedure_id = p.id) as step_count,
     (SELECT COUNT(*) FROM conditions WHERE procedure_id = p.id) as condition_count
     FROM procedures p 
     LEFT JOIN categories c ON p.category_id = c.id 
     LEFT JOIN users u1 ON p.created_by = u1.id
-    LEFT JOIN users u2 ON p.approved_by = u2.id
     WHERE p.hotel_id = ?`
   const params: any[] = [hotelId]
 
@@ -342,11 +341,10 @@ app.get('/api/procedures/:id', authMiddleware, async (c) => {
   if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
   const procedure = await c.env.DB.prepare(`SELECT p.*, c.name as category_name, c.icon as category_icon, c.color as category_color,
-    u1.name as created_by_name, u2.name as approved_by_name
+    u1.name as created_by_name
     FROM procedures p 
     LEFT JOIN categories c ON p.category_id = c.id 
     LEFT JOIN users u1 ON p.created_by = u1.id
-    LEFT JOIN users u2 ON p.approved_by = u2.id
     WHERE p.id = ?`).bind(id).first()
 
   if (!procedure) return c.json({ error: 'Procédure non trouvée' }, 404)
@@ -1240,7 +1238,9 @@ async function buildHotelArborescence(db: D1Database, hotelId: number): Promise<
 // Helper : construit le system prompt de Wikot, selon le mode
 // mode = 'standard' → Wikot classique : recherche + sourcing, AUCUNE modification
 // mode = 'max'      → Back Wikot : rédaction/création/modification optimisée
-async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName: string, mode: 'standard' | 'max'): Promise<string> {
+// workflowMode (max uniquement) : 'create_procedure' | 'update_procedure' | 'create_info' | 'update_info' | null
+// formContext (max uniquement) : état actuel du formulaire visible côté UI (titre/contenu/étapes)
+async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName: string, mode: 'standard' | 'max', workflowMode?: string | null, formContext?: any): Promise<string> {
   const arborescence = await buildHotelArborescence(db, user.hotel_id!)
 
   if (mode === 'standard') {
@@ -1277,72 +1277,216 @@ Rappel : tu es un **sélecteur**, pas un rédacteur. \`select_answer\` à chaque
   }
 
   // ============================================
-  // WIKOT MAX — Rédaction / création / modification
+  // WIKOT MAX — Back Wikot ultra-spécialisé en 4 workflows
   // ============================================
   const canEditProc = wikotUserCanEditProcedures(user)
   const canEditInf = wikotUserCanEditInfo(user)
 
-  return `Tu es **Back Wikot**, l'assistant IA de rédaction et d'édition du **${hotelName}**. Tu es l'agent spécialisé dans la **création** et la **modification** des procédures et informations de l'hôtel.
+  // Règles de style ANTI-IA, communes à tous les workflows.
+  // Objectif : que le contenu rédigé ne ressemble PAS à du texte généré par IA.
+  const styleRules = `## Règles de style strictes (CRITIQUE, applicables au CONTENU rédigé)
+Tu rédiges comme un professionnel de l'hôtellerie qui écrit un manuel interne. Le contenu ne doit JAMAIS trahir une rédaction par IA.
 
-## Identité et ton
-- Tu tutoies l'utilisateur tout en restant **très poli et professionnel**.
-- Tu réponds **exclusivement en français**.
-- Tu es **précis, structuré, méthodique**. Tu rédiges comme un professionnel de l'hôtellerie qui formalise les procédures internes.
+### Ponctuation interdite
+- **Aucun tiret cadratin** (em-dash : caractère "—" U+2014).
+- **Aucun tiret demi-cadratin** (en-dash : caractère "–" U+2013).
+- À la place, utilise une virgule, un deux-points, un point, ou des parenthèses selon le besoin.
+- Aucun guillemet typographique exotique. Utilise les guillemets français normaux ou des doubles guillemets simples.
 
-## Ta mission UNIQUE
-Aider l'utilisateur à **créer** ou **modifier** des procédures et des informations de l'hôtel. Tu ne réponds pas aux questions générales — pour cela il y a **Wikot** (l'agent d'information). Si la demande n'est pas une création/modification, oriente : « Pour les questions d'information, utilise **Wikot** depuis le menu. »
+### Émoticônes et emojis : INTERDITS
+- Aucun emoji dans le contenu rédigé (titres, descriptions, étapes, infos). Jamais.
+- Exception très limitée : tu peux suggérer une icône Font Awesome FONCTIONNELLE en mentionnant son nom (ex : "fa-triangle-exclamation" pour un avertissement). Mais aucun smiley, aucun pictogramme décoratif.
 
-## Permissions de cet utilisateur
-- Procédures : ${canEditProc ? '✅ autorisé' : '❌ NON autorisé — refuse poliment toute demande sur les procédures'}
-- Informations : ${canEditInf ? '✅ autorisé' : '❌ NON autorisé — refuse poliment toute demande sur les informations'}
-- **Suppression : INTERDITE** — toujours, pour tout le monde via Back Wikot. La suppression se fait à la main par un responsable.
+### Style d'écriture
+- Phrases courtes et directes. Pas de formules pompeuses ("n'hésitez pas à…", "je suis à votre disposition…").
+- Vocabulaire concret de l'hôtellerie. Pas de jargon corporate vague.
+- Voix active, jamais passive floue.
+- Pas d'introductions du type "Voici…" ou "Dans cette procédure, nous allons…". On va droit au fait.
+- Pas de conclusions du type "Pour toute question…".`
 
-## Protocole strict en 4 étapes
+  // Contexte du formulaire en cours d'édition (état actuel des champs visibles côté UI)
+  const formContextStr = formContext ? `
 
-### 1. Comprendre l'intention
-Reformule la demande en une phrase claire pour confirmer ce que tu vas faire. Si c'est ambigu, pose UNE seule question de clarification avant d'agir.
+## État actuel du formulaire (ce que voit l'utilisateur en ce moment)
+\`\`\`json
+${JSON.stringify(formContext, null, 2)}
+\`\`\`
+Tu ÉCRIS DIRECTEMENT dans ce formulaire via l'outil \`update_form\`. L'utilisateur voit tes modifications en temps réel. Il valide ou ajuste manuellement avant d'enregistrer en cliquant sur le bouton "Enregistrer".` : ''
 
-### 2. Récupérer le contexte (modification uniquement)
-Pour modifier : appelle d'abord \`search_procedures\` ou \`search_hotel_info\` pour identifier la cible, puis \`get_procedure\` ou \`get_hotel_info_item\` pour lire l'état actuel. Privilégie TOUJOURS la modification d'une procédure existante plutôt que la création d'un doublon.
+  // ============================================
+  // 4 WORKFLOWS ULTRA-SPÉCIALISÉS
+  // ============================================
 
-### 3. Rédiger en respectant le guide de style ci-dessous (CRITIQUE)
-${canEditProc ? `
-#### Guide de rédaction des PROCÉDURES
-- **Titre** : verbe d'action à l'infinitif + sujet clair. Ex : « Effectuer un check-in client », « Gérer une carte démagnétisée ».
-- **Trigger event** : commence par « Quand… » ou « Lorsque… ». Ex : « Quand un client se présente à la réception pour son arrivée. »
-- **Description** : 1 à 2 phrases maximum, qui explique le contexte et l'objectif.
-- **Étapes** : 3 à 10 étapes. Numérotation gérée automatiquement.
-  - **Titre d'étape** : verbe d'action à l'impératif + complément, **8 mots max**. Ex : « Accueillir le client », « Vérifier la réservation au PMS ».
-  - **Contenu d'étape** : instructions concrètes, actionnables, à la 2ᵉ personne (« Demande… », « Vérifie… »). Tu peux utiliser \`**gras**\` sparingly et des listes \`•\` à puces pour énumérer les sous-points (montants, lieux, horaires).
-  - **Pas de jargon technique** non expliqué, pas de phrases passives floues.
-  - Si une étape correspond à une sous-procédure existante, mentionne-le dans le contenu (« Voir la sous-procédure : Vérification d'identité »).
-` : ''}${canEditInf ? `
-#### Guide de rédaction des INFORMATIONS
-- **Titre** : court, factuel, sans verbe. Ex : « Horaires du restaurant », « Code Wi-Fi », « Numéros utiles ».
-- **Contenu** : structuré, factuel, scannable. Privilégie listes à puces \`•\` et **gras** pour les valeurs importantes.
-  - Horaires au format \`hh:mm – hh:mm\` (ex : \`07:00 – 10:30\`).
-  - Numéros de téléphone formatés \`01 23 45 67 89\`.
-  - Tarifs en euros avec symbole \`€\` (ex : \`12 €\`).
-  - Lieux précis (ex : « salle Méditerranée, RDC »).
-- **Pas de salutations** ni de phrases introductives type « Voici les informations… ». Va droit au fait.
-- **Catégorie** : choisis la catégorie existante la plus adaptée. Si aucune ne convient, propose-en une nouvelle via \`propose_create_info_category\`.
-` : ''}
-### 4. Proposer (jamais appliquer directement)
-Tu n'écris jamais en base directement. Tu utilises les outils \`propose_create_*\` ou \`propose_update_*\`. Le frontend affiche alors une carte avec un **diff avant/après** et l'utilisateur valide ou refuse. Avant l'appel d'outil, écris une phrase courte qui annonce : « Je te propose de créer/modifier… valide ci-dessous. »
+  if (workflowMode === 'create_procedure') {
+    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **CRÉATION DE PROCÉDURES** pour le **${hotelName}**.
 
-## Sourcing
-Si tu cites une procédure ou information existante dans ta réponse (par ex. pour expliquer ton choix de réutilisation), appelle \`add_reference(type, id)\` pour faire apparaître un bouton « Voir la procédure » ou « Voir l'information ». Pas d'URL en clair dans le texte.
+## Ta mission UNIQUE pour cette session
+Aider l'utilisateur à créer une nouvelle procédure de A à Z. Tu rédiges, tu structures, tu remplis directement le formulaire visible à l'écran via l'outil \`update_form\`. L'utilisateur valide à la fin en cliquant "Enregistrer".
 
-## Arborescence actuelle de l'hôtel
+## Tu ne fais QUE ça
+- Tu ne crées pas d'information (autre workflow).
+- Tu ne modifies pas une procédure existante (autre workflow).
+- Tu ne réponds pas aux questions générales (c'est le rôle de Wikot).
+${!canEditProc ? '- ATTENTION : cet utilisateur N\'EST PAS autorisé à créer des procédures. Refuse poliment.' : ''}
+
+## Protocole en 3 étapes
+
+### 1. Cadrer la procédure
+Pose 1 ou 2 questions ciblées pour comprendre : quel évènement déclenche cette procédure, quel est l'objectif, quelles sont les grandes étapes que l'utilisateur a en tête. Si l'utilisateur a déjà tout dit dans son premier message, passe directement à l'étape 2.
+
+### 2. Vérifier qu'elle n'existe pas déjà
+Appelle \`search_procedures\` avec les mots-clés évidents. Si une procédure proche existe, propose plutôt à l'utilisateur de la modifier (et oriente vers le workflow Modifier).
+
+### 3. Rédiger directement dans le formulaire
+Utilise \`update_form\` pour remplir CHAQUE champ. Tu peux faire plusieurs appels successifs (un par champ ou par groupe de champs). Champs disponibles :
+- \`title\` : verbe d'action à l'infinitif + sujet clair (ex : "Effectuer un check-in client").
+- \`trigger_event\` : commence par "Quand" ou "Lorsque" (ex : "Quand un client se présente à la réception pour son arrivée").
+- \`description\` : 1 à 2 phrases qui expliquent le contexte et l'objectif.
+- \`steps\` : tableau d'objets {title, content, linked_procedure_id?}. 3 à 10 étapes. Titre d'étape = verbe à l'impératif, 8 mots max. Contenu = instructions concrètes à la 2e personne ("Demande…", "Vérifie…"). Pour lier une étape à une sous-procédure existante, mets son id dans linked_procedure_id (le contenu peut alors être vide).
+
+Après chaque update_form, écris UNE phrase courte qui décrit ce que tu viens de remplir et propose la suite. Pas de récap pompeux.
+
+${styleRules}
+
+## Arborescence actuelle de l'hôtel (pour repérer les sous-procédures existantes)
 ${arborescence}
+${formContextStr}
 
-Rappel : tu es **Back Wikot**, agent de rédaction/édition. Tu rédiges du contenu de qualité professionnelle et tu proposes — l'utilisateur valide.`
+Rappel : tu remplis le formulaire en temps réel via update_form. L'utilisateur enregistre lui-même quand il est satisfait.`
+  }
+
+  if (workflowMode === 'update_procedure') {
+    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **MODIFICATION DE PROCÉDURES** pour le **${hotelName}**.
+
+## Ta mission UNIQUE pour cette session
+Aider l'utilisateur à modifier une procédure existante. La procédure cible est déjà chargée dans le formulaire. Tu écoutes ce qu'il veut changer, tu rédiges les ajustements, tu remplis directement le formulaire visible à l'écran via l'outil \`update_form\`. L'utilisateur valide à la fin en cliquant "Enregistrer".
+
+## Tu ne fais QUE ça
+- Tu ne crées pas une nouvelle procédure (autre workflow).
+- Tu ne modifies pas d'information (autre workflow).
+- Tu ne réponds pas aux questions générales.
+${!canEditProc ? '- ATTENTION : cet utilisateur N\'EST PAS autorisé à modifier les procédures. Refuse poliment.' : ''}
+
+## Protocole en 3 étapes
+
+### 1. Comprendre la modification souhaitée
+Lis attentivement la demande. Si c'est précis ("change le titre en X", "ajoute une étape Y"), exécute directement. Si c'est vague ("améliore"), pose UNE question pour cibler ce qu'il faut changer en priorité.
+
+### 2. Préserver les liens vers les sous-procédures
+ATTENTION CRITIQUE : si tu modifies le tableau \`steps\`, tu DOIS conserver les \`linked_procedure_id\` des étapes existantes qui pointaient vers une sous-procédure, sauf si l'utilisateur demande explicitement de retirer ce lien. Sinon les sous-procédures seront orphelines.
+
+### 3. Modifier directement dans le formulaire
+Utilise \`update_form\` pour mettre à jour les champs concernés UNIQUEMENT (pas besoin de tout réécrire). Champs disponibles : \`title\`, \`trigger_event\`, \`description\`, \`steps\` (tableau complet d'objets {title, content, linked_procedure_id?}).
+
+Quand tu remplis \`steps\`, tu remplaces tout le tableau, donc reprends bien les étapes existantes que l'utilisateur veut conserver, et ajoute/modifie/supprime selon sa demande.
+
+Après chaque update_form, écris UNE phrase courte qui décrit le changement. Pas de récap pompeux.
+
+${styleRules}
+
+## Arborescence actuelle de l'hôtel (pour repérer les sous-procédures existantes)
+${arborescence}
+${formContextStr}
+
+Rappel : tu modifies le formulaire en temps réel via update_form. L'utilisateur enregistre lui-même quand il est satisfait.`
+  }
+
+  if (workflowMode === 'create_info') {
+    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **CRÉATION D'INFORMATIONS** pour le **${hotelName}**.
+
+## Ta mission UNIQUE pour cette session
+Aider l'utilisateur à créer une nouvelle information de l'hôtel (horaires, services, équipements, contacts, etc.). Tu rédiges et tu remplis directement le formulaire visible à l'écran via l'outil \`update_form\`. L'utilisateur valide à la fin en cliquant "Enregistrer".
+
+## Tu ne fais QUE ça
+- Tu ne crées pas de procédure (autre workflow).
+- Tu ne modifies pas d'information existante (autre workflow).
+- Tu ne réponds pas aux questions générales.
+${!canEditInf ? '- ATTENTION : cet utilisateur N\'EST PAS autorisé à créer des informations. Refuse poliment.' : ''}
+
+## Protocole en 3 étapes
+
+### 1. Cadrer l'information
+Pose 1 ou 2 questions ciblées : de quel sujet parle-t-on, quelles sont les valeurs précises (horaires exacts, numéros, tarifs, lieux). Si tout est déjà dans le premier message, passe à l'étape 2.
+
+### 2. Vérifier qu'elle n'existe pas déjà
+Appelle \`search_hotel_info\` avec les mots-clés évidents. Si une info proche existe, propose plutôt de la modifier.
+
+### 3. Rédiger directement dans le formulaire
+Utilise \`update_form\` pour remplir les champs. Champs disponibles :
+- \`title\` : court, factuel, sans verbe (ex : "Horaires du restaurant", "Code Wi-Fi", "Numéros utiles").
+- \`content\` : structuré, factuel, scannable. Listes à puces avec le caractère "•". Gras avec **double étoile** pour les valeurs importantes.
+  - Horaires au format hh:mm puis le séparateur, puis hh:mm (ex : 07:00 à 10:30, ou 07:00, 10:30 selon le contexte).
+  - Numéros de téléphone formatés "01 23 45 67 89".
+  - Tarifs en euros avec le symbole € (ex : "12 €").
+  - Lieux précis (ex : "salle Méditerranée, RDC").
+- \`category_id\` : choisis l'id de la catégorie existante la plus adaptée parmi celles qui te sont visibles. Si aucune ne convient, dis-le à l'utilisateur, il créera une catégorie à la main.
+
+Après chaque update_form, écris UNE phrase courte qui décrit ce que tu viens de remplir.
+
+${styleRules}
+
+## Arborescence actuelle de l'hôtel (pour repérer les catégories d'infos existantes)
+${arborescence}
+${formContextStr}
+
+Rappel : tu remplis le formulaire en temps réel via update_form. L'utilisateur enregistre lui-même quand il est satisfait.`
+  }
+
+  if (workflowMode === 'update_info') {
+    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **MODIFICATION D'INFORMATIONS** pour le **${hotelName}**.
+
+## Ta mission UNIQUE pour cette session
+Aider l'utilisateur à modifier une information existante de l'hôtel. L'information cible est déjà chargée dans le formulaire. Tu écoutes ce qu'il veut changer, tu rédiges les ajustements, tu remplis directement le formulaire visible à l'écran via l'outil \`update_form\`. L'utilisateur valide à la fin en cliquant "Enregistrer".
+
+## Tu ne fais QUE ça
+- Tu ne crées pas une nouvelle information (autre workflow).
+- Tu ne modifies pas de procédure (autre workflow).
+- Tu ne réponds pas aux questions générales.
+${!canEditInf ? '- ATTENTION : cet utilisateur N\'EST PAS autorisé à modifier les informations. Refuse poliment.' : ''}
+
+## Protocole en 2 étapes
+
+### 1. Comprendre la modification souhaitée
+Lis attentivement la demande. Si c'est précis, exécute directement. Si c'est vague, pose UNE question pour cibler.
+
+### 2. Modifier directement dans le formulaire
+Utilise \`update_form\` pour mettre à jour les champs concernés UNIQUEMENT. Champs disponibles : \`title\`, \`content\`, \`category_id\`.
+
+Quand tu modifies \`content\`, conserve la structure existante (listes, gras, formats horaires) sauf si l'utilisateur demande explicitement de la changer.
+
+Après chaque update_form, écris UNE phrase courte qui décrit le changement.
+
+${styleRules}
+
+## Arborescence actuelle de l'hôtel (pour repérer les catégories d'infos existantes)
+${arborescence}
+${formContextStr}
+
+Rappel : tu modifies le formulaire en temps réel via update_form. L'utilisateur enregistre lui-même quand il est satisfait.`
+  }
+
+  // ============================================
+  // FALLBACK : pas de workflow_mode (entrée Back Wikot sans workflow choisi)
+  // → Demander à l'utilisateur de choisir un des 4 boutons d'entonnoir
+  // ============================================
+  return `Tu es **Back Wikot**, agent de rédaction et d'édition pour le **${hotelName}**.
+
+Tu fais EXACTEMENT 4 choses, et rien d'autre :
+1. Créer une procédure
+2. Modifier une procédure
+3. Créer une information
+4. Modifier une information
+
+Si l'utilisateur t'écrit sans avoir choisi un de ces 4 workflows, demande-lui poliment de cliquer sur l'un des 4 boutons d'entonnoir affichés à l'écran ("Créer une procédure", "Modifier une procédure", "Créer une information", "Modifier une information"). Reste très bref.
+
+${styleRules}`
 }
 
 // Helper : tools disponibles selon le mode et les permissions
 // mode='standard' → Wikot lecture (search/get/list/add_reference uniquement)
-// mode='max'      → Back Wikot (lecture + outils propose_* selon permissions)
-function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEditInf: boolean): any[] {
+// mode='max'      → Back Wikot (lecture + update_form uniquement, scope par workflowMode)
+// workflowMode = 'create_procedure' | 'update_procedure' | 'create_info' | 'update_info' | null
+function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEditInf: boolean, workflowMode?: string | null): any[] {
   const tools: any[] = [
     {
       type: 'function',
@@ -1473,114 +1617,61 @@ RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond pl
     return tools
   }
 
-  if (canEditProc) {
+  // ============================================
+  // MODE MAX (Back Wikot) — Tool update_form ultra-spécialisé selon workflow
+  // L'IA n'écrit plus en base directement. Elle remplit le formulaire visible
+  // côté UI, et l'utilisateur clique sur "Enregistrer" pour valider.
+  // ============================================
+
+  // Schéma update_form adapté au workflow en cours
+  const isProcedureWorkflow = workflowMode === 'create_procedure' || workflowMode === 'update_procedure'
+  const isInfoWorkflow = workflowMode === 'create_info' || workflowMode === 'update_info'
+
+  if (isProcedureWorkflow && canEditProc) {
     tools.push({
       type: 'function',
       function: {
-        name: 'propose_create_procedure',
-        description: 'Propose la création d\'une nouvelle procédure. L\'utilisateur devra valider avant que la procédure soit réellement créée. Pour créer une sous-procédure (qui n\'apparaîtra pas dans la liste principale), passe is_subprocedure=true.',
+        name: 'update_form',
+        description: 'Met à jour le formulaire procédure visible à l\'écran. Tu peux passer un ou plusieurs champs à la fois. Les champs non passés ne sont pas modifiés. Pour steps, tu remplaces tout le tableau (donc reprends bien les étapes existantes à conserver).',
         parameters: {
           type: 'object',
           properties: {
-            title: { type: 'string' },
-            trigger_event: { type: 'string', description: 'Quand cette procédure se déclenche' },
-            description: { type: 'string' },
-            category_id: { type: 'integer', description: 'ID de la catégorie (optionnel)' },
-            is_subprocedure: { type: 'boolean', description: 'true si c\'est une sous-procédure (cachée de la liste principale, accessible uniquement via une étape parent)' },
+            title: { type: 'string', description: 'Titre de la procédure (verbe à l\'infinitif)' },
+            trigger_event: { type: 'string', description: 'Évènement déclencheur (commence par "Quand" ou "Lorsque")' },
+            description: { type: 'string', description: 'Description courte (1-2 phrases)' },
+            category_id: { type: 'integer', description: 'ID de la catégorie procédure (optionnel)' },
             steps: {
               type: 'array',
+              description: 'Tableau complet des étapes. Tu remplaces TOUTES les étapes existantes par ce tableau.',
               items: {
                 type: 'object',
                 properties: {
-                  title: { type: 'string' },
-                  content: { type: 'string', description: 'Contenu détaillé de l\'étape (peut contenir **gras** et listes • à puces). Vide si l\'étape pointe vers une sous-procédure.' },
-                  linked_procedure_id: { type: 'integer', description: 'ID d\'une sous-procédure existante à lier à cette étape (optionnel)' }
+                  title: { type: 'string', description: 'Verbe à l\'impératif + complément, 8 mots max' },
+                  content: { type: 'string', description: 'Instructions concrètes à la 2e personne. Peut contenir **gras** et listes avec •. Vide si l\'étape pointe vers une sous-procédure.' },
+                  linked_procedure_id: { type: 'integer', description: 'ID d\'une sous-procédure existante à lier (optionnel). À CONSERVER si l\'étape en avait déjà un, sauf demande explicite contraire.' }
                 },
                 required: ['title']
               }
             }
-          },
-          required: ['title', 'trigger_event', 'steps']
-        }
-      }
-    })
-    tools.push({
-      type: 'function',
-      function: {
-        name: 'propose_update_procedure',
-        description: 'Propose la modification d\'une procédure existante. L\'utilisateur verra un diff avant/après et devra valider. IMPORTANT : si la procédure existante avait des étapes liées à des sous-procédures (linked_procedure_id), tu DOIS les renvoyer dans steps[] sinon le lien sera perdu.',
-        parameters: {
-          type: 'object',
-          properties: {
-            id: { type: 'integer' },
-            title: { type: 'string' },
-            trigger_event: { type: 'string' },
-            description: { type: 'string' },
-            category_id: { type: 'integer' },
-            steps: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  title: { type: 'string' },
-                  content: { type: 'string' },
-                  linked_procedure_id: { type: 'integer', description: 'ID d\'une sous-procédure liée (à conserver tel quel si l\'étape était déjà liée)' }
-                }
-              }
-            }
-          },
-          required: ['id']
+          }
         }
       }
     })
   }
 
-  if (canEditInf) {
+  if (isInfoWorkflow && canEditInf) {
     tools.push({
       type: 'function',
       function: {
-        name: 'propose_create_info_item',
-        description: 'Propose la création d\'une nouvelle information dans une catégorie.',
+        name: 'update_form',
+        description: 'Met à jour le formulaire information visible à l\'écran. Tu peux passer un ou plusieurs champs à la fois. Les champs non passés ne sont pas modifiés.',
         parameters: {
           type: 'object',
           properties: {
-            category_id: { type: 'integer' },
-            title: { type: 'string' },
-            content: { type: 'string' }
-          },
-          required: ['title', 'content']
-        }
-      }
-    })
-    tools.push({
-      type: 'function',
-      function: {
-        name: 'propose_update_info_item',
-        description: 'Propose la modification d\'une information existante.',
-        parameters: {
-          type: 'object',
-          properties: {
-            id: { type: 'integer' },
-            title: { type: 'string' },
-            content: { type: 'string' },
-            category_id: { type: 'integer' }
-          },
-          required: ['id']
-        }
-      }
-    })
-    tools.push({
-      type: 'function',
-      function: {
-        name: 'propose_create_info_category',
-        description: 'Propose la création d\'une nouvelle catégorie d\'informations.',
-        parameters: {
-          type: 'object',
-          properties: {
-            name: { type: 'string' },
-            color: { type: 'string', description: 'Couleur hex (ex: #3B82F6)' }
-          },
-          required: ['name']
+            title: { type: 'string', description: 'Titre de l\'information (court, factuel, sans verbe)' },
+            content: { type: 'string', description: 'Contenu structuré, factuel, scannable. Listes à puces avec •, gras avec **. Pas d\'introduction ni de conclusion.' },
+            category_id: { type: 'integer', description: 'ID de la catégorie d\'information' }
+          }
         }
       }
     })
@@ -1728,16 +1819,24 @@ app.get('/api/wikot/conversations', authMiddleware, async (c) => {
   const mode = normalizeWikotMode(c.req.query('mode'))
   // Si mode=max mais pas autorisé → liste vide (pas d'erreur, l'UI ne devrait pas appeler)
   if (mode === 'max' && !userCanUseMaxMode(user)) return c.json({ conversations: [] })
-  const r = await c.env.DB.prepare(`
-    SELECT id, title, updated_at, created_at, mode
+  // Filtre optionnel par workflow_mode (create_procedure / update_procedure / create_info / update_info)
+  const workflowMode = c.req.query('workflow_mode')
+  let query = `
+    SELECT id, title, updated_at, created_at, mode, workflow_mode, target_kind, target_id
     FROM wikot_conversations
     WHERE user_id = ? AND is_archived = 0 AND mode = ?
-    ORDER BY updated_at DESC LIMIT 50
-  `).bind(user.id, mode).all()
+  `
+  const params: any[] = [user.id, mode]
+  if (workflowMode) {
+    query += ` AND workflow_mode = ?`
+    params.push(workflowMode)
+  }
+  query += ` ORDER BY updated_at DESC LIMIT 50`
+  const r = await c.env.DB.prepare(query).bind(...params).all()
   return c.json({ conversations: r.results })
 })
 
-// POST nouvelle conversation (avec mode)
+// POST nouvelle conversation (avec mode + workflow_mode + target pour Back Wikot)
 app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Aucun hôtel assigné' }, 400)
@@ -1748,11 +1847,24 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   if (mode === 'max' && !userCanUseMaxMode(user)) {
     return c.json({ error: 'Back Wikot nécessite des droits d\'édition (procédures ou informations)' }, 403)
   }
-  const defaultTitle = mode === 'max' ? 'Nouvelle session Back Wikot' : 'Nouvelle conversation'
+  // Workflow mode (Back Wikot uniquement) : create_procedure / update_procedure / create_info / update_info
+  const allowedWorkflows = ['create_procedure', 'update_procedure', 'create_info', 'update_info']
+  const workflowMode = (mode === 'max' && allowedWorkflows.includes(body.workflow_mode)) ? body.workflow_mode : null
+  const targetKind = (workflowMode && (body.target_kind === 'procedure' || body.target_kind === 'info')) ? body.target_kind : null
+  const targetId = (workflowMode && body.target_id) ? parseInt(body.target_id) : null
+
+  // Titre par défaut explicite selon le workflow
+  let defaultTitle = mode === 'max' ? 'Nouvelle session Back Wikot' : 'Nouvelle conversation'
+  if (workflowMode === 'create_procedure') defaultTitle = 'Création procédure'
+  else if (workflowMode === 'update_procedure') defaultTitle = 'Modification procédure'
+  else if (workflowMode === 'create_info') defaultTitle = 'Création information'
+  else if (workflowMode === 'update_info') defaultTitle = 'Modification information'
+
   const r = await c.env.DB.prepare(`
-    INSERT INTO wikot_conversations (hotel_id, user_id, title, mode) VALUES (?, ?, ?, ?)
-  `).bind(user.hotel_id, user.id, defaultTitle, mode).run()
-  return c.json({ id: r.meta.last_row_id, mode })
+    INSERT INTO wikot_conversations (hotel_id, user_id, title, mode, workflow_mode, target_kind, target_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(user.hotel_id, user.id, defaultTitle, mode, workflowMode, targetKind, targetId).run()
+  return c.json({ id: r.meta.last_row_id, mode, workflow_mode: workflowMode, target_kind: targetKind, target_id: targetId })
 })
 
 // GET détail d'une conversation + messages
@@ -1810,7 +1922,11 @@ app.delete('/api/wikot/conversations/:id', authMiddleware, async (c) => {
 app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const user = c.get('user')
   const convId = parseInt(c.req.param('id'))
-  const { content } = await c.req.json()
+  const body = await c.req.json()
+  const content = body.content
+  // Le frontend envoie l'état actuel du formulaire (Back Wikot uniquement) pour que
+  // l'IA voie ce que voit l'utilisateur en ce moment et puisse écrire dedans.
+  const formContext = body.form_context || null
 
   if (!content || !content.trim()) return c.json({ error: 'Message vide' }, 400)
   if (!user.hotel_id) return c.json({ error: 'Aucun hôtel' }, 400)
@@ -1844,11 +1960,14 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     return c.json({ error: 'Back Wikot nécessite des droits d\'édition' }, 403)
   }
 
-  // Construire system prompt + tools selon le mode et les permissions
-  const systemPrompt = await buildWikotSystemPrompt(c.env.DB, user, hotel?.name || 'l\'hôtel', mode)
+  // Récupérer le workflow_mode de la conversation (Back Wikot uniquement)
+  const workflowMode = conv.workflow_mode || null
+
+  // Construire system prompt + tools selon le mode, les permissions et le workflow
+  const systemPrompt = await buildWikotSystemPrompt(c.env.DB, user, hotel?.name || 'l\'hôtel', mode, workflowMode, formContext)
   const canEditProc = wikotUserCanEditProcedures(user)
   const canEditInf = wikotUserCanEditInfo(user)
-  const tools = buildWikotTools(mode, canEditProc, canEditInf)
+  const tools = buildWikotTools(mode, canEditProc, canEditInf, workflowMode)
 
   // Construire les messages OpenAI-compatible
   const oaiMessages: any[] = [{ role: 'system', content: systemPrompt }]
@@ -1867,6 +1986,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   // Boucle d'appels avec tools (max 5 itérations pour éviter une boucle infinie)
   const referencesCollected: any[] = []
   const proposalsCollected: { tool_name: string; args: any }[] = []
+  // Mises à jour du formulaire (Back Wikot mode max) : on accumule les updates
+  // et on les renvoie au frontend pour qu'il applique les changements en direct.
+  const formUpdates: any[] = []
   // IDs vus dans les résultats des tools de lecture (filet de sécurité mode standard)
   const seenProcedureIds = new Set<number>()
   const seenInfoItemIds = new Set<number>()
@@ -1874,6 +1996,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   let selectedAnswer: { type: 'procedure' | 'procedure_step' | 'info_item' | 'info_category' | 'none'; id?: number; procedure_id?: number; step_number?: number } | null = null
   let assistantText = ''
   let lastToolCalls: any[] | null = null
+  // Mode max (Back Wikot) : patches de formulaire à appliquer côté UI.
+  // Chaque appel à update_form ajoute un patch ; le frontend mergera dans l'ordre.
+  const formPatches: any[] = []
 
   for (let iter = 0; iter < 5; iter++) {
     let response
@@ -1943,7 +2068,24 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true }) })
         stopAfterThisIter = true
       }
-      // Tools de proposition (mode max)
+      // === MODE MAX (Back Wikot) : update_form === l'IA écrit dans le formulaire UI
+      else if (fnName === 'update_form') {
+        // Filtrer les champs autorisés selon le workflow (sécurité serveur)
+        const allowed = workflowMode === 'create_procedure' || workflowMode === 'update_procedure'
+          ? ['title', 'trigger_event', 'description', 'category_id', 'steps']
+          : workflowMode === 'create_info' || workflowMode === 'update_info'
+            ? ['title', 'content', 'category_id']
+            : []
+        const cleanPatch: any = {}
+        for (const k of allowed) {
+          if (fnArgs[k] !== undefined) cleanPatch[k] = fnArgs[k]
+        }
+        if (Object.keys(cleanPatch).length > 0) {
+          formPatches.push(cleanPatch)
+        }
+        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, applied_fields: Object.keys(cleanPatch) }) })
+      }
+      // Tools de proposition (legacy mode max, plus utilisé en workflow mais conservé pour compat)
       else if (fnName.startsWith('propose_')) {
         proposalsCollected.push({ tool_name: fnName, args: fnArgs })
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, message: 'Proposition enregistrée, l\'utilisateur va voir un diff et pouvoir valider.' }) })
@@ -2197,7 +2339,10 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
       references: enrichedRefs,
       answer_card: answerCard
     },
-    actions: createdActions
+    actions: createdActions,
+    // Mises à jour du formulaire envoyées par l'IA via update_form (Back Wikot uniquement).
+    // Le frontend applique ces patches sur le formulaire visible à l'utilisateur.
+    form_patches: formPatches
   })
 })
 

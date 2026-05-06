@@ -111,8 +111,8 @@ async function login(email, password) {
     state.token = data.token;
     state.user = data.user;
     state.currentHotelId = data.user.hotel_id;
-    // Les employés n'ont pas de dashboard → démarrer sur procédures
-    state.currentView = data.user.role === 'employee' ? 'procedures' : 'dashboard';
+    // Super admin → dashboard infrastructure ; admin et employé → procédures (dashboard admin retiré)
+    state.currentView = data.user.role === 'super_admin' ? 'dashboard' : 'procedures';
     localStorage.setItem('wikot_token', data.token);
     localStorage.setItem('wikot_user', JSON.stringify(data.user));
     showToast(`Bienvenue ${data.user.name} !`, 'success');
@@ -508,10 +508,8 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else if (isAdmin) {
-    // Admin hôtel : tout sauf suggestions ; les admins ont accès à Back Wikot
-    // Pages "Rechercher" et "Historique" supprimées : Wikot remplit le rôle de recherche
+    // Admin hôtel : Dashboard supprimé (peu pertinent), redirection par défaut sur Procédures
     menuItems = [
-      { id: 'dashboard', icon: 'fa-gauge-high', label: 'Tableau de bord' },
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
       { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
@@ -737,6 +735,10 @@ function showChatLoadingPlaceholder() {
 // VIEW ROUTER
 // ============================================
 function renderCurrentView() {
+  // Garde : seul le super admin a accès au Dashboard. Les autres sont redirigés.
+  if (state.currentView === 'dashboard' && state.user && state.user.role !== 'super_admin') {
+    state.currentView = 'procedures';
+  }
   switch (state.currentView) {
     case 'dashboard': return renderDashboard();
     case 'wikot': return renderWikotView('standard');
@@ -748,7 +750,8 @@ function renderCurrentView() {
     case 'hotels': return renderHotelsView();
     case 'templates': return renderTemplatesView();
     case 'procedure-detail': return renderProcedureDetail();
-    default: return renderDashboard();
+    default:
+      return (state.user && state.user.role === 'super_admin') ? renderDashboard() : renderProceduresList();
   }
 }
 
@@ -996,7 +999,6 @@ function renderProcedureDetail() {
             <div class="flex flex-wrap items-center gap-2 mt-3 text-xs text-navy-400">
               <span class="bg-navy-50 px-2 py-1 rounded">${proc.category_name || 'Sans catégorie'}</span>
               <span>v${proc.version}</span>
-              ${proc.approved_by_name ? `<span><i class="fas fa-check-circle text-green-500 mr-1"></i>Approuvé par ${proc.approved_by_name}</span>` : ''}
             </div>
           </div>
           ${canEdit ? `
@@ -2155,7 +2157,14 @@ async function sendWikotMessage(mode) {
   const content = input.value.trim();
   if (!content || s.sending) return;
 
-  // Si pas de conversation active, on en crée une avec le bon mode
+  // Mode max : on a TOUJOURS besoin d'un workflow + d'une conversation active
+  // (créée par enterBackWikotWorkflow). Si rien, on bloque.
+  if (mode === 'max' && !s.currentConvId) {
+    showToast('Sélectionne d\'abord un des 4 boutons (Créer/Modifier procédure/information).', 'error');
+    return;
+  }
+
+  // Mode standard : si pas de conversation active, on en crée une à la volée
   if (!s.currentConvId) {
     const data = await api('/wikot/conversations', {
       method: 'POST',
@@ -2173,9 +2182,15 @@ async function sendWikotMessage(mode) {
   render();
   scrollWikotToBottom(mode);
 
+  // Mode max : on envoie l'état actuel du formulaire pour que l'IA voie ce qu'on voit
+  const body = { content };
+  if (mode === 'max' && state.backWikotForm) {
+    body.form_context = collectBackWikotFormContext();
+  }
+
   const result = await api(`/wikot/conversations/${s.currentConvId}/message`, {
     method: 'POST',
-    body: JSON.stringify({ content })
+    body: JSON.stringify(body)
   });
   s.sending = false;
 
@@ -2198,6 +2213,11 @@ async function sendWikotMessage(mode) {
 
   if (result.actions && result.actions.length > 0) {
     s.actions.push(...result.actions);
+  }
+
+  // Mode max : appliquer les form_updates renvoyés par l'IA au formulaire visible
+  if (mode === 'max' && Array.isArray(result.form_updates) && result.form_updates.length > 0) {
+    applyBackWikotFormUpdates(result.form_updates);
   }
 
   await loadWikotConversations(mode);
@@ -4397,8 +4417,8 @@ window.addEventListener('popstate', (e) => {
 async function init() {
   if (state.token && state.user) {
     state.currentHotelId = state.user.hotel_id;
-    // Les employés n'ont pas de dashboard → vue initiale = procédures
-    if (state.user.role === 'employee') {
+    // Dashboard réservé au super admin. Admin et employé → procédures par défaut.
+    if (state.user.role !== 'super_admin' && state.currentView === 'dashboard') {
       state.currentView = 'procedures';
     }
     // Sync immédiat du profil au démarrage pour récupérer les éventuels
@@ -4410,7 +4430,7 @@ async function init() {
   }
   // Ancrer l'historique sur la vue de départ (sans push, pour éviter une entrée
   // vide qui ferait quitter le site au premier "retour")
-  replaceHistory(state.currentView || 'dashboard');
+  replaceHistory(state.currentView || 'procedures');
   render();
 }
 

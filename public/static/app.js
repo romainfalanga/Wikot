@@ -50,7 +50,24 @@ let state = {
   wikotMaxLoading: false,
   wikotMaxSending: false,
   wikotMaxSidebarOpen: false,
-  _wikotMaxInitialLoad: false
+  _wikotMaxInitialLoad: false,
+  // Back Wikot - workflow atelier
+  // step : 'home' | 'select-target' | 'workshop'
+  // workflowMode : 'create_procedure' | 'update_procedure' | 'create_info' | 'update_info'
+  // targetKind : 'procedure' | 'info_item'
+  // targetId : id de la cible en mode update
+  // form : payload du formulaire vivant édité par Back Wikot
+  backWikotStep: 'home',
+  backWikotWorkflowMode: null,
+  backWikotTargetKind: null,
+  backWikotTargetId: null,
+  backWikotForm: null,
+  backWikotFormDirty: false,
+  backWikotSelectSearch: '',
+  backWikotSaving: false,
+  // cache pour la liste des cibles à modifier
+  backWikotProceduresCache: null,
+  backWikotInfoCache: null
 };
 
 // ============================================
@@ -2767,8 +2784,443 @@ const WIKOT_MODE_CONFIG = {
   }
 };
 
+// ============================================
+// BACK WIKOT — WORKFLOW ATELIER (4 boutons spécialisés)
+// ============================================
+// Mappe workflow_mode → permissions / cible / form vide
+const BACK_WIKOT_WORKFLOWS = {
+  create_procedure: {
+    label: 'Créer une procédure',
+    icon: 'fa-circle-plus',
+    color: 'emerald',
+    targetKind: 'procedure',
+    permissionKey: 'can_edit_procedures',
+    needsTarget: false,
+    description: 'Rédige une nouvelle procédure pas à pas avec Back Wikot.'
+  },
+  update_procedure: {
+    label: 'Modifier une procédure',
+    icon: 'fa-pen-to-square',
+    color: 'orange',
+    targetKind: 'procedure',
+    permissionKey: 'can_edit_procedures',
+    needsTarget: true,
+    description: 'Choisis une procédure existante puis ajuste-la avec Back Wikot.'
+  },
+  create_info: {
+    label: 'Créer une information',
+    icon: 'fa-square-plus',
+    color: 'sky',
+    targetKind: 'info_item',
+    permissionKey: 'can_edit_info',
+    needsTarget: false,
+    description: 'Rédige une nouvelle fiche information pour ton hôtel.'
+  },
+  update_info: {
+    label: 'Modifier une information',
+    icon: 'fa-file-pen',
+    color: 'amber',
+    targetKind: 'info_item',
+    permissionKey: 'can_edit_info',
+    needsTarget: true,
+    description: 'Choisis une information existante puis ajuste-la avec Back Wikot.'
+  }
+};
+
+function userCanRunBackWikotWorkflow(workflowMode) {
+  const wf = BACK_WIKOT_WORKFLOWS[workflowMode];
+  if (!wf) return false;
+  if (!state.user) return false;
+  if (state.user.role === 'admin' || state.user.role === 'super_admin') return true;
+  return state.user[wf.permissionKey] === 1;
+}
+
+// Form vide selon le workflow
+function emptyBackWikotForm(workflowMode) {
+  if (workflowMode === 'create_procedure' || workflowMode === 'update_procedure') {
+    return {
+      kind: 'procedure',
+      id: null,
+      title: '',
+      trigger_event: '',
+      description: '',
+      category_id: null,
+      steps: []
+    };
+  }
+  if (workflowMode === 'create_info' || workflowMode === 'update_info') {
+    return {
+      kind: 'info_item',
+      id: null,
+      title: '',
+      content: '',
+      category_id: null
+    };
+  }
+  return null;
+}
+
+// Snapshot du form pour l'envoyer au backend (l'IA voit ce que voit l'utilisateur)
+function collectBackWikotFormContext() {
+  const f = state.backWikotForm;
+  if (!f) return null;
+  return {
+    workflow_mode: state.backWikotWorkflowMode,
+    target_kind: state.backWikotTargetKind,
+    target_id: state.backWikotTargetId,
+    form: JSON.parse(JSON.stringify(f))
+  };
+}
+
+// Applique les patches renvoyés par le tool update_form
+// form_updates est un tableau de { field, value } produit par le backend
+function applyBackWikotFormUpdates(updates) {
+  if (!state.backWikotForm) return;
+  const f = state.backWikotForm;
+  for (const u of updates) {
+    if (!u || !u.field) continue;
+    if (u.field === 'steps' && Array.isArray(u.value)) {
+      // Re-numéroter les étapes (1..N)
+      f.steps = u.value.map((s, i) => ({
+        step_number: i + 1,
+        title: s.title || '',
+        content: s.content || '',
+        linked_procedure_id: s.linked_procedure_id || null
+      }));
+    } else if (u.field in f) {
+      f[u.field] = u.value;
+    }
+  }
+  state.backWikotFormDirty = true;
+}
+
+// Démarre un workflow Back Wikot : vérifie permissions + crée une conversation neuve
+async function enterBackWikotWorkflow(workflowMode) {
+  if (!userCanRunBackWikotWorkflow(workflowMode)) {
+    showToast("Tu n'as pas la permission d'utiliser ce workflow.", 'error');
+    return;
+  }
+  const wf = BACK_WIKOT_WORKFLOWS[workflowMode];
+  state.backWikotWorkflowMode = workflowMode;
+  state.backWikotTargetKind = wf.targetKind;
+  state.backWikotTargetId = null;
+  state.backWikotForm = null;
+  state.backWikotFormDirty = false;
+  state.backWikotSelectSearch = '';
+
+  if (wf.needsTarget) {
+    // On va d'abord faire choisir la cible (procédure ou info à modifier)
+    state.backWikotStep = 'select-target';
+    // Précharger la liste appropriée
+    if (workflowMode === 'update_procedure') {
+      await loadBackWikotProcedures();
+    } else if (workflowMode === 'update_info') {
+      await loadBackWikotInfo();
+    }
+    render();
+  } else {
+    // Création directe : on entre dans l'atelier avec un form vierge
+    state.backWikotForm = emptyBackWikotForm(workflowMode);
+    await openBackWikotWorkshop();
+  }
+}
+
+// Charge toutes les procédures + sous-procédures pour la sélection cible
+async function loadBackWikotProcedures() {
+  const data = await api('/procedures?include_subprocedures=1');
+  if (!data) return;
+  state.backWikotProceduresCache = data.procedures || [];
+}
+
+// Charge toutes les infos pour la sélection cible
+async function loadBackWikotInfo() {
+  const data = await api('/hotel-info');
+  if (!data) return;
+  state.backWikotInfoCache = {
+    categories: data.categories || [],
+    items: data.items || []
+  };
+}
+
+// L'utilisateur a choisi une procédure à modifier
+async function selectBackWikotProcedureTarget(procId) {
+  const data = await api(`/procedures/${procId}`);
+  if (!data || !data.procedure) return;
+  const p = data.procedure;
+  const steps = (data.steps || []).map((s, i) => ({
+    step_number: s.step_number || (i + 1),
+    title: s.title || '',
+    content: s.content || '',
+    linked_procedure_id: s.linked_procedure_id || null
+  }));
+  state.backWikotTargetId = procId;
+  state.backWikotForm = {
+    kind: 'procedure',
+    id: procId,
+    title: p.title || '',
+    trigger_event: p.trigger_event || '',
+    description: p.description || '',
+    category_id: p.category_id || null,
+    steps
+  };
+  state.backWikotFormDirty = false;
+  await openBackWikotWorkshop();
+}
+
+// L'utilisateur a choisi une info à modifier
+async function selectBackWikotInfoTarget(itemId) {
+  const cache = state.backWikotInfoCache;
+  if (!cache) await loadBackWikotInfo();
+  const items = (state.backWikotInfoCache && state.backWikotInfoCache.items) || [];
+  const it = items.find(x => x.id === itemId);
+  if (!it) {
+    showToast('Information introuvable.', 'error');
+    return;
+  }
+  state.backWikotTargetId = itemId;
+  state.backWikotForm = {
+    kind: 'info_item',
+    id: itemId,
+    title: it.title || '',
+    content: it.content || '',
+    category_id: it.category_id || null
+  };
+  state.backWikotFormDirty = false;
+  await openBackWikotWorkshop();
+}
+
+// Crée la conversation Back Wikot avec le contexte workflow + entre dans l'atelier
+async function openBackWikotWorkshop() {
+  // Création conversation côté backend (avec workflow_mode + target_kind/id si update)
+  const body = {
+    mode: 'max',
+    workflow_mode: state.backWikotWorkflowMode,
+    target_kind: state.backWikotTargetKind,
+    target_id: state.backWikotTargetId
+  };
+  const data = await api('/wikot/conversations', { method: 'POST', body: JSON.stringify(body) });
+  if (!data) return;
+  const s = wikotState('max');
+  s.currentConvId = data.id;
+  s.messages = [];
+  s.actions = [];
+  await loadWikotConversations('max');
+  state.backWikotStep = 'workshop';
+  render();
+  setTimeout(() => {
+    const input = document.getElementById('wikot-max-input');
+    if (input) input.focus();
+  }, 120);
+}
+
+// Reprendre une conversation depuis l'historique : on récupère son contexte (workflow_mode, target)
+async function resumeBackWikotConversation(convId) {
+  const data = await api(`/wikot/conversations/${convId}`);
+  if (!data) return;
+  const conv = data.conversation || {};
+  const wfMode = conv.workflow_mode;
+  if (!wfMode || !BACK_WIKOT_WORKFLOWS[wfMode]) {
+    showToast("Conversation sans workflow valide.", 'error');
+    return;
+  }
+  state.backWikotWorkflowMode = wfMode;
+  state.backWikotTargetKind = conv.target_kind || BACK_WIKOT_WORKFLOWS[wfMode].targetKind;
+  state.backWikotTargetId = conv.target_id || null;
+  state.backWikotFormDirty = false;
+
+  // Reconstituer le form
+  if (state.backWikotTargetId && state.backWikotTargetKind === 'procedure') {
+    const p = await api(`/procedures/${state.backWikotTargetId}`);
+    if (p && p.procedure) {
+      const steps = (p.steps || []).map((s, i) => ({
+        step_number: s.step_number || (i + 1),
+        title: s.title || '',
+        content: s.content || '',
+        linked_procedure_id: s.linked_procedure_id || null
+      }));
+      state.backWikotForm = {
+        kind: 'procedure', id: state.backWikotTargetId,
+        title: p.procedure.title || '', trigger_event: p.procedure.trigger_event || '',
+        description: p.procedure.description || '', category_id: p.procedure.category_id || null,
+        steps
+      };
+    }
+  } else if (state.backWikotTargetId && state.backWikotTargetKind === 'info_item') {
+    if (!state.backWikotInfoCache) await loadBackWikotInfo();
+    const it = (state.backWikotInfoCache.items || []).find(x => x.id === state.backWikotTargetId);
+    if (it) {
+      state.backWikotForm = {
+        kind: 'info_item', id: state.backWikotTargetId,
+        title: it.title || '', content: it.content || '', category_id: it.category_id || null
+      };
+    }
+  } else {
+    state.backWikotForm = emptyBackWikotForm(wfMode);
+  }
+
+  // Charger les messages
+  const s = wikotState('max');
+  s.currentConvId = convId;
+  s.messages = (data.messages || []).map(m => ({
+    id: m.id, role: m.role, content: m.content,
+    references: Array.isArray(m.references) ? m.references : [],
+    answer_card: m.answer_card || null
+  }));
+  s.actions = data.actions || [];
+  state.backWikotStep = 'workshop';
+  render();
+  scrollWikotToBottom('max');
+}
+
+// Retour à l'écran d'accueil (4 boutons) : reset l'état atelier
+function backToBackWikotHome() {
+  state.backWikotStep = 'home';
+  state.backWikotWorkflowMode = null;
+  state.backWikotTargetKind = null;
+  state.backWikotTargetId = null;
+  state.backWikotForm = null;
+  state.backWikotFormDirty = false;
+  state.backWikotSelectSearch = '';
+  // On ne ferme pas la conversation côté serveur — historique préservé
+  const s = wikotState('max');
+  s.currentConvId = null;
+  s.messages = [];
+  s.actions = [];
+  render();
+}
+
+// Helpers d'édition manuelle du form (l'utilisateur peut éditer aussi à la main)
+function updateBackWikotFormField(field, value) {
+  if (!state.backWikotForm) return;
+  state.backWikotForm[field] = value;
+  state.backWikotFormDirty = true;
+}
+
+function addBackWikotStep() {
+  if (!state.backWikotForm || state.backWikotForm.kind !== 'procedure') return;
+  const steps = state.backWikotForm.steps || [];
+  steps.push({ step_number: steps.length + 1, title: '', content: '', linked_procedure_id: null });
+  state.backWikotForm.steps = steps;
+  state.backWikotFormDirty = true;
+  render();
+}
+
+function removeBackWikotStep(idx) {
+  if (!state.backWikotForm || state.backWikotForm.kind !== 'procedure') return;
+  const steps = state.backWikotForm.steps || [];
+  steps.splice(idx, 1);
+  // Re-numéroter
+  state.backWikotForm.steps = steps.map((s, i) => ({ ...s, step_number: i + 1 }));
+  state.backWikotFormDirty = true;
+  render();
+}
+
+function moveBackWikotStep(idx, dir) {
+  if (!state.backWikotForm || state.backWikotForm.kind !== 'procedure') return;
+  const steps = state.backWikotForm.steps || [];
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= steps.length) return;
+  [steps[idx], steps[newIdx]] = [steps[newIdx], steps[idx]];
+  state.backWikotForm.steps = steps.map((s, i) => ({ ...s, step_number: i + 1 }));
+  state.backWikotFormDirty = true;
+  render();
+}
+
+function updateBackWikotStepField(idx, field, value) {
+  if (!state.backWikotForm || state.backWikotForm.kind !== 'procedure') return;
+  const steps = state.backWikotForm.steps || [];
+  if (!steps[idx]) return;
+  steps[idx][field] = value;
+  state.backWikotFormDirty = true;
+  // Pas de render() pour ne pas perdre le focus du textarea
+}
+
+// Sauvegarde finale : POST/PUT vers la bonne route selon workflow
+async function saveBackWikotForm() {
+  if (!state.backWikotForm) return;
+  if (state.backWikotSaving) return;
+  const f = state.backWikotForm;
+  const wf = state.backWikotWorkflowMode;
+
+  // Validations basiques
+  if (!f.title || !f.title.trim()) {
+    showToast('Le titre est obligatoire.', 'error');
+    return;
+  }
+  if (f.kind === 'procedure') {
+    if (!f.trigger_event || !f.trigger_event.trim()) {
+      showToast('Le déclencheur (trigger_event) est obligatoire.', 'error');
+      return;
+    }
+    if (!f.steps || f.steps.length === 0) {
+      showToast('Ajoute au moins une étape.', 'error');
+      return;
+    }
+  }
+  if (f.kind === 'info_item') {
+    if (!f.content || !f.content.trim()) {
+      showToast('Le contenu de l\'information est obligatoire.', 'error');
+      return;
+    }
+  }
+
+  state.backWikotSaving = true;
+  render();
+
+  let result = null;
+  try {
+    if (wf === 'create_procedure') {
+      const payload = {
+        title: f.title, trigger_event: f.trigger_event, description: f.description || null,
+        category_id: f.category_id || null,
+        steps: (f.steps || []).map((s, i) => ({
+          step_number: i + 1, title: s.title, content: s.content || null,
+          linked_procedure_id: s.linked_procedure_id || null
+        }))
+      };
+      result = await api('/procedures', { method: 'POST', body: JSON.stringify(payload) });
+    } else if (wf === 'update_procedure') {
+      const payload = {
+        title: f.title, trigger_event: f.trigger_event, description: f.description || null,
+        category_id: f.category_id || null,
+        steps: (f.steps || []).map((s, i) => ({
+          step_number: i + 1, title: s.title, content: s.content || null,
+          linked_procedure_id: s.linked_procedure_id || null
+        }))
+      };
+      result = await api(`/procedures/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    } else if (wf === 'create_info') {
+      const payload = { title: f.title, content: f.content, category_id: f.category_id || null };
+      result = await api('/hotel-info/items', { method: 'POST', body: JSON.stringify(payload) });
+    } else if (wf === 'update_info') {
+      const payload = { title: f.title, content: f.content, category_id: f.category_id || null };
+      result = await api(`/hotel-info/items/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+    }
+  } finally {
+    state.backWikotSaving = false;
+  }
+
+  if (!result) {
+    render();
+    return;
+  }
+
+  showToast(wf.startsWith('create_') ? 'Créé avec succès.' : 'Modifié avec succès.', 'success');
+  state.backWikotFormDirty = false;
+  // Recharger les listes pour refléter la modif
+  await loadData();
+  // Retour à l'écran d'accueil Back Wikot
+  backToBackWikotHome();
+}
+
 function renderWikotView(mode) {
   mode = mode || activeWikotMode();
+
+  // Mode max → router vers le workflow atelier (home / select-target / workshop)
+  if (mode === 'max') {
+    return renderBackWikotView();
+  }
+
   const cfg = WIKOT_MODE_CONFIG[mode];
   const s = wikotState(mode);
   const initialFlag = mode === 'max' ? '_wikotMaxInitialLoad' : '_wikotInitialLoad';
@@ -2912,6 +3364,565 @@ function quickWikot(text, mode) {
     input.value = text;
     sendWikotMessage(mode);
   }
+}
+
+// ============================================
+// BACK WIKOT — VUES (home / select-target / workshop)
+// ============================================
+function renderBackWikotView() {
+  // Lazy-load conversations à la première ouverture
+  if (!state._wikotMaxInitialLoad) {
+    state._wikotMaxInitialLoad = true;
+    loadWikotConversations('max').then(() => render());
+  }
+
+  const step = state.backWikotStep || 'home';
+  if (step === 'select-target') return renderBackWikotSelectTarget();
+  if (step === 'workshop') return renderBackWikotWorkshop();
+  return renderBackWikotHome();
+}
+
+// --------------------------------------------
+// VUE 1 : HOME (4 gros boutons + historique)
+// --------------------------------------------
+function renderBackWikotHome() {
+  const convs = state.wikotMaxConversations || [];
+  const visibleConvs = convs.filter(c => c.workflow_mode); // on n'affiche que les conversations attachées à un workflow
+
+  const buttonHtml = (key) => {
+    const wf = BACK_WIKOT_WORKFLOWS[key];
+    const enabled = userCanRunBackWikotWorkflow(key);
+    const colorClasses = {
+      emerald: 'from-emerald-400 to-emerald-600 hover:from-emerald-500 hover:to-emerald-700',
+      orange: 'from-orange-400 to-orange-600 hover:from-orange-500 hover:to-orange-700',
+      sky: 'from-sky-400 to-sky-600 hover:from-sky-500 hover:to-sky-700',
+      amber: 'from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700'
+    }[wf.color] || 'from-gray-400 to-gray-600';
+    return `
+      <button ${enabled ? `onclick="enterBackWikotWorkflow('${key}')"` : 'disabled'}
+        class="${enabled ? `bg-gradient-to-br ${colorClasses} cursor-pointer` : 'bg-gray-200 cursor-not-allowed opacity-60'} text-white rounded-2xl p-5 sm:p-6 shadow-md transition-all text-left flex flex-col gap-3 group">
+        <div class="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center text-2xl shrink-0">
+          <i class="fas ${wf.icon}"></i>
+        </div>
+        <div>
+          <div class="text-base sm:text-lg font-bold leading-tight">${escapeHtml(wf.label)}</div>
+          <div class="text-xs sm:text-sm text-white/85 mt-1 leading-snug">${escapeHtml(wf.description)}</div>
+        </div>
+        ${!enabled ? '<div class="text-[11px] text-white/90 italic mt-1"><i class="fas fa-triangle-exclamation mr-1"></i>Permission requise</div>' : ''}
+      </button>
+    `;
+  };
+
+  const historyHtml = visibleConvs.length === 0 ? `
+    <div class="text-center py-6 text-xs text-navy-400">
+      <i class="fas fa-clock-rotate-left text-2xl text-navy-200 mb-2 block"></i>
+      Aucune conversation Back Wikot pour le moment.
+    </div>
+  ` : visibleConvs.map(c => {
+    const wf = BACK_WIKOT_WORKFLOWS[c.workflow_mode];
+    const wfLabel = wf ? wf.label : c.workflow_mode;
+    const wfIcon = wf ? wf.icon : 'fa-file-pen';
+    return `
+      <div class="bg-white border border-gray-200 rounded-xl p-3 hover:border-orange-300 hover:shadow-sm transition-all flex items-center gap-3">
+        <div class="w-9 h-9 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center shrink-0">
+          <i class="fas ${wfIcon}"></i>
+        </div>
+        <div class="flex-1 min-w-0 cursor-pointer" onclick="resumeBackWikotConversation(${c.id})">
+          <div class="text-sm font-semibold text-navy-800 truncate">${escapeHtml(c.title || 'Sans titre')}</div>
+          <div class="text-[11px] text-navy-500 truncate">${escapeHtml(wfLabel)} · ${new Date(c.updated_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+        </div>
+        <button onclick="deleteWikotConversation(${c.id}, event, 'max')" class="w-8 h-8 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 flex items-center justify-center shrink-0" title="Archiver">
+          <i class="fas fa-trash text-xs"></i>
+        </button>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="fade-in space-y-6">
+      <div class="flex items-center gap-3">
+        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center text-white shadow-sm">
+          <i class="fas fa-pen-ruler text-lg"></i>
+        </div>
+        <div class="min-w-0">
+          <h1 class="text-xl sm:text-2xl font-bold text-navy-900">Back Wikot</h1>
+          <p class="text-xs sm:text-sm text-navy-500">Choisis une action. Back Wikot te guide pour la rédiger.</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+        ${buttonHtml('create_procedure')}
+        ${buttonHtml('update_procedure')}
+        ${buttonHtml('create_info')}
+        ${buttonHtml('update_info')}
+      </div>
+
+      <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-semibold text-navy-800 flex items-center gap-2">
+            <i class="fas fa-clock-rotate-left text-orange-500"></i>Mes dernières sessions
+          </h2>
+          <span class="text-[11px] text-navy-400">${visibleConvs.length} conversation${visibleConvs.length > 1 ? 's' : ''}</span>
+        </div>
+        <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
+          ${historyHtml}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// --------------------------------------------
+// VUE 2 : SELECT-TARGET (choix de la cible à modifier)
+// --------------------------------------------
+function renderBackWikotSelectTarget() {
+  const wfMode = state.backWikotWorkflowMode;
+  const wf = BACK_WIKOT_WORKFLOWS[wfMode];
+  if (!wf) {
+    state.backWikotStep = 'home';
+    return renderBackWikotHome();
+  }
+
+  const search = (state.backWikotSelectSearch || '').toLowerCase().trim();
+
+  let listHtml = '';
+  if (wfMode === 'update_procedure') {
+    const all = state.backWikotProceduresCache || [];
+    if (all.length === 0) {
+      listHtml = `<div class="text-center py-12 text-sm text-navy-400"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement…</div>`;
+    } else {
+      // Séparer principales / sous-procédures
+      const mains = all.filter(p => !p.is_subprocedure);
+      const subs = all.filter(p => p.is_subprocedure);
+      // Index : id procédure principale → sous-procédures attachées (via steps.linked_procedure_id)
+      // On n'a pas le détail des steps ici, donc on affiche les sous-procédures dans une section dédiée
+      // (groupement compact, indenté).
+      // Filtre recherche
+      const matches = (p) => {
+        if (!search) return true;
+        return (p.title || '').toLowerCase().includes(search) ||
+               (p.trigger_event || '').toLowerCase().includes(search);
+      };
+
+      const mainsFiltered = mains.filter(matches);
+      const subsFiltered = subs.filter(matches);
+
+      listHtml = `
+        <div class="space-y-2">
+          ${mainsFiltered.length > 0 ? mainsFiltered.map(p => `
+            <div onclick="selectBackWikotProcedureTarget(${p.id})" class="bg-white border border-gray-200 hover:border-orange-300 hover:shadow-sm rounded-xl p-3 cursor-pointer transition-all">
+              <div class="flex items-start gap-3">
+                <div class="w-9 h-9 rounded-lg flex items-center justify-center text-white shrink-0" style="background:${p.category_color || '#7C3AED'}">
+                  <i class="fas ${p.category_icon || 'fa-sitemap'} text-sm"></i>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="font-semibold text-navy-900 text-sm leading-snug">${escapeHtml(p.title)}</div>
+                  ${p.trigger_event ? `<div class="text-[11px] text-navy-500 mt-0.5 truncate"><i class="fas fa-bolt text-amber-500 mr-1"></i>${escapeHtml(p.trigger_event)}</div>` : ''}
+                  <div class="text-[10px] text-navy-400 mt-1 flex items-center gap-2">
+                    <span><i class="fas fa-list-ol mr-0.5"></i>${p.step_count || 0} étape${(p.step_count || 0) > 1 ? 's' : ''}</span>
+                    ${p.category_name ? `<span class="px-1.5 py-0.5 bg-gray-100 rounded">${escapeHtml(p.category_name)}</span>` : ''}
+                  </div>
+                </div>
+                <i class="fas fa-chevron-right text-navy-300 text-xs mt-2"></i>
+              </div>
+            </div>
+          `).join('') : (search ? '<div class="text-center text-xs text-navy-400 py-4">Aucune procédure principale correspondante.</div>' : '')}
+
+          ${subsFiltered.length > 0 ? `
+            <div class="pt-3 mt-2 border-t border-dashed border-gray-300">
+              <div class="text-[11px] uppercase tracking-wide font-semibold text-navy-500 mb-2 flex items-center gap-1.5">
+                <i class="fas fa-diagram-project text-purple-500"></i>Sous-procédures
+              </div>
+              <div class="space-y-1.5 pl-2 border-l-2 border-purple-200">
+                ${subsFiltered.map(p => `
+                  <div onclick="selectBackWikotProcedureTarget(${p.id})" class="bg-purple-50/40 hover:bg-purple-50 border border-purple-100 rounded-lg p-2 cursor-pointer transition-all">
+                    <div class="flex items-center gap-2">
+                      <span class="text-[9px] uppercase font-bold text-purple-600 bg-purple-100 px-1.5 py-0.5 rounded shrink-0">sous-proc</span>
+                      <div class="flex-1 min-w-0">
+                        <div class="text-xs font-semibold text-navy-800 truncate">${escapeHtml(p.title)}</div>
+                        ${p.trigger_event ? `<div class="text-[10px] text-navy-500 truncate">${escapeHtml(p.trigger_event)}</div>` : ''}
+                      </div>
+                      <i class="fas fa-chevron-right text-purple-300 text-[10px]"></i>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
+          ${mainsFiltered.length === 0 && subsFiltered.length === 0 ? `
+            <div class="text-center py-12 text-sm text-navy-400">
+              <i class="fas fa-magnifying-glass text-2xl text-navy-200 mb-2 block"></i>
+              Aucune procédure ne correspond à ta recherche.
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+  } else if (wfMode === 'update_info') {
+    const cache = state.backWikotInfoCache;
+    if (!cache) {
+      listHtml = `<div class="text-center py-12 text-sm text-navy-400"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement…</div>`;
+    } else {
+      const cats = cache.categories || [];
+      const items = cache.items || [];
+      const matches = (it) => {
+        if (!search) return true;
+        return (it.title || '').toLowerCase().includes(search) ||
+               (it.content || '').toLowerCase().includes(search);
+      };
+      const itemsFiltered = items.filter(matches);
+      // Grouper par catégorie
+      const grouped = {};
+      for (const it of itemsFiltered) {
+        const cid = it.category_id || 'none';
+        if (!grouped[cid]) grouped[cid] = [];
+        grouped[cid].push(it);
+      }
+      listHtml = `
+        <div class="space-y-3">
+          ${cats.map(cat => {
+            const arr = grouped[cat.id] || [];
+            if (arr.length === 0) return '';
+            return `
+              <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+                <div class="px-3 py-2 flex items-center gap-2 text-white" style="background:${cat.color || '#3B82F6'}">
+                  <i class="fas ${cat.icon || 'fa-circle-info'} text-sm"></i>
+                  <span class="text-xs font-semibold">${escapeHtml(cat.name)}</span>
+                  <span class="ml-auto text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full">${arr.length}</span>
+                </div>
+                <div class="divide-y divide-gray-100">
+                  ${arr.map(it => `
+                    <div onclick="selectBackWikotInfoTarget(${it.id})" class="px-3 py-2 hover:bg-amber-50 cursor-pointer flex items-start gap-2">
+                      <div class="flex-1 min-w-0">
+                        <div class="text-sm font-semibold text-navy-800 truncate">${escapeHtml(it.title)}</div>
+                        ${it.content ? `<div class="text-[11px] text-navy-500 line-clamp-1">${escapeHtml(it.content.substring(0, 120))}${it.content.length > 120 ? '…' : ''}</div>` : ''}
+                      </div>
+                      <i class="fas fa-chevron-right text-navy-300 text-xs mt-1"></i>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            `;
+          }).join('')}
+          ${(grouped['none'] && grouped['none'].length > 0) ? `
+            <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <div class="px-3 py-2 flex items-center gap-2 bg-gray-100 text-navy-700">
+                <i class="fas fa-folder-minus text-sm"></i>
+                <span class="text-xs font-semibold">Sans catégorie</span>
+                <span class="ml-auto text-[10px] bg-white/60 px-1.5 py-0.5 rounded-full">${grouped['none'].length}</span>
+              </div>
+              <div class="divide-y divide-gray-100">
+                ${grouped['none'].map(it => `
+                  <div onclick="selectBackWikotInfoTarget(${it.id})" class="px-3 py-2 hover:bg-amber-50 cursor-pointer flex items-start gap-2">
+                    <div class="flex-1 min-w-0">
+                      <div class="text-sm font-semibold text-navy-800 truncate">${escapeHtml(it.title)}</div>
+                    </div>
+                    <i class="fas fa-chevron-right text-navy-300 text-xs mt-1"></i>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+          ${itemsFiltered.length === 0 ? `
+            <div class="text-center py-12 text-sm text-navy-400">
+              <i class="fas fa-magnifying-glass text-2xl text-navy-200 mb-2 block"></i>
+              Aucune information ne correspond à ta recherche.
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }
+  }
+
+  return `
+    <div class="fade-in space-y-4">
+      <div class="flex items-center gap-3">
+        <button onclick="backToBackWikotHome()" class="w-9 h-9 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 text-navy-600 flex items-center justify-center shrink-0">
+          <i class="fas fa-arrow-left"></i>
+        </button>
+        <div class="min-w-0">
+          <h1 class="text-lg sm:text-xl font-bold text-navy-900 truncate">${escapeHtml(wf.label)}</h1>
+          <p class="text-[11px] sm:text-xs text-navy-500 truncate">Choisis l'élément à modifier.</p>
+        </div>
+      </div>
+
+      <div class="bg-white border border-gray-200 rounded-xl p-2 flex items-center gap-2">
+        <i class="fas fa-magnifying-glass text-navy-300 ml-2"></i>
+        <input type="text" value="${escapeHtml(state.backWikotSelectSearch || '')}"
+          oninput="state.backWikotSelectSearch = this.value; render(); document.getElementById('back-wikot-select-search').focus();"
+          id="back-wikot-select-search"
+          placeholder="Rechercher par titre ou déclencheur…"
+          class="flex-1 outline-none text-sm bg-transparent" />
+        ${state.backWikotSelectSearch ? `<button onclick="state.backWikotSelectSearch=''; render();" class="w-7 h-7 rounded hover:bg-gray-100 text-navy-400"><i class="fas fa-xmark text-xs"></i></button>` : ''}
+      </div>
+
+      <div class="max-h-[calc(100vh-16rem)] overflow-y-auto pr-1">
+        ${listHtml}
+      </div>
+    </div>
+  `;
+}
+
+// --------------------------------------------
+// VUE 3 : WORKSHOP (formulaire vivant + chat Back Wikot)
+// --------------------------------------------
+function renderBackWikotWorkshop() {
+  const wfMode = state.backWikotWorkflowMode;
+  const wf = BACK_WIKOT_WORKFLOWS[wfMode];
+  if (!wf || !state.backWikotForm) {
+    state.backWikotStep = 'home';
+    return renderBackWikotHome();
+  }
+  const f = state.backWikotForm;
+  const s = wikotState('max');
+  const messages = s.messages || [];
+  const isLoading = s.loading;
+  const isSending = s.sending;
+  const isSaving = state.backWikotSaving;
+
+  // Sidebar historique : on filtre par workflow_mode pour rester dans le contexte
+  const allConvs = state.wikotMaxConversations || [];
+  const sameWorkflowConvs = allConvs.filter(c => c.workflow_mode === wfMode);
+
+  const formHtml = f.kind === 'procedure' ? renderBackWikotProcedureForm(f) : renderBackWikotInfoForm(f);
+
+  const cfg = WIKOT_MODE_CONFIG.max;
+
+  return `
+    <div class="fade-in flex flex-col" style="height: calc(100vh - 8rem); max-height: calc(100vh - 8rem);">
+      <!-- Header workshop -->
+      <div class="flex items-center justify-between mb-3 shrink-0 gap-2">
+        <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button onclick="backToBackWikotHome()" class="w-9 h-9 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 text-navy-600 flex items-center justify-center shrink-0">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center text-white shadow-sm shrink-0">
+            <i class="fas ${wf.icon}"></i>
+          </div>
+          <div class="min-w-0">
+            <h1 class="text-base sm:text-lg font-bold text-navy-900 truncate">${escapeHtml(wf.label)}</h1>
+            <p class="text-[11px] text-navy-500 truncate">${state.backWikotFormDirty ? '<i class="fas fa-circle text-orange-400 text-[6px] mr-1"></i>Modifications non enregistrées' : 'Atelier de rédaction'}</p>
+          </div>
+        </div>
+        <button onclick="saveBackWikotForm()" ${isSaving ? 'disabled' : ''}
+          class="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 disabled:from-gray-300 disabled:to-gray-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold shadow-sm inline-flex items-center gap-1.5 shrink-0 transition-all">
+          <i class="fas ${isSaving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}"></i>
+          <span class="hidden sm:inline">${isSaving ? 'Enregistrement…' : 'Enregistrer'}</span>
+        </button>
+      </div>
+
+      <!-- Layout responsive : form (gauche/haut) + chat (droite/bas) -->
+      <div class="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_400px] gap-3 min-h-0 overflow-hidden">
+        <!-- COLONNE FORMULAIRE -->
+        <div class="bg-white border border-gray-200 rounded-xl flex flex-col min-h-0 overflow-hidden">
+          <div class="px-4 py-2.5 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100 flex items-center gap-2 shrink-0">
+            <i class="fas fa-file-pen text-orange-500"></i>
+            <span class="text-sm font-semibold text-navy-800">Formulaire ${f.kind === 'procedure' ? 'procédure' : 'information'}</span>
+            <span class="ml-auto text-[10px] text-navy-400 italic hidden sm:inline">L'IA peut éditer ces champs en direct</span>
+          </div>
+          <div class="flex-1 overflow-y-auto p-4">
+            ${formHtml}
+          </div>
+        </div>
+
+        <!-- COLONNE CHAT BACK WIKOT -->
+        <div class="bg-gradient-to-b from-orange-50/40 to-white border border-orange-100 rounded-xl flex flex-col min-h-0 overflow-hidden">
+          <div class="px-3 py-2.5 bg-white border-b border-orange-100 flex items-center gap-2 shrink-0">
+            <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center text-white text-xs">
+              <i class="fas fa-pen-ruler"></i>
+            </div>
+            <span class="text-sm font-semibold text-navy-800">Back Wikot</span>
+            <button onclick="toggleBackWikotHistorySidebar()" class="ml-auto w-7 h-7 rounded hover:bg-orange-50 text-navy-500" title="Historique">
+              <i class="fas fa-clock-rotate-left text-xs"></i>
+            </button>
+          </div>
+          ${state.backWikotHistoryOpen ? `
+            <div class="border-b border-orange-100 bg-white max-h-48 overflow-y-auto">
+              ${sameWorkflowConvs.length === 0 ? `
+                <div class="text-center py-3 text-[11px] text-navy-400 italic">Aucune autre session pour ce workflow.</div>
+              ` : sameWorkflowConvs.map(c => `
+                <div onclick="resumeBackWikotConversation(${c.id}); state.backWikotHistoryOpen=false;" class="px-3 py-2 border-b border-gray-50 hover:bg-orange-50 cursor-pointer ${s.currentConvId === c.id ? 'bg-orange-50 border-l-2 border-l-orange-400' : ''}">
+                  <div class="text-xs font-medium text-navy-800 truncate">${escapeHtml(c.title || 'Sans titre')}</div>
+                  <div class="text-[10px] text-navy-400">${new Date(c.updated_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+          <div id="wikot-max-messages" class="flex-1 overflow-y-auto p-3">
+            ${messages.length === 0 && !isLoading ? `
+              <div class="text-center py-6">
+                <div class="w-14 h-14 mx-auto rounded-full bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center text-white text-xl mb-3 shadow-md">
+                  <i class="fas fa-pen-ruler"></i>
+                </div>
+                <p class="text-sm font-semibold text-navy-800 mb-1">Décris ton besoin</p>
+                <p class="text-[11px] text-navy-500 leading-snug">Back Wikot va remplir le formulaire pour toi. Tu peux ensuite ajuster, demander des modifs, ou enregistrer.</p>
+              </div>
+            ` : ''}
+            ${isLoading ? '<div class="flex justify-center items-center h-full text-navy-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement…</div>' : ''}
+            ${messages.map(m => renderWikotMessage(m, 'max')).join('')}
+            ${isSending ? `
+              <div class="flex justify-start mb-4">
+                <div class="flex gap-2">
+                  <div class="w-8 h-8 rounded-full bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center text-white text-xs">
+                    <i class="fas fa-pen-ruler"></i>
+                  </div>
+                  <div class="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                    <div class="flex gap-1">
+                      <div class="w-2 h-2 rounded-full bg-orange-400 animate-bounce" style="animation-delay: 0ms"></div>
+                      <div class="w-2 h-2 rounded-full bg-orange-400 animate-bounce" style="animation-delay: 150ms"></div>
+                      <div class="w-2 h-2 rounded-full bg-orange-400 animate-bounce" style="animation-delay: 300ms"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ` : ''}
+          </div>
+          <div class="border-t border-orange-100 bg-white p-2 shrink-0">
+            <div class="flex items-end gap-2">
+              <textarea id="wikot-max-input" rows="1"
+                placeholder="Décris ce que tu veux…"
+                oninput="autoResizeTextarea(this)"
+                onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('max');}"
+                ${isSending ? 'disabled' : ''}
+                class="form-input-mobile flex-1 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-orange-400 resize-none max-h-32 text-sm"></textarea>
+              <button onclick="sendWikotMessage('max')" ${isSending ? 'disabled' : ''}
+                class="w-10 h-10 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 text-white flex items-center justify-center shrink-0 transition-colors" title="Envoyer">
+                <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function toggleBackWikotHistorySidebar() {
+  state.backWikotHistoryOpen = !state.backWikotHistoryOpen;
+  render();
+}
+
+// Form procédure : titre, déclencheur, description, catégorie, étapes
+function renderBackWikotProcedureForm(f) {
+  const cats = state.categories || [];
+  const allProcs = state.backWikotProceduresCache || state.procedures || [];
+  // Pour le picker de sous-procédure, on autorise toutes les procédures sauf soi-même
+  const linkable = allProcs.filter(p => p.id !== f.id);
+
+  const stepsHtml = (f.steps || []).map((st, idx) => `
+    <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2">
+      <div class="flex items-center gap-2">
+        <span class="w-7 h-7 rounded-full bg-gradient-to-br from-orange-400 to-rose-500 text-white text-xs font-bold flex items-center justify-center shrink-0">${idx + 1}</span>
+        <input type="text" value="${escapeHtml(st.title || '')}"
+          oninput="updateBackWikotStepField(${idx}, 'title', this.value)"
+          placeholder="Titre de l'étape (verbe à l'impératif)"
+          class="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400" />
+        <button onclick="moveBackWikotStep(${idx}, -1)" ${idx === 0 ? 'disabled' : ''}
+          class="w-7 h-7 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-navy-500 flex items-center justify-center" title="Monter">
+          <i class="fas fa-arrow-up text-xs"></i>
+        </button>
+        <button onclick="moveBackWikotStep(${idx}, 1)" ${idx === (f.steps.length - 1) ? 'disabled' : ''}
+          class="w-7 h-7 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed text-navy-500 flex items-center justify-center" title="Descendre">
+          <i class="fas fa-arrow-down text-xs"></i>
+        </button>
+        <button onclick="removeBackWikotStep(${idx})"
+          class="w-7 h-7 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 flex items-center justify-center" title="Supprimer">
+          <i class="fas fa-trash text-xs"></i>
+        </button>
+      </div>
+      <textarea oninput="updateBackWikotStepField(${idx}, 'content', this.value)"
+        placeholder="Détail de l'étape (instructions concrètes au présent, à la 2e personne)"
+        rows="3"
+        class="w-full px-2.5 py-1.5 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400 resize-y">${escapeHtml(st.content || '')}</textarea>
+      <div class="flex items-center gap-2">
+        <label class="text-[11px] text-navy-500 shrink-0"><i class="fas fa-link mr-1"></i>Sous-procédure liée :</label>
+        <select onchange="updateBackWikotStepField(${idx}, 'linked_procedure_id', this.value ? parseInt(this.value) : null); render();"
+          class="flex-1 px-2 py-1 border border-gray-200 rounded-lg text-xs bg-white outline-none focus:ring-2 focus:ring-orange-400">
+          <option value="">Aucune</option>
+          ${linkable.map(p => `<option value="${p.id}" ${st.linked_procedure_id === p.id ? 'selected' : ''}>${escapeHtml(p.title)}${p.is_subprocedure ? ' (sous-proc)' : ''}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+  `).join('');
+
+  return `
+    <div class="space-y-4">
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Titre <span class="text-red-500">*</span></label>
+        <input type="text" value="${escapeHtml(f.title || '')}"
+          oninput="updateBackWikotFormField('title', this.value)"
+          placeholder="Verbe à l'infinitif (ex: Effectuer un check-in)"
+          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400" />
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Déclencheur <span class="text-red-500">*</span></label>
+        <input type="text" value="${escapeHtml(f.trigger_event || '')}"
+          oninput="updateBackWikotFormField('trigger_event', this.value)"
+          placeholder="Quand… ou Lorsque…"
+          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400" />
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Description</label>
+        <textarea oninput="updateBackWikotFormField('description', this.value)"
+          placeholder="1 à 2 phrases pour situer la procédure"
+          rows="2"
+          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400 resize-y">${escapeHtml(f.description || '')}</textarea>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Catégorie</label>
+        <select onchange="updateBackWikotFormField('category_id', this.value ? parseInt(this.value) : null)"
+          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400">
+          <option value="">Sans catégorie</option>
+          ${cats.map(c => `<option value="${c.id}" ${f.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="pt-2 border-t border-gray-200">
+        <div class="flex items-center justify-between mb-2">
+          <label class="text-xs font-semibold text-navy-700">Étapes <span class="text-red-500">*</span> <span class="text-navy-400 font-normal">(${(f.steps || []).length})</span></label>
+          <button onclick="addBackWikotStep()" class="text-xs bg-orange-500 hover:bg-orange-600 text-white px-2.5 py-1 rounded-lg inline-flex items-center gap-1">
+            <i class="fas fa-plus text-[10px]"></i>Ajouter une étape
+          </button>
+        </div>
+        <div class="space-y-2">
+          ${stepsHtml || '<div class="text-center py-6 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">Aucune étape. Demande à Back Wikot ou clique sur « Ajouter une étape ».</div>'}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// Form info : titre, contenu, catégorie
+function renderBackWikotInfoForm(f) {
+  const cats = state.hotelInfoCategories || [];
+  return `
+    <div class="space-y-4">
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Titre <span class="text-red-500">*</span></label>
+        <input type="text" value="${escapeHtml(f.title || '')}"
+          oninput="updateBackWikotFormField('title', this.value)"
+          placeholder="Titre court et factuel"
+          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400" />
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Catégorie</label>
+        <select onchange="updateBackWikotFormField('category_id', this.value ? parseInt(this.value) : null)"
+          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400">
+          <option value="">Sans catégorie</option>
+          ${cats.map(c => `<option value="${c.id}" ${f.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Contenu <span class="text-red-500">*</span></label>
+        <textarea oninput="updateBackWikotFormField('content', this.value)"
+          placeholder="Bullets factuels. **gras** pour les valeurs clés. Format horaires : 09:00 – 18:00."
+          rows="14"
+          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-orange-400 resize-y font-mono">${escapeHtml(f.content || '')}</textarea>
+        <p class="text-[10px] text-navy-400 mt-1">Astuce : commence chaque bullet par <code>•</code> ou <code>-</code>. Utilise <code>**texte**</code> pour mettre en gras.</p>
+      </div>
+    </div>
+  `;
 }
 
 // ============================================

@@ -1850,7 +1850,10 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   // Workflow mode (Back Wikot uniquement) : create_procedure / update_procedure / create_info / update_info
   const allowedWorkflows = ['create_procedure', 'update_procedure', 'create_info', 'update_info']
   const workflowMode = (mode === 'max' && allowedWorkflows.includes(body.workflow_mode)) ? body.workflow_mode : null
-  const targetKind = (workflowMode && (body.target_kind === 'procedure' || body.target_kind === 'info')) ? body.target_kind : null
+  // Normalisation : le frontend peut envoyer 'info' ou 'info_item' → on stocke 'info_item' pour cohérence
+  let rawTargetKind = body.target_kind
+  if (rawTargetKind === 'info') rawTargetKind = 'info_item'
+  const targetKind = (workflowMode && (rawTargetKind === 'procedure' || rawTargetKind === 'info_item')) ? rawTargetKind : null
   const targetId = (workflowMode && body.target_id) ? parseInt(body.target_id) : null
 
   // Titre par défaut explicite selon le workflow
@@ -2342,7 +2345,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     actions: createdActions,
     // Mises à jour du formulaire envoyées par l'IA via update_form (Back Wikot uniquement).
     // Le frontend applique ces patches sur le formulaire visible à l'utilisateur.
-    form_patches: formPatches
+    // On expose sous deux noms pour compat (form_patches historique + form_updates utilisé par le nouveau front).
+    form_patches: formPatches,
+    form_updates: formPatches
   })
 })
 

@@ -2437,7 +2437,7 @@ app.get('/api/wikot/conversations', authMiddleware, async (c) => {
   let query = `
     SELECT id, title, updated_at, created_at, mode, workflow_mode, target_kind, target_id
     FROM wikot_conversations
-    WHERE user_id = ? AND is_archived = 0 AND mode = ?
+    WHERE user_id = ? AND mode = ?
   `
   const params: any[] = [user.id, mode]
   if (workflowMode) {
@@ -2483,55 +2483,15 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   return c.json({ id: r.meta.last_row_id, mode, workflow_mode: workflowMode, target_kind: targetKind, target_id: targetId })
 })
 
-// GET détail d'une conversation + messages
+// GET détail d'une conversation
+// STATELESS : on n'enregistre plus la mémoire des messages → messages: [].
+// On retourne toujours les pending_actions (workflow Back Wikot) qui restent persistées.
 app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   const id = parseInt(c.req.param('id'))
   const conv = await c.env.DB.prepare('SELECT * FROM wikot_conversations WHERE id = ? AND user_id = ?').bind(id, user.id).first() as any
   if (!conv) return c.json({ error: 'Conversation introuvable' }, 404)
 
-  // Pagination : on récupère les N derniers messages (défaut 100, max 500).
-  // Les conversations Wikot peuvent grossir ; on protège la perf.
-  const limitRaw = parseInt(c.req.query('limit') || '100')
-  const limit = Math.min(Math.max(limitRaw, 1), 500)
-
-  // Sous-requête : on prend les N derniers ORDER BY created_at DESC,
-  // puis on les ré-ordonne ASC pour l'affichage.
-  // OPTIMISATION : on inclut audio_key/mime/duration pour permettre au frontend
-  // de re-rendre les bulles vocales en re-ouvrant une conversation existante.
-  const messages = await c.env.DB.prepare(`
-    SELECT id, role, content, references_json, created_at,
-           audio_key, audio_mime, audio_duration_ms
-    FROM (
-      SELECT id, role, content, references_json, created_at,
-             audio_key, audio_mime, audio_duration_ms
-      FROM wikot_messages
-      WHERE conversation_id = ? AND role IN ('user', 'assistant')
-      ORDER BY created_at DESC, id DESC
-      LIMIT ?
-    )
-    ORDER BY created_at ASC, id ASC
-  `).bind(id, limit).all()
-
-  // Décoder references_json : si c'est { answer_card: ... } → on expose answer_card,
-  // sinon c'est un tableau de références sourcing classiques (mode max).
-  const decodedMessages = (messages.results as any[]).map(m => {
-    let refs: any[] = []
-    let answerCard: any = null
-    if (m.references_json) {
-      try {
-        const parsed = JSON.parse(m.references_json)
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.answer_card) {
-          answerCard = parsed.answer_card
-        } else if (Array.isArray(parsed)) {
-          refs = parsed
-        }
-      } catch {}
-    }
-    return { ...m, references: refs, answer_card: answerCard }
-  })
-
-  // Joindre les pending actions à leur message
   const actions = await c.env.DB.prepare(`
     SELECT id, message_id, action_type, payload, before_snapshot, status, result_id
     FROM wikot_pending_actions
@@ -2539,7 +2499,7 @@ app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
     ORDER BY created_at
   `).bind(id).all()
 
-  return c.json({ conversation: conv, messages: decodedMessages, actions: actions.results })
+  return c.json({ conversation: conv, messages: [], actions: actions.results })
 })
 
 // DELETE supprime définitivement une conversation (staff)
@@ -2557,22 +2517,10 @@ app.delete('/api/wikot/conversations/:id', authMiddleware, async (c) => {
     return c.json({ error: 'Accès refusé' }, 403)
   }
 
-  // 1) Récupère toutes les audio_keys liées pour suppression R2 différée
-  const audios = await c.env.DB.prepare(
-    `SELECT audio_key FROM wikot_messages WHERE conversation_id = ? AND audio_key IS NOT NULL`
-  ).bind(id).all()
-  const audioKeys = (audios.results as any[]).map(r => r.audio_key).filter(Boolean)
-
-  // 2) Suppression DB en cascade (wikot_messages + pending_actions via FK CASCADE)
+  // STATELESS : on ne stocke plus les messages → plus d'audio_key persistés en DB
+  // (les audios R2 sont nettoyés par le cron cleanup périodique).
+  // Suppression DB en cascade (pending_actions via FK CASCADE).
   await c.env.DB.prepare('DELETE FROM wikot_conversations WHERE id = ?').bind(id).run()
-
-  // 3) Cleanup R2 non bloquant
-  if (audioKeys.length > 0 && c.env.AUDIO_BUCKET) {
-    const bucket = c.env.AUDIO_BUCKET
-    c.executionCtx?.waitUntil?.(
-      Promise.all(audioKeys.map(k => bucket.delete(k).catch(() => {})))
-    )
-  }
   return c.json({ success: true })
 })
 
@@ -2615,22 +2563,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const conv = await c.env.DB.prepare('SELECT * FROM wikot_conversations WHERE id = ? AND user_id = ?').bind(convId, user.id).first() as any
   if (!conv) return c.json({ error: 'Conversation introuvable' }, 404)
 
-  // Sauvegarder le message utilisateur (avec éventuelle référence audio)
-  const userMsgRes = await c.env.DB.prepare(`
-    INSERT INTO wikot_messages (conversation_id, role, content, audio_key, audio_mime, audio_duration_ms, audio_size_bytes)
-    VALUES (?, 'user', ?, ?, ?, ?, ?)
-  `).bind(
-    convId,
-    hasText ? content : '',
-    audioKey,
-    audioMime,
-    audioDurationMs || null,
-    audioSizeBytes || null
-  ).run()
-
-  // STATELESS : pas d'historique. Chaque message est traité indépendamment.
-  // → moins de tokens OpenRouter, moins de CPU, UX plus simple.
-  // On garde uniquement le message courant (user) pour l'envoyer au LLM.
+  // STATELESS : pas de persistance message. Chaque message est traité indépendamment.
+  // → moins de tokens OpenRouter, moins de CPU, moins d'écritures D1, UX plus simple.
+  // On garde uniquement le message courant (user) en mémoire pour l'envoyer au LLM.
   const history = { results: [{
     role: 'user',
     content: hasText ? content : '',
@@ -3002,18 +2937,14 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const referencesJson = mode === 'standard'
     ? (answerCard ? JSON.stringify({ answer_card: answerCard }) : null)
     : (enrichedRefs.length > 0 ? JSON.stringify(enrichedRefs) : null)
-  const assistantMsgRes = await c.env.DB.prepare(`
-    INSERT INTO wikot_messages (conversation_id, role, content, tool_calls, references_json)
-    VALUES (?, 'assistant', ?, ?, ?)
-  `).bind(
-    convId,
-    assistantText || '',
-    lastToolCalls ? JSON.stringify(lastToolCalls) : null,
-    referencesJson
-  ).run()
-  const assistantMsgId = assistantMsgRes.meta.last_row_id
+  // STATELESS : on ne persiste plus les messages. On utilise des IDs synthétiques
+  // (timestamp + random) pour que le frontend puisse continuer à les référencer en mémoire.
+  const now = Date.now()
+  const userMsgId = now
+  const assistantMsgId = now + 1
 
-  // Sauvegarder les propositions en pending_actions
+  // Sauvegarder les propositions en pending_actions (table conservée : workflow réel)
+  // message_id est désormais nullable (FK vers wikot_messages supprimée par migration).
   const createdActions: any[] = []
   for (const proposal of proposalsCollected) {
     let beforeSnapshot: any = null
@@ -3031,9 +2962,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
 
     const aRes = await c.env.DB.prepare(`
       INSERT INTO wikot_pending_actions (conversation_id, message_id, hotel_id, user_id, action_type, payload, before_snapshot, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+      VALUES (?, NULL, ?, ?, ?, ?, ?, 'pending')
     `).bind(
-      convId, assistantMsgId, user.hotel_id, user.id,
+      convId, user.hotel_id, user.id,
       proposal.tool_name.replace('propose_', ''),
       JSON.stringify(proposal.args),
       beforeSnapshot ? JSON.stringify(beforeSnapshot) : null
@@ -3053,7 +2984,7 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   await c.env.DB.prepare('UPDATE wikot_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(convId).run()
 
   return c.json({
-    user_message_id: userMsgRes.meta.last_row_id,
+    user_message_id: userMsgId,
     assistant_message: {
       id: assistantMsgId,
       role: 'assistant',
@@ -4607,6 +4538,8 @@ app.get('/api/restaurant/dashboard', authMiddleware, async (c) => {
   `).bind(user.hotel_id, from, to).all()
 
   // Capacité prévue par jour × repas (en tenant compte des exceptions)
+  // OPTIM N+1 → 2 requêtes globales : on récupère TOUTES les exceptions + le schedule
+  // d'un coup, puis on calcule la capacité en mémoire (au lieu de 14j × 3 repas = 42 SELECTs).
   const days: string[] = []
   const dStart = new Date(from + 'T00:00:00Z')
   const dEnd = new Date(to + 'T00:00:00Z')
@@ -4614,11 +4547,31 @@ app.get('/api/restaurant/dashboard', authMiddleware, async (c) => {
     days.push(d.toISOString().slice(0, 10))
   }
   const meals = ['breakfast', 'lunch', 'dinner']
+  const [exceptionsRes, scheduleRes] = await Promise.all([
+    c.env.DB.prepare(`
+      SELECT exception_date, meal_type, is_open, capacity
+      FROM restaurant_exceptions
+      WHERE hotel_id = ? AND exception_date BETWEEN ? AND ?
+    `).bind(user.hotel_id, from, to).all(),
+    c.env.DB.prepare(`
+      SELECT weekday, meal_type, is_open, capacity
+      FROM restaurant_schedule
+      WHERE hotel_id = ?
+    `).bind(user.hotel_id).all()
+  ])
+  // Index par clé pour lookup O(1)
+  const exMap = new Map<string, any>()
+  for (const e of (exceptionsRes.results as any[])) exMap.set(`${e.exception_date}|${e.meal_type}`, e)
+  const schMap = new Map<string, any>()
+  for (const s of (scheduleRes.results as any[])) schMap.set(`${s.weekday}|${s.meal_type}`, s)
+
   const capacityMap: Record<string, number> = {}
   for (const day of days) {
+    const weekday = new Date(day + 'T00:00:00Z').getUTCDay()
     for (const m of meals) {
-      const a = await getMealAvailability(c.env.DB, user.hotel_id!, day, m)
-      capacityMap[`${day}|${m}`] = a.is_open ? a.capacity : 0
+      const ex = exMap.get(`${day}|${m}`)
+      const cfg = ex || schMap.get(`${weekday}|${m}`)
+      capacityMap[`${day}|${m}`] = (cfg && cfg.is_open) ? (cfg.capacity || 0) : 0
     }
   }
 
@@ -4703,7 +4656,7 @@ app.get('/api/client/wikot/conversations', clientAuthMiddleware, async (c) => {
   const conversations = await c.env.DB.prepare(`
     SELECT id, title, created_at, updated_at
     FROM wikot_conversations
-    WHERE client_account_id = ? AND mode = 'concierge' AND is_archived = 0
+    WHERE client_account_id = ? AND mode = 'concierge'
     ORDER BY updated_at DESC
     LIMIT 20
   `).bind(client.id).all()
@@ -4728,15 +4681,8 @@ app.get('/api/client/wikot/conversations/:id', clientAuthMiddleware, async (c) =
     WHERE id = ? AND client_account_id = ? AND mode = 'concierge'
   `).bind(id, client.id).first()
   if (!conv) return c.json({ error: 'Conversation non trouvée' }, 404)
-  // OPTIMISATION : inclure audio_key pour ré-affichage bulles vocales côté client
-  const messages = await c.env.DB.prepare(`
-    SELECT id, role, content, references_json, created_at,
-           audio_key, audio_mime, audio_duration_ms
-    FROM wikot_messages
-    WHERE conversation_id = ? AND role IN ('user', 'assistant')
-    ORDER BY created_at ASC
-  `).bind(id).all()
-  return c.json({ conversation: conv, messages: messages.results })
+  // STATELESS : pas de mémoire des anciens messages côté client → messages: [].
+  return c.json({ conversation: conv, messages: [] })
 })
 
 // ============================================
@@ -4811,22 +4757,14 @@ app.post('/api/client/wikot/conversations/:id/message', clientAuthMiddleware, as
   }
 
   const conv = await c.env.DB.prepare(`
-    SELECT id FROM wikot_conversations WHERE id = ? AND client_account_id = ? AND mode = 'concierge'
+    SELECT id, title FROM wikot_conversations WHERE id = ? AND client_account_id = ? AND mode = 'concierge'
   `).bind(convId, client.id).first()
   if (!conv) return c.json({ error: 'Conversation non trouvée' }, 404)
 
-  // Stocker le message utilisateur (avec éventuelle référence audio)
-  const userInsert = await c.env.DB.prepare(`
-    INSERT INTO wikot_messages (conversation_id, role, content, audio_key, audio_mime, audio_duration_ms, audio_size_bytes)
-    VALUES (?, 'user', ?, ?, ?, ?, ?)
-  `).bind(
-    convId,
-    hasText ? userMessage : '',
-    audioKey,
-    audioMime,
-    audioDurationMs || null,
-    audioSizeBytes || null
-  ).run()
+  // STATELESS : on ne persiste plus le message utilisateur (mémoire retirée).
+  // ID synthétique pour que le frontend puisse continuer à le référencer.
+  const nowMsg = Date.now()
+  const userMsgId = nowMsg
 
   // OPTIM : cache KV (TTL 5 min) du couple { itemsList, knowledgeBase }
   // Le catalogue change rarement (modifs côté admin) ; on évite 2 SELECT D1 par message.
@@ -5000,15 +4938,13 @@ ${knowledgeBase || '(Aucune information publiée par l\'hôtel.)'}
     }
   }
 
-  // Stocker la réponse (content = marqueur, references_json = données structurées)
-  const assistantInsert = await c.env.DB.prepare(`
-    INSERT INTO wikot_messages (conversation_id, role, content, references_json)
-    VALUES (?, 'assistant', ?, ?)
-  `).bind(convId, assistantContent, JSON.stringify(referencesJson)).run()
+  // STATELESS : pas de persistance message (mémoire retirée).
+  // ID synthétique pour que le frontend puisse référencer le bubble en mémoire.
+  const assistantMsgId = nowMsg + 1
 
-  // Mettre à jour le titre si premier message
-  const msgCount = await c.env.DB.prepare(`SELECT COUNT(*) as n FROM wikot_messages WHERE conversation_id = ? AND role='user'`).bind(convId).first() as any
-  if (msgCount?.n === 1) {
+  // Mettre à jour le titre seulement si la conversation est encore "Nouvelle conversation"
+  // (premier vrai message). Plus besoin de COUNT D1 puisque pas de mémoire.
+  if (hasText && conv && (conv as any).title === 'Nouvelle conversation') {
     const newTitle = userMessage.slice(0, 60)
     await c.env.DB.prepare(`UPDATE wikot_conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).bind(newTitle, convId).run()
   } else {
@@ -5016,9 +4952,9 @@ ${knowledgeBase || '(Aucune information publiée par l\'hôtel.)'}
   }
 
   return c.json({
-    user_message_id: userInsert.meta.last_row_id,
+    user_message_id: userMsgId,
     assistant_message: {
-      id: assistantInsert.meta.last_row_id,
+      id: assistantMsgId,
       role: 'assistant',
       content: assistantContent,
       references_json: JSON.stringify(referencesJson)

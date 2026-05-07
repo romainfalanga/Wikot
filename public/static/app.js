@@ -600,20 +600,12 @@ function renderLoginPage() {
         </div>
         <div class="max-w-md">
           <p class="text-xs uppercase tracking-[0.2em] mb-4" style="color: var(--c-gold);">L'excellence hôtelière</p>
-          <h2 class="font-display text-4xl xl:text-5xl font-medium text-white leading-tight mb-6">
+          <h2 class="font-display text-4xl xl:text-5xl font-medium text-white leading-tight">
             Chaque détail<br/>
             <span style="color: var(--c-gold);">soigneusement orchestré.</span>
           </h2>
-          <p class="text-sm leading-relaxed" style="color: rgba(255,255,255,0.7);">
-            La plateforme qui réunit vos procédures, votre équipe et vos clients
-            dans une expérience cohérente et premium.
-          </p>
         </div>
-        <div class="flex items-center gap-6 text-xs" style="color: rgba(255,255,255,0.5);">
-          <span class="flex items-center gap-2"><i class="fas fa-shield-halved" style="color: var(--c-gold);"></i> Sécurisé</span>
-          <span class="flex items-center gap-2"><i class="fas fa-bolt" style="color: var(--c-gold);"></i> Instantané</span>
-          <span class="flex items-center gap-2"><i class="fas fa-globe" style="color: var(--c-gold);"></i> Multi-hôtels</span>
-        </div>
+        <div></div>
       </div>
     </div>
 

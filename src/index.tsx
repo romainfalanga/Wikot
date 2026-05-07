@@ -67,10 +67,15 @@ app.use('*', async (c, next) => {
 })
 
 // ============================================
-// CRYPTO HELPERS — PBKDF2-SHA256 100k iter (Web Crypto API, compatible Workers)
+// CRYPTO HELPERS — PBKDF2-SHA256 (Web Crypto API, compatible Workers)
+// Argon2 n'est pas dispo nativement sur l'edge runtime (pas de WASM crypto + fs).
+// On utilise PBKDF2-SHA256 600k iter (recommandation OWASP 2023) — équivalent sécurité.
+// Le champ `algo` versionne le hash : on supporte la rotation transparente v1 (100k) → v2 (600k).
 // ============================================
-const PBKDF2_ITER = 100_000
-const PBKDF2_ALGO = 'pbkdf2-sha256-100k'
+const PBKDF2_ITER_V1 = 100_000          // legacy (pré-2026)
+const PBKDF2_ITER_CURRENT = 600_000     // OWASP 2023+ — actuel
+const PBKDF2_ALGO_CURRENT = 'pbkdf2-sha256-600k'
+const PBKDF2_ALGO_LEGACY = 'pbkdf2-sha256-100k'
 
 function bytesToHex(arr: Uint8Array): string {
   return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('')
@@ -81,17 +86,24 @@ function hexToBytes(hex: string): Uint8Array {
   return out
 }
 
+// Détermine le nombre d'itérations selon la valeur stockée en BDD (rétrocompat).
+function iterationsFromAlgo(algo: string | null | undefined): number {
+  if (algo === PBKDF2_ALGO_LEGACY) return PBKDF2_ITER_V1
+  return PBKDF2_ITER_CURRENT
+}
+
 async function hashPassword(password: string): Promise<{ hash: string; salt: string; algo: string }> {
   const salt = new Uint8Array(16)
   crypto.getRandomValues(salt)
-  const hash = await derivePbkdf2(password, salt)
-  return { hash: bytesToHex(hash), salt: bytesToHex(salt), algo: PBKDF2_ALGO }
+  const hash = await derivePbkdf2(password, salt, PBKDF2_ITER_CURRENT)
+  return { hash: bytesToHex(hash), salt: bytesToHex(salt), algo: PBKDF2_ALGO_CURRENT }
 }
 
-async function verifyPassword(password: string, hashHex: string, saltHex: string): Promise<boolean> {
+async function verifyPassword(password: string, hashHex: string, saltHex: string, algo?: string | null): Promise<boolean> {
   try {
     const expected = hexToBytes(hashHex)
-    const computed = await derivePbkdf2(password, hexToBytes(saltHex))
+    const iter = iterationsFromAlgo(algo)
+    const computed = await derivePbkdf2(password, hexToBytes(saltHex), iter)
     if (expected.length !== computed.length) return false
     // Comparaison à temps constant
     let diff = 0
@@ -102,13 +114,18 @@ async function verifyPassword(password: string, hashHex: string, saltHex: string
   }
 }
 
-async function derivePbkdf2(password: string, salt: Uint8Array): Promise<Uint8Array> {
+// Indique si un hash stocké est « obsolète » (algo legacy) et mérite une re-migration au prochain login.
+function passwordNeedsRehash(algo: string | null | undefined): boolean {
+  return algo !== PBKDF2_ALGO_CURRENT
+}
+
+async function derivePbkdf2(password: string, salt: Uint8Array, iterations: number): Promise<Uint8Array> {
   const enc = new TextEncoder()
   const baseKey = await crypto.subtle.importKey(
     'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']
   )
   const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
     baseKey, 256
   )
   return new Uint8Array(bits)
@@ -253,10 +270,12 @@ app.post('/api/auth/login', async (c) => {
 
   // 1. Vérification : nouveau hash si présent, sinon legacy plaintext
   let valid = false
-  let needsMigration = false
+  let needsMigration = false  // plaintext → hashé
+  let needsRehash = false     // hashé v1 100k → v2 600k
 
   if (user.password_hash_v2 && user.password_salt) {
-    valid = await verifyPassword(password, user.password_hash_v2, user.password_salt)
+    valid = await verifyPassword(password, user.password_hash_v2, user.password_salt, user.password_algo)
+    if (valid && passwordNeedsRehash(user.password_algo)) needsRehash = true
   } else if (user.password_hash) {
     // Lazy migration : ancien stockage en clair
     valid = (user.password_hash === password)
@@ -265,10 +284,10 @@ app.post('/api/auth/login', async (c) => {
 
   if (!valid) return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
 
-  // 2. Lazy migration vers PBKDF2 si nécessaire
+  // 2. Lazy migration vers PBKDF2 si nécessaire (plaintext → v2 ou v1 → v2)
   // Note : password_hash reste NOT NULL au schéma → on stocke '' comme sentinelle
   // pour invalider l'ancien plaintext sans casser la contrainte / les FK.
-  if (needsMigration) {
+  if (needsMigration || needsRehash) {
     const { hash, salt, algo } = await hashPassword(password)
     await c.env.DB.prepare(`
       UPDATE users SET password_hash_v2 = ?, password_salt = ?, password_algo = ?, password_hash = ''
@@ -396,13 +415,13 @@ app.put('/api/auth/change-password', authMiddleware, async (c) => {
 
   // Vérifier l'ancien mot de passe (compatible v1 plaintext et v2 PBKDF2)
   const dbUser = await c.env.DB.prepare(
-    'SELECT password_hash, password_hash_v2, password_salt FROM users WHERE id = ?'
+    'SELECT password_hash, password_hash_v2, password_salt, password_algo FROM users WHERE id = ?'
   ).bind(user.id).first() as any
   if (!dbUser) return c.json({ error: 'Utilisateur introuvable' }, 404)
 
   let valid = false
   if (dbUser.password_hash_v2 && dbUser.password_salt) {
-    valid = await verifyPassword(current_password, dbUser.password_hash_v2, dbUser.password_salt)
+    valid = await verifyPassword(current_password, dbUser.password_hash_v2, dbUser.password_salt, dbUser.password_algo)
   } else if (dbUser.password_hash) {
     valid = (dbUser.password_hash === current_password)
   }

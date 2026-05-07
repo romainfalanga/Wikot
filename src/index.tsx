@@ -686,7 +686,9 @@ app.delete('/api/users/:id', authMiddleware, async (c) => {
 app.get('/api/categories', authMiddleware, async (c) => {
   const user = c.get('user')
   if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
-  const hotelId = c.req.query('hotel_id') || user.hotel_id
+  // SÉCURITÉ: on force le hotel_id du user (pas de query override pour éviter cross-tenant leak)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ categories: [] })
   const categories = await c.env.DB.prepare('SELECT * FROM categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all()
   return c.json({ categories: categories.results })
 })
@@ -727,7 +729,9 @@ app.delete('/api/categories/:id', authMiddleware, async (c) => {
 app.get('/api/procedures', authMiddleware, async (c) => {
   const user = c.get('user')
   if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
-  const hotelId = c.req.query('hotel_id') || user.hotel_id
+  // SÉCURITÉ: on force le hotel_id du user (pas de query override)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ procedures: [] })
   const categoryId = c.req.query('category_id')
   const search = c.req.query('search')
   const includeSubprocedures = c.req.query('include_subprocedures') === '1' // explicite, pour le détail
@@ -1009,7 +1013,9 @@ app.delete('/api/procedures/:id', authMiddleware, async (c) => {
 app.get('/api/suggestions', authMiddleware, async (c) => {
   const user = c.get('user')
   if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
-  const hotelId = c.req.query('hotel_id') || user.hotel_id
+  // SÉCURITÉ: on force le hotel_id du user (pas de query override)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ suggestions: [] })
   const status = c.req.query('status')
 
   let query = `SELECT s.*, u.name as user_name, p.title as procedure_title, u2.name as reviewed_by_name
@@ -1023,7 +1029,8 @@ app.get('/api/suggestions', authMiddleware, async (c) => {
   if (status) { query += ' AND s.status = ?'; params.push(status) }
   if (user.role === 'employee') { query += ' AND s.user_id = ?'; params.push(user.id) }
 
-  query += ' ORDER BY s.created_at DESC'
+  // PERF: LIMIT pour éviter explosion mémoire si l'hôtel accumule des milliers de suggestions
+  query += ' ORDER BY s.created_at DESC LIMIT 500'
   const suggestions = await c.env.DB.prepare(query).bind(...params).all()
   return c.json({ suggestions: suggestions.results })
 })
@@ -1132,7 +1139,8 @@ app.post('/api/templates/:id/import', authMiddleware, async (c) => {
 // ============================================
 app.get('/api/stats', authMiddleware, async (c) => {
   const user = c.get('user')
-  const hotelId = c.req.query('hotel_id') || user.hotel_id
+  // SÉCURITÉ: on force le hotel_id du user (pas de query override)
+  const hotelId = user.hotel_id
 
   if (user.role === 'super_admin') {
     // Super admin : stats infrastructure uniquement (hôtels + users)
@@ -3235,7 +3243,9 @@ app.put('/api/hotels/:id/settings', authMiddleware, async (c) => {
 app.get('/api/rooms', authMiddleware, async (c) => {
   const user = c.get('user')
   if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
-  const hotelId = c.req.query('hotel_id') || user.hotel_id
+  // SÉCURITÉ: on force le hotel_id du user (pas de query override)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ rooms: [] })
   const rooms = await c.env.DB.prepare(`
     SELECT r.*,
       ca.id as client_account_id,

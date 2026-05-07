@@ -5759,7 +5759,16 @@ app.get('*', (c) => {
 </head>
 <body class="min-h-screen" style="background-color: var(--c-cream); color: var(--c-navy);">
   <div id="app"></div>
-  <script src="/static/app.js"></script>
+  <!-- Frontend découpé en 9 modules (scope global partagé). Chargement en cascade dans l'ordre des dépendances. -->
+  <script src="/static/modules/01-core.js"></script>
+  <script src="/static/modules/02-auth.js"></script>
+  <script src="/static/modules/03-layout.js"></script>
+  <script src="/static/modules/04-procedures.js"></script>
+  <script src="/static/modules/05-users-info.js"></script>
+  <script src="/static/modules/06-wikot.js"></script>
+  <script src="/static/modules/07-chat-modals.js"></script>
+  <script src="/static/modules/08-rooms-restaurant.js"></script>
+  <script src="/static/modules/09-client-init.js"></script>
 </body>
 </html>`)
 })

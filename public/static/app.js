@@ -936,13 +936,13 @@ function renderMainLayout() {
     ];
   } else if (isAdmin) {
     // Admin hôtel : accès complet à toutes les pages opérationnelles
+    // NOTE: 'Chambres' retiré du menu — accessible désormais depuis Code Wikot
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
       { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
-      { id: 'rooms', icon: 'fa-door-closed', label: 'Chambres' },
       { id: 'occupancy', icon: 'fa-id-card', label: 'Code Wikot' },
       { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' },
       { id: 'tasks', icon: 'fa-list-check', label: 'À faire' },
@@ -950,6 +950,7 @@ function renderMainLayout() {
     ];
   } else {
     // Employé : Wikot pour tous + items conditionnels selon permissions granulaires
+    // NOTE: 'Chambres' retiré du menu — accessible désormais depuis Code Wikot
     const canUseMax = userCanEditProcedures() || userCanEditInfo();
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
@@ -958,7 +959,6 @@ function renderMainLayout() {
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       ...(userCanEditClients() ? [
-        { id: 'rooms', icon: 'fa-door-closed', label: 'Chambres' },
         { id: 'occupancy', icon: 'fa-id-card', label: 'Code Wikot' }
       ] : []),
       ...(userCanEditRestaurant() ? [
@@ -2203,11 +2203,47 @@ function toggleHotelInfoCategory(catId) {
   state.hotelInfoActiveCategory = willOpen ? catId : null;
 }
 
+// Catalogue d'icônes Font Awesome pour les catégories d'informations hôtelières.
+// Inclut toutes les icônes déjà utilisées en prod (fa-bed, fa-concierge-bell, fa-shirt,
+// fa-utensils, fa-water-ladder, fa-tv, fa-star, fa-circle-info) + une cinquantaine
+// d'options couvrant restauration, hébergement, services, loisirs, accessibilité, etc.
+const HOTEL_INFO_ICONS = [
+  // Hébergement & confort
+  'fa-bed', 'fa-bath', 'fa-shower', 'fa-shirt', 'fa-temperature-half', 'fa-fan',
+  'fa-broom', 'fa-soap', 'fa-toilet-paper',
+  // Services hôteliers
+  'fa-concierge-bell', 'fa-bell', 'fa-key', 'fa-suitcase-rolling', 'fa-suitcase',
+  'fa-bell-concierge', 'fa-receipt', 'fa-credit-card',
+  // Restauration
+  'fa-utensils', 'fa-mug-saucer', 'fa-wine-glass', 'fa-martini-glass', 'fa-bread-slice',
+  'fa-cookie', 'fa-bottle-water',
+  // Loisirs & bien-être
+  'fa-water-ladder', 'fa-spa', 'fa-dumbbell', 'fa-hot-tub-person', 'fa-umbrella-beach',
+  'fa-person-swimming', 'fa-golf-ball-tee', 'fa-bicycle',
+  // Multimédia & connectivité
+  'fa-tv', 'fa-wifi', 'fa-volume-high', 'fa-music', 'fa-headphones',
+  // Localisation & extérieur
+  'fa-location-dot', 'fa-map-location-dot', 'fa-mountain', 'fa-tree', 'fa-leaf',
+  'fa-sun', 'fa-cloud-sun',
+  // Transport & parking
+  'fa-car', 'fa-square-parking', 'fa-plane', 'fa-train', 'fa-taxi',
+  // Spécial / général
+  'fa-star', 'fa-heart', 'fa-circle-info', 'fa-shield-halved', 'fa-paw',
+  'fa-baby', 'fa-wheelchair',
+];
+
 // Modaux édition catégorie
 function showHotelInfoCategoryModal(catId = null) {
   const cat = catId ? (state.hotelInfoCategories || []).find(c => c.id === catId) : null;
   const isEdit = !!cat;
-  showModal(isEdit ? 'Renommer la catégorie' : 'Nouvelle catégorie', `
+  // Icône par défaut : celle existante en édition, sinon fa-circle-info
+  const initialIcon = (cat && cat.icon) ? cat.icon : 'fa-circle-info';
+  // Garantir que l'icône courante est dans la liste (sinon on l'ajoute en tête)
+  const iconList = HOTEL_INFO_ICONS.includes(initialIcon)
+    ? HOTEL_INFO_ICONS
+    : [initialIcon, ...HOTEL_INFO_ICONS];
+
+  showModal(isEdit ? 'Modifier la catégorie' : 'Nouvelle catégorie', `
     <form onsubmit="event.preventDefault(); submitHotelInfoCategory(${catId || 'null'})">
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom de la catégorie *</label>
@@ -2216,10 +2252,19 @@ function showHotelInfoCategoryModal(catId = null) {
           class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div class="mb-4">
-        <label class="block text-sm font-medium text-navy-600 mb-1.5">Couleur</label>
-        <input id="info-cat-color" type="color" value="${cat ? cat.color || '#3B82F6' : '#3B82F6'}"
-          class="w-full h-11 input-premium rounded-lg cursor-pointer">
-        <p class="text-xs text-navy-400 mt-1">Couleur d'identification de la catégorie.</p>
+        <label class="block text-sm font-medium text-navy-600 mb-1.5">Icône</label>
+        <input type="hidden" id="info-cat-icon" value="${initialIcon}">
+        <div id="info-cat-icon-grid" class="grid grid-cols-7 sm:grid-cols-9 gap-1.5 p-2 rounded-lg max-h-64 overflow-y-auto" style="background: var(--c-cream-deep); border: 1px solid var(--c-line);">
+          ${iconList.map(ic => `
+            <button type="button" onclick="selectHotelInfoIcon('${ic}')" data-icon="${ic}"
+              class="info-cat-icon-btn flex items-center justify-center rounded-md transition-all ${ic === initialIcon ? 'ring-2' : ''}"
+              style="aspect-ratio: 1; background: ${ic === initialIcon ? 'var(--c-navy)' : '#fff'}; color: ${ic === initialIcon ? '#fff' : 'var(--c-navy)'}; border: 1px solid var(--c-line); --tw-ring-color: var(--c-gold);"
+              title="${ic}">
+              <i class="fas ${ic} text-base"></i>
+            </button>
+          `).join('')}
+        </div>
+        <p class="text-xs text-navy-400 mt-1.5">Sélectionnez l'icône qui représente le mieux la catégorie.</p>
       </div>
       <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 rounded-lg text-sm font-medium transition-all" style="background: var(--c-cream-deep); color: var(--c-navy);">Annuler</button>
@@ -2229,15 +2274,31 @@ function showHotelInfoCategoryModal(catId = null) {
   `);
 }
 
+// Sélection d'icône — DOM-only pour éviter de re-render le modal
+function selectHotelInfoIcon(icon) {
+  const hidden = document.getElementById('info-cat-icon');
+  if (hidden) hidden.value = icon;
+  const grid = document.getElementById('info-cat-icon-grid');
+  if (!grid) return;
+  grid.querySelectorAll('.info-cat-icon-btn').forEach(btn => {
+    const isSelected = btn.dataset.icon === icon;
+    btn.classList.toggle('ring-2', isSelected);
+    btn.style.background = isSelected ? 'var(--c-navy)' : '#fff';
+    btn.style.color = isSelected ? '#fff' : 'var(--c-navy)';
+  });
+}
+
 async function submitHotelInfoCategory(catId) {
   const name = document.getElementById('info-cat-name').value.trim();
-  const color = document.getElementById('info-cat-color').value || '#3B82F6';
+  const icon = (document.getElementById('info-cat-icon') || {}).value || 'fa-circle-info';
   if (!name) return;
 
   const path = catId ? `/hotel-info/categories/${catId}` : '/hotel-info/categories';
   const method = catId ? 'PUT' : 'POST';
-  // Icône par défaut fixe (pas demandée à l'utilisateur)
-  const icon = 'fa-circle-info';
+  // Couleur conservée existante en édition, sinon palette neutre par défaut.
+  // L'icône est désormais le seul identifiant visuel choisi par l'utilisateur.
+  const cat = catId ? (state.hotelInfoCategories || []).find(c => c.id === catId) : null;
+  const color = cat ? cat.color || '#3B82F6' : '#3B82F6';
   const data = await api(path, { method, body: JSON.stringify({ name, icon, color }) });
   if (data) {
     closeModal();
@@ -2856,15 +2917,22 @@ function renderWikotMessage(msg, mode) {
   const actionsForMsg = actionsArr.filter(a => a.message_id === msg.id);
   const cfg = WIKOT_MODE_CONFIG[mode] || WIKOT_MODE_CONFIG.standard;
 
-  // MODE STANDARD (Wikot) — UNE SEULE carte
+  // MODE STANDARD (Wikot) — texte de réponse EN HAUT puis carte info/procédure
   if (mode === 'standard') {
+    const replyText = (msg.content || '').trim();
+    const hasReply = replyText.length > 0;
     return `
       <div class="flex justify-start mb-4">
         <div class="flex gap-2 max-w-[95%] sm:max-w-[85%] w-full">
           <div class="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-xs" style="background: var(--c-navy); color: var(--c-gold);">
             <i class="fas ${cfg.icon}"></i>
           </div>
-          <div class="flex-1 min-w-0">
+          <div class="flex-1 min-w-0 space-y-2">
+            ${hasReply ? `
+              <div class="rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm leading-relaxed" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04); color: var(--c-navy);">
+                ${formatWikotContent(replyText)}
+              </div>
+            ` : ''}
             ${renderWikotAnswerCard(answerCard)}
           </div>
         </div>
@@ -3764,9 +3832,9 @@ function renderWikotView(mode) {
   `;
 
   return `
-  <div class="fade-in flex flex-col" style="height: calc(100vh - 8rem); max-height: calc(100vh - 8rem);">
-    <!-- Header Wikot premium (stateless : pas d'historique) -->
-    <div class="flex items-center justify-between mb-4 shrink-0">
+  <div class="fade-in flex flex-col" style="height: calc(100vh - 7rem); max-height: calc(100vh - 7rem);">
+    <!-- Header Wikot premium DESKTOP UNIQUEMENT (le titre est déjà dans la barre mobile globale) -->
+    <div class="hidden lg:flex items-center justify-between mb-4 shrink-0">
       <div class="flex items-center gap-3 min-w-0">
         <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);">
           <i class="fas ${cfg.icon}"></i>
@@ -3777,7 +3845,14 @@ function renderWikotView(mode) {
         </div>
       </div>
       <button onclick="resetWikotChat('${mode}')" class="btn-premium px-4 py-2.5 rounded-lg text-sm font-semibold inline-flex items-center gap-2 shrink-0" style="background: var(--c-navy); color: #fff;" title="Réinitialiser le chat">
-        <i class="fas fa-rotate-right text-xs"></i><span class="hidden sm:inline">Effacer</span>
+        <i class="fas fa-rotate-right text-xs"></i><span>Effacer</span>
+      </button>
+    </div>
+
+    <!-- Barre d'action mobile compacte : juste le bouton Effacer aligné à droite -->
+    <div class="lg:hidden flex items-center justify-end mb-2 shrink-0">
+      <button onclick="resetWikotChat('${mode}')" class="px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-all" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);" title="Réinitialiser le chat">
+        <i class="fas fa-rotate-right text-[10px]"></i><span>Effacer</span>
       </button>
     </div>
 
@@ -3853,43 +3928,59 @@ function renderBackWikotView() {
 // VUE 1 : HOME (4 gros boutons — stateless, plus d'historique)
 // --------------------------------------------
 function renderBackWikotHome() {
+  // Mapping action → tag visuel (petit eyebrow + accent)
+  const actionMeta = {
+    create_procedure: { tag: 'Créer', accent: 'create' },
+    update_procedure: { tag: 'Modifier', accent: 'update' },
+    create_info:      { tag: 'Créer', accent: 'create' },
+    update_info:      { tag: 'Modifier', accent: 'update' }
+  };
+
   const buttonHtml = (key) => {
     const wf = BACK_WIKOT_WORKFLOWS[key];
     const enabled = userCanRunBackWikotWorkflow(key);
-    const colorClasses = {
-      emerald: 'from-emerald-400 to-emerald-600 hover:from-emerald-500 hover:to-emerald-700',
-      orange: 'from-orange-400 to-orange-600 hover:from-orange-500 hover:to-orange-700',
-      sky: 'from-sky-400 to-sky-600 hover:from-sky-500 hover:to-sky-700',
-      amber: 'from-amber-400 to-amber-600 hover:from-amber-500 hover:to-amber-700'
-    }[wf.color] || 'from-gray-400 to-gray-600';
+    const meta = actionMeta[key] || { tag: '', accent: 'create' };
+    // Accent : create = or palace, update = navy profond
+    const isCreate = meta.accent === 'create';
+    const iconBg = enabled ? (isCreate ? 'var(--c-gold)' : 'var(--c-navy)') : 'var(--c-cream-deep)';
+    const iconColor = enabled ? (isCreate ? 'var(--c-navy)' : 'var(--c-gold)') : 'rgba(15,27,40,0.3)';
+    const tagColor = isCreate ? 'var(--c-gold-deep)' : 'rgba(15,27,40,0.55)';
+
     return `
       <button ${enabled ? `onclick="enterBackWikotWorkflow('${key}')"` : 'disabled'}
-        class="${enabled ? `bg-gradient-to-br ${colorClasses} cursor-pointer` : 'bg-gray-200 cursor-not-allowed opacity-60'} text-white rounded-2xl p-5 sm:p-6 shadow-md transition-all text-left flex flex-col gap-3 group">
-        <div class="w-12 h-12 rounded-xl bg-white/20 flex items-center justify-center text-2xl shrink-0">
-          <i class="fas ${wf.icon}"></i>
+        class="card-premium ${enabled ? 'cursor-pointer group' : 'cursor-not-allowed opacity-55'} text-left p-4 sm:p-5 flex items-start gap-3.5 sm:gap-4 transition-all"
+        ${enabled ? `onmouseover="this.style.borderColor='var(--c-gold)'; this.style.transform='translateY(-1px)';" onmouseout="this.style.borderColor=''; this.style.transform='';"` : ''}>
+        <div class="w-11 h-11 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0 transition-colors" style="background: ${iconBg}; color: ${iconColor};">
+          <i class="fas ${wf.icon} text-base sm:text-lg"></i>
         </div>
-        <div>
-          <div class="text-base sm:text-lg font-bold leading-tight">${escapeHtml(wf.label)}</div>
-          <div class="text-xs sm:text-sm text-white/85 mt-1 leading-snug">${escapeHtml(wf.description)}</div>
+        <div class="min-w-0 flex-1">
+          <div class="text-[10px] uppercase tracking-[0.16em] font-semibold mb-0.5" style="color: ${tagColor};">${meta.tag}</div>
+          <div class="font-display text-sm sm:text-base font-semibold leading-tight" style="color: var(--c-navy);">${escapeHtml(wf.label)}</div>
+          <div class="text-xs mt-1 leading-snug" style="color: rgba(15,27,40,0.55);">${escapeHtml(wf.description)}</div>
+          ${!enabled ? '<div class="text-[11px] italic mt-1.5" style="color: #C84C3F;"><i class="fas fa-triangle-exclamation mr-1"></i>Permission requise</div>' : ''}
         </div>
-        ${!enabled ? '<div class="text-[11px] text-white/90 italic mt-1"><i class="fas fa-triangle-exclamation mr-1"></i>Permission requise</div>' : ''}
+        ${enabled ? `<i class="fas fa-arrow-right text-xs mt-2 shrink-0 transition-transform group-hover:translate-x-0.5" style="color: var(--c-gold-deep);"></i>` : ''}
       </button>
     `;
   };
 
   return `
-    <div class="fade-in space-y-6">
+    <div class="fade-in space-y-5 sm:space-y-6">
+      <!-- Header premium -->
       <div class="flex items-center gap-3">
-        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center text-white shadow-sm">
-          <i class="fas fa-pen-ruler text-lg"></i>
+        <div class="w-11 h-11 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);">
+          <i class="fas fa-pen-ruler text-base sm:text-lg"></i>
         </div>
         <div class="min-w-0">
-          <h1 class="text-xl sm:text-2xl font-bold text-navy-900">Back Wikot</h1>
-          <p class="text-xs sm:text-sm text-navy-500">Choisis une action. Back Wikot te guide pour la rédiger.</p>
+          <p class="section-eyebrow">Atelier de rédaction</p>
+          <h1 class="font-display text-xl sm:text-2xl font-semibold" style="color: var(--c-navy);">Back Wikot</h1>
         </div>
       </div>
 
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+      <p class="text-sm" style="color: rgba(15,27,40,0.6);">Choisis une action. Back Wikot te guide pour la rédiger pas à pas.</p>
+
+      <!-- Grille 4 actions premium (compactes, élégantes, cohérentes avec la DA palace) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         ${buttonHtml('create_procedure')}
         ${buttonHtml('update_procedure')}
         ${buttonHtml('create_info')}
@@ -6124,6 +6215,7 @@ function renderOccupancyView() {
         <p class="text-xs mt-1" style="color: rgba(15,27,40,0.45);">Date : <span class="font-mono">${today}</span> · Code hôtel : <button onclick="showHotelCodeEditModal()" class="font-mono font-bold underline-offset-2 hover:underline transition-colors" style="color: var(--c-gold-deep); cursor: pointer;" title="Modifier le code hôtel">${hotel.client_login_code || '— (à définir)'}</button></p>
       </div>
       <div class="flex flex-wrap gap-2">
+        <button onclick="navigateTo('rooms')" class="px-4 py-2 rounded-lg text-sm font-semibold transition-all" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);" title="Gérer les chambres"><i class="fas fa-door-closed mr-2"></i>Chambres</button>
         <button onclick="showOccupancyImportModal()" class="px-4 py-2 rounded-lg text-sm font-semibold transition-all" style="background: linear-gradient(135deg, var(--c-gold) 0%, var(--c-gold-deep) 100%); color: #fff; border: 1px solid var(--c-gold-deep);"><i class="fas fa-wand-magic-sparkles mr-2"></i>Importer un document</button>
         <button onclick="showHotelCodeEditModal()" class="px-4 py-2 rounded-lg text-sm font-semibold transition-all" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);"><i class="fas fa-key mr-2"></i>Modifier le code hôtel</button>
         <button onclick="saveOccupancyDay()" class="btn-premium px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;"><i class="fas fa-save text-xs"></i>Enregistrer la journée</button>
@@ -6139,9 +6231,17 @@ function renderOccupancyView() {
       </div>
     </div>
 
-    <div class="card-premium overflow-hidden">
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3">
-        ${rooms.length === 0 ? `<div class="col-span-full text-center py-12" style="color: rgba(15,27,40,0.4);">Aucune chambre. Allez dans <strong>Chambres</strong> pour en créer.</div>` : rooms.map(r => {
+    ${rooms.length === 0 ? `
+      <div class="card-premium p-12 text-center" style="color: rgba(15,27,40,0.5);">
+        <i class="fas fa-door-closed text-3xl mb-3" style="color: rgba(15,27,40,0.2);"></i>
+        <p class="mb-4">Aucune chambre configurée.</p>
+        <button onclick="navigateTo('rooms')" class="px-5 py-2 rounded-lg text-sm font-semibold" style="background: var(--c-navy); color: #fff;"><i class="fas fa-arrow-right mr-2"></i>Aller à la page Chambres</button>
+      </div>
+    ` : `
+    <!-- Mobile : grille de cartes (inchangée) -->
+    <div class="card-premium overflow-hidden md:hidden">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3">
+        ${rooms.map(r => {
           const entry = state.occupancyEntries[r.room_id] || { guest_name: '', checkout_date: '' };
           const isOccupied = r.is_active === 1;
           return `
@@ -6168,6 +6268,41 @@ function renderOccupancyView() {
         }).join('')}
       </div>
     </div>
+
+    <!-- Desktop / tablette : table en rangées (chambre, statut, nom, date départ, action) -->
+    <div class="card-premium overflow-hidden hidden md:block">
+      <div class="grid items-center gap-3 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wider" style="grid-template-columns: 90px 90px 1fr 180px 110px; color: rgba(15,27,40,0.5); background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
+        <div>Chambre</div>
+        <div>Statut</div>
+        <div>Nom du client (= mot de passe)</div>
+        <div>Date de départ</div>
+        <div></div>
+      </div>
+      ${rooms.map(r => {
+        const entry = state.occupancyEntries[r.room_id] || { guest_name: '', checkout_date: '' };
+        const isOccupied = r.is_active === 1;
+        return `
+        <div class="grid items-center gap-3 px-4 py-2 transition-colors hover:bg-[rgba(201,169,97,0.04)]" style="grid-template-columns: 90px 90px 1fr 180px 110px; background: ${isOccupied ? 'rgba(201,169,97,0.04)' : '#fff'}; border-bottom: 1px solid var(--c-line);">
+          <div class="font-display font-bold text-base" style="color: var(--c-navy);">${escapeHtml(r.room_number)}</div>
+          <div>
+            ${isOccupied
+              ? '<span class="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider" style="background: var(--c-gold); color: var(--c-navy);">Occupée</span>'
+              : '<span class="text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">Libre</span>'}
+          </div>
+          <input type="text" value="${escapeHtml(entry.guest_name)}" oninput="state.occupancyEntries[${r.room_id}].guest_name = this.value"
+            placeholder="Ex: Dupont"
+            class="w-full px-2.5 py-1.5 input-premium rounded text-sm">
+          <input type="date" value="${entry.checkout_date || tomorrowStr}" oninput="state.occupancyEntries[${r.room_id}].checkout_date = this.value"
+            class="w-full px-2.5 py-1.5 input-premium rounded text-sm">
+          <div class="flex justify-end">
+            ${isOccupied
+              ? `<button onclick="clearRoomOccupancy(${r.room_id})" class="text-xs px-2.5 py-1 rounded transition-all" style="color: #C84C3F; background: rgba(226,125,110,0.08);" title="Marquer libre"><i class="fas fa-eraser mr-1"></i>Libérer</button>`
+              : ''}
+          </div>
+        </div>`;
+      }).join('')}
+    </div>
+    `}
   </div>`;
 }
 
@@ -7657,20 +7792,21 @@ async function ensureClientWikotLoaded() {
 function renderClientWikot() {
   const messages = state.clientWikotMessages || [];
   return `
-  <div class="card-premium flex flex-col" style="height: calc(100vh - 180px); min-height: 400px;">
-    <div class="px-5 py-4 flex items-center justify-between" style="border-bottom: 1px solid var(--c-line);">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: var(--c-navy);">
-          <i class="fas fa-robot" style="color: var(--c-gold);"></i>
+  <div class="card-premium flex flex-col" style="height: calc(100vh - 170px); min-height: 400px;">
+    <!-- Header compact mobile, version étoffée desktop -->
+    <div class="px-4 sm:px-5 py-3 sm:py-4 flex items-center justify-between shrink-0" style="border-bottom: 1px solid var(--c-line);">
+      <div class="flex items-center gap-2.5 sm:gap-3">
+        <div class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy);">
+          <i class="fas fa-robot text-sm" style="color: var(--c-gold);"></i>
         </div>
         <div>
-          <p class="section-eyebrow">Concierge digital</p>
-          <h2 class="font-display font-semibold" style="color: var(--c-navy);">Wikot</h2>
+          <p class="section-eyebrow hidden sm:block">Concierge digital</p>
+          <h2 class="font-display font-semibold text-sm sm:text-base" style="color: var(--c-navy);">Wikot</h2>
         </div>
       </div>
-      <button onclick="newClientWikotConversation()" class="text-xs transition-colors" style="color: rgba(15,27,40,0.55);" onmouseover="this.style.color='var(--c-gold-deep)'" onmouseout="this.style.color='rgba(15,27,40,0.55)'"><i class="fas fa-rotate-right mr-1"></i>Nouvelle</button>
+      <button onclick="newClientWikotConversation()" class="text-xs px-3 py-1.5 rounded-lg transition-all" style="color: rgba(15,27,40,0.6); background: var(--c-cream-deep); border: 1px solid var(--c-line);" onmouseover="this.style.color='var(--c-gold-deep)'; this.style.borderColor='var(--c-gold)';" onmouseout="this.style.color='rgba(15,27,40,0.6)'; this.style.borderColor='var(--c-line)';"><i class="fas fa-rotate-right mr-1"></i><span class="hidden sm:inline">Nouvelle</span></button>
     </div>
-    <div id="client-wikot-messages" class="flex-1 overflow-y-auto p-4 space-y-3" style="background: var(--c-ivory);">
+    <div id="client-wikot-messages" class="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2.5 sm:space-y-3" style="background: var(--c-ivory); -webkit-overflow-scrolling: touch;">
       ${messages.length === 0 ? `
         <div class="text-center py-8">
           <div class="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3" style="background: var(--c-navy);">
@@ -7714,18 +7850,27 @@ function renderFrontWikotMessage(m) {
   let ref = null;
   try { ref = m.references_json ? (typeof m.references_json === 'string' ? JSON.parse(m.references_json) : m.references_json) : null; } catch {}
 
+  // Texte de réponse en HAUT (au-dessus de la carte) — bulle compacte, design cohérent palace
+  const replyText = (m.content || '').trim();
+  const replyBubble = replyText
+    ? `<div class="rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed" style="background: #fff; border: 1px solid var(--c-line); color: var(--c-navy); box-shadow: 0 1px 2px rgba(10,22,40,0.04);">${escapeHtml(replyText)}</div>`
+    : '';
+
   if (ref?.kind === 'info_card' && ref.item) {
     const it = ref.item;
     return `
       <div class="flex justify-start">
-        <div class="max-w-[90%] card-premium overflow-hidden" style="border-left: 3px solid var(--c-gold);">
-          <div class="px-4 py-2.5 flex items-center gap-2" style="background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
-            <i class="fas fa-circle-info" style="color: var(--c-gold-deep);"></i>
-            <div class="section-eyebrow">${escapeHtml(it.category || 'Info')}</div>
-          </div>
-          <div class="px-4 py-3">
-            <h4 class="font-display font-semibold mb-1.5" style="color: var(--c-navy);">${escapeHtml(it.title || '')}</h4>
-            <div class="text-sm whitespace-pre-wrap" style="color: rgba(15,27,40,0.75);">${escapeHtml(it.content || '')}</div>
+        <div class="max-w-[90%] w-full space-y-2">
+          ${replyBubble}
+          <div class="card-premium overflow-hidden" style="border-left: 3px solid var(--c-gold);">
+            <div class="px-4 py-2.5 flex items-center gap-2" style="background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
+              <i class="fas fa-circle-info" style="color: var(--c-gold-deep);"></i>
+              <div class="section-eyebrow">${escapeHtml(it.category || 'Info')}</div>
+            </div>
+            <div class="px-4 py-3">
+              <h4 class="font-display font-semibold mb-1.5" style="color: var(--c-navy);">${escapeHtml(it.title || '')}</h4>
+              <div class="text-sm whitespace-pre-wrap" style="color: rgba(15,27,40,0.75);">${escapeHtml(it.content || '')}</div>
+            </div>
           </div>
         </div>
       </div>`;
@@ -7740,18 +7885,21 @@ function renderFrontWikotMessage(m) {
     const icon = icons[ref.meal_type] || icons.dinner;
     return `
       <div class="flex justify-start">
-        <div class="max-w-[90%] card-premium overflow-hidden" style="border-left: 3px solid var(--c-gold);">
-          <div class="px-4 py-2.5 flex items-center gap-2" style="background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
-            <i class="fas ${icon}" style="color: var(--c-gold-deep);"></i>
-            <div class="section-eyebrow">Réservation restaurant</div>
-          </div>
-          <div class="px-4 py-3">
-            <h4 class="font-display font-semibold mb-1" style="color: var(--c-navy);">Réserver : ${escapeHtml(ref.meal_label || ref.meal_type)}</h4>
-            <p class="text-xs mb-3" style="color: rgba(15,27,40,0.55);">Choisissez la date, l'heure et le nombre de couverts.</p>
-            <button onclick="openClientReservationFromWikot('${ref.meal_type}')"
-              class="w-full btn-premium py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-navy); color: var(--c-gold);">
-              <i class="fas fa-calendar-plus mr-1"></i> Réserver maintenant
-            </button>
+        <div class="max-w-[90%] w-full space-y-2">
+          ${replyBubble}
+          <div class="card-premium overflow-hidden" style="border-left: 3px solid var(--c-gold);">
+            <div class="px-4 py-2.5 flex items-center gap-2" style="background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
+              <i class="fas ${icon}" style="color: var(--c-gold-deep);"></i>
+              <div class="section-eyebrow">Réservation restaurant</div>
+            </div>
+            <div class="px-4 py-3">
+              <h4 class="font-display font-semibold mb-1" style="color: var(--c-navy);">Réserver : ${escapeHtml(ref.meal_label || ref.meal_type)}</h4>
+              <p class="text-xs mb-3" style="color: rgba(15,27,40,0.55);">Choisissez la date, l'heure et le nombre de couverts.</p>
+              <button onclick="openClientReservationFromWikot('${ref.meal_type}')"
+                class="w-full btn-premium py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-navy); color: var(--c-gold);">
+                <i class="fas fa-calendar-plus mr-1"></i> Réserver maintenant
+              </button>
+            </div>
           </div>
         </div>
       </div>`;
@@ -7760,16 +7908,16 @@ function renderFrontWikotMessage(m) {
   if (ref?.kind === 'fallback') {
     return `
       <div class="flex justify-start">
-        <div class="max-w-[80%] bg-yellow-50 border border-yellow-200 rounded-2xl px-4 py-2 text-sm text-yellow-900">
-          <i class="fas fa-info-circle mr-1"></i>${escapeHtml(ref.message || '')}
+        <div class="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm" style="background: rgba(201,169,97,0.10); border: 1px solid rgba(201,169,97,0.25); color: var(--c-navy);">
+          <i class="fas fa-info-circle mr-1.5" style="color: var(--c-gold-deep);"></i>${escapeHtml(ref.message || '')}
         </div>
       </div>`;
   }
 
-  // Compat ancien format (texte libre legacy)
+  // Compat ancien format (texte libre legacy) — réponse simple sans carte structurée
   return `
     <div class="flex justify-start">
-      <div class="max-w-[80%] bg-gray-100 text-navy-800 rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap">${escapeHtml(m.content || '')}</div>
+      <div class="max-w-[85%] rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed" style="background: #fff; border: 1px solid var(--c-line); color: var(--c-navy); box-shadow: 0 1px 2px rgba(10,22,40,0.04);">${escapeHtml(m.content || '')}</div>
     </div>`;
 }
 

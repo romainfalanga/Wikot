@@ -39,23 +39,111 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 app.use('/api/*', cors())
 
 // ============================================
-// AUTH MIDDLEWARE
+// CRYPTO HELPERS — PBKDF2-SHA256 100k iter (Web Crypto API, compatible Workers)
+// ============================================
+const PBKDF2_ITER = 100_000
+const PBKDF2_ALGO = 'pbkdf2-sha256-100k'
+
+function bytesToHex(arr: Uint8Array): string {
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+function hexToBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  return out
+}
+
+async function hashPassword(password: string): Promise<{ hash: string; salt: string; algo: string }> {
+  const salt = new Uint8Array(16)
+  crypto.getRandomValues(salt)
+  const hash = await derivePbkdf2(password, salt)
+  return { hash: bytesToHex(hash), salt: bytesToHex(salt), algo: PBKDF2_ALGO }
+}
+
+async function verifyPassword(password: string, hashHex: string, saltHex: string): Promise<boolean> {
+  try {
+    const expected = hexToBytes(hashHex)
+    const computed = await derivePbkdf2(password, hexToBytes(saltHex))
+    if (expected.length !== computed.length) return false
+    // Comparaison à temps constant
+    let diff = 0
+    for (let i = 0; i < expected.length; i++) diff |= expected[i] ^ computed[i]
+    return diff === 0
+  } catch {
+    return false
+  }
+}
+
+async function derivePbkdf2(password: string, salt: Uint8Array): Promise<Uint8Array> {
+  const enc = new TextEncoder()
+  const baseKey = await crypto.subtle.importKey(
+    'raw', enc.encode(password), { name: 'PBKDF2' }, false, ['deriveBits']
+  )
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
+    baseKey, 256
+  )
+  return new Uint8Array(bits)
+}
+
+// Génère un token de session admin (48 hex = 24 bytes random)
+function generateSessionToken(): string {
+  const arr = new Uint8Array(24)
+  crypto.getRandomValues(arr)
+  return bytesToHex(arr)
+}
+
+// Sessions admin durent 30 jours (modifiable côté UX plus tard)
+function sessionExpiration(days = 30): string {
+  const d = new Date()
+  d.setUTCDate(d.getUTCDate() + days)
+  return d.toISOString().replace('T', ' ').replace('Z', '')
+}
+
+// ============================================
+// AUTH MIDDLEWARE — tokens random stockés en DB (user_sessions)
 // ============================================
 const authMiddleware = async (c: any, next: any) => {
-  const sessionToken = c.req.header('Authorization')?.replace('Bearer ', '')
-  if (!sessionToken) return c.json({ error: 'Non authentifié' }, 401)
-
-  // Simple token = base64(userId:email)
-  try {
-    const decoded = atob(sessionToken)
-    const [userId] = decoded.split(':')
-    const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, can_edit_info, can_manage_chat, can_edit_clients, can_edit_restaurant, can_edit_settings, is_active FROM users WHERE id = ? AND is_active = 1').bind(parseInt(userId)).first()
-    if (!user) return c.json({ error: 'Utilisateur non trouvé' }, 401)
-    c.set('user', user)
-    await next()
-  } catch {
-    return c.json({ error: 'Token invalide' }, 401)
+  const headerToken = c.req.header('Authorization')?.replace('Bearer ', '')
+  // Refus immédiat des tokens client (préfixe client_) côté staff
+  if (!headerToken || headerToken.startsWith('client_')) {
+    return c.json({ error: 'Non authentifié' }, 401)
   }
+
+  // Lookup session + user en une seule requête (perf)
+  const row = await c.env.DB.prepare(`
+    SELECT s.id as session_id, s.expires_at,
+           u.id, u.hotel_id, u.email, u.name, u.role,
+           u.can_edit_procedures, u.can_edit_info, u.can_manage_chat,
+           u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings,
+           u.is_active
+    FROM user_sessions s
+    JOIN users u ON s.user_id = u.id
+    WHERE s.token = ?
+  `).bind(headerToken).first() as any
+
+  if (!row) return c.json({ error: 'Session invalide' }, 401)
+  if (row.is_active !== 1) return c.json({ error: 'Compte désactivé' }, 401)
+
+  // Vérification expiration
+  if (new Date() >= new Date(row.expires_at)) {
+    await c.env.DB.prepare('DELETE FROM user_sessions WHERE id = ?').bind(row.session_id).run()
+    return c.json({ error: 'Session expirée' }, 401)
+  }
+
+  // Touch last_active (non bloquant — on n'attend pas la promesse pour réduire la latence)
+  c.executionCtx?.waitUntil?.(
+    c.env.DB.prepare('UPDATE user_sessions SET last_active_at = CURRENT_TIMESTAMP WHERE id = ?').bind(row.session_id).run()
+  )
+
+  c.set('user', {
+    id: row.id, hotel_id: row.hotel_id, email: row.email, name: row.name, role: row.role,
+    can_edit_procedures: row.can_edit_procedures, can_edit_info: row.can_edit_info,
+    can_manage_chat: row.can_manage_chat, can_edit_clients: row.can_edit_clients,
+    can_edit_restaurant: row.can_edit_restaurant, can_edit_settings: row.can_edit_settings,
+    is_active: row.is_active
+  })
+  await next()
 }
 
 // ============================================
@@ -107,22 +195,72 @@ const clientAuthMiddleware = async (c: any, next: any) => {
 // AUTH ROUTES
 // ============================================
 app.post('/api/auth/login', async (c) => {
-  const { email, password } = await c.req.json()
-  const user = await c.env.DB.prepare('SELECT id, hotel_id, email, name, role, can_edit_procedures, can_edit_info, can_manage_chat, can_edit_clients, can_edit_restaurant, can_edit_settings, password_hash FROM users WHERE email = ? AND is_active = 1').bind(email).first() as any
-  if (!user || user.password_hash !== password) {
-    return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
+  const { email, password } = await c.req.json() as { email?: string; password?: string }
+  if (!email || !password) return c.json({ error: 'Email et mot de passe requis' }, 400)
+
+  const user = await c.env.DB.prepare(`
+    SELECT id, hotel_id, email, name, role,
+           can_edit_procedures, can_edit_info, can_manage_chat,
+           can_edit_clients, can_edit_restaurant, can_edit_settings,
+           password_hash, password_hash_v2, password_salt, password_algo
+    FROM users WHERE email = ? AND is_active = 1
+  `).bind(email).first() as any
+
+  if (!user) return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
+
+  // 1. Vérification : nouveau hash si présent, sinon legacy plaintext
+  let valid = false
+  let needsMigration = false
+
+  if (user.password_hash_v2 && user.password_salt) {
+    valid = await verifyPassword(password, user.password_hash_v2, user.password_salt)
+  } else if (user.password_hash) {
+    // Lazy migration : ancien stockage en clair
+    valid = (user.password_hash === password)
+    if (valid) needsMigration = true
   }
+
+  if (!valid) return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
+
+  // 2. Lazy migration vers PBKDF2 si nécessaire
+  // Note : password_hash reste NOT NULL au schéma → on stocke '' comme sentinelle
+  // pour invalider l'ancien plaintext sans casser la contrainte / les FK.
+  if (needsMigration) {
+    const { hash, salt, algo } = await hashPassword(password)
+    await c.env.DB.prepare(`
+      UPDATE users SET password_hash_v2 = ?, password_salt = ?, password_algo = ?, password_hash = ''
+      WHERE id = ?
+    `).bind(hash, salt, algo, user.id).run()
+  }
+
+  // 3. Création de la session (token random non-prédictible)
+  const token = generateSessionToken()
+  const expiresAt = sessionExpiration(30)
+  const ua = c.req.header('User-Agent') || null
+  await c.env.DB.prepare(`
+    INSERT INTO user_sessions (token, user_id, expires_at, user_agent)
+    VALUES (?, ?, ?, ?)
+  `).bind(token, user.id, expiresAt, ua).run()
+
   await c.env.DB.prepare('UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?').bind(user.id).run()
-  const token = btoa(`${user.id}:${user.email}`)
+
   return c.json({
     token,
+    expires_at: expiresAt,
     user: {
       id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role,
-      can_edit_procedures: user.can_edit_procedures, can_edit_info: user.can_edit_info, can_manage_chat: user.can_manage_chat,
-      can_edit_clients: user.can_edit_clients, can_edit_restaurant: user.can_edit_restaurant,
-      can_edit_settings: user.can_edit_settings
+      can_edit_procedures: user.can_edit_procedures, can_edit_info: user.can_edit_info,
+      can_manage_chat: user.can_manage_chat, can_edit_clients: user.can_edit_clients,
+      can_edit_restaurant: user.can_edit_restaurant, can_edit_settings: user.can_edit_settings
     }
   })
+})
+
+// Logout — invalide la session courante
+app.post('/api/auth/logout', authMiddleware, async (c) => {
+  const headerToken = c.req.header('Authorization')?.replace('Bearer ', '') || ''
+  await c.env.DB.prepare('DELETE FROM user_sessions WHERE token = ?').bind(headerToken).run()
+  return c.json({ success: true })
 })
 
 // ============================================
@@ -198,17 +336,37 @@ app.get('/api/auth/me', authMiddleware, async (c) => {
 
 app.put('/api/auth/change-password', authMiddleware, async (c) => {
   const user = c.get('user')
-  const { current_password, new_password } = await c.req.json()
+  const { current_password, new_password } = await c.req.json() as { current_password?: string; new_password?: string }
   if (!current_password || !new_password) return c.json({ error: 'Champs manquants' }, 400)
-  if (new_password.length < 6) return c.json({ error: 'Le nouveau mot de passe doit faire au moins 6 caractères' }, 400)
+  if (new_password.length < 8) return c.json({ error: 'Le nouveau mot de passe doit faire au moins 8 caractères' }, 400)
 
-  // Vérifier l'ancien mot de passe
-  const dbUser = await c.env.DB.prepare('SELECT password_hash FROM users WHERE id = ?').bind(user.id).first() as any
-  if (!dbUser || dbUser.password_hash !== current_password) {
-    return c.json({ error: 'Mot de passe actuel incorrect' }, 401)
+  // Vérifier l'ancien mot de passe (compatible v1 plaintext et v2 PBKDF2)
+  const dbUser = await c.env.DB.prepare(
+    'SELECT password_hash, password_hash_v2, password_salt FROM users WHERE id = ?'
+  ).bind(user.id).first() as any
+  if (!dbUser) return c.json({ error: 'Utilisateur introuvable' }, 404)
+
+  let valid = false
+  if (dbUser.password_hash_v2 && dbUser.password_salt) {
+    valid = await verifyPassword(current_password, dbUser.password_hash_v2, dbUser.password_salt)
+  } else if (dbUser.password_hash) {
+    valid = (dbUser.password_hash === current_password)
   }
+  if (!valid) return c.json({ error: 'Mot de passe actuel incorrect' }, 401)
 
-  await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(new_password, user.id).run()
+  // Hash du nouveau mot de passe + invalidation du legacy (sentinelle '' car NOT NULL)
+  const { hash, salt, algo } = await hashPassword(new_password)
+  await c.env.DB.prepare(`
+    UPDATE users SET password_hash_v2 = ?, password_salt = ?, password_algo = ?,
+                     password_hash = '', updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).bind(hash, salt, algo, user.id).run()
+
+  // Invalide toutes les autres sessions (sauf celle en cours, par sécurité)
+  const currentToken = c.req.header('Authorization')?.replace('Bearer ', '') || ''
+  await c.env.DB.prepare('DELETE FROM user_sessions WHERE user_id = ? AND token != ?')
+    .bind(user.id, currentToken).run()
+
   return c.json({ success: true })
 })
 
@@ -396,11 +554,23 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
 app.post('/api/users', authMiddleware, async (c) => {
   const currentUser = c.get('user')
   if (currentUser.role !== 'super_admin' && currentUser.role !== 'admin') return c.json({ error: 'Non autorisé' }, 403)
-  const { hotel_id, email, password, name, role } = await c.req.json()
+  const { hotel_id, email, password, name, role } = await c.req.json() as {
+    hotel_id?: number; email?: string; password?: string; name?: string; role?: string
+  }
+  if (!email || !password || !name) return c.json({ error: 'Champs manquants' }, 400)
+  if (password.length < 8) return c.json({ error: 'Le mot de passe doit faire au moins 8 caractères' }, 400)
+
   const targetHotel = currentUser.role === 'admin' ? currentUser.hotel_id : hotel_id
   if (currentUser.role === 'admin' && role === 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+
+  // Hash PBKDF2 dès la création — pas de stockage plaintext
+  // password_hash = '' (sentinelle) car la colonne est NOT NULL au schéma
+  const { hash, salt, algo } = await hashPassword(password)
   try {
-    const result = await c.env.DB.prepare('INSERT INTO users (hotel_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)').bind(targetHotel, email, password, name, role || 'employee').run()
+    const result = await c.env.DB.prepare(`
+      INSERT INTO users (hotel_id, email, password_hash, password_hash_v2, password_salt, password_algo, name, role)
+      VALUES (?, ?, '', ?, ?, ?, ?, ?)
+    `).bind(targetHotel, email, hash, salt, algo, name, role || 'employee').run()
     return c.json({ id: result.meta.last_row_id, email, name, role })
   } catch (e: any) {
     return c.json({ error: 'Cet email est déjà utilisé' }, 400)

@@ -146,6 +146,140 @@ function sessionExpiration(days = 30): string {
 }
 
 // ============================================
+// VALIDATION HELPERS — sanitisation + validation des bodies API
+// Évite les 500 SQL et garantit des erreurs 400 lisibles. Pas de Zod (pas de
+// dépendance lourde) : 4 helpers maison cohérents avec le style existant.
+// ============================================
+
+// Vérifie qu'une string non vide existe ; renvoie sa version trimmée + tronquée à maxLen.
+function reqStr(v: any, field: string, maxLen = 500): string | { error: string } {
+  if (typeof v !== 'string') return { error: `Le champ "${field}" doit être une chaîne de caractères` }
+  const trimmed = v.trim()
+  if (!trimmed) return { error: `Le champ "${field}" est requis` }
+  if (trimmed.length > maxLen) return { error: `Le champ "${field}" dépasse ${maxLen} caractères` }
+  return trimmed
+}
+
+// String optionnelle : null/undefined/empty → null, sinon trim + check longueur.
+function optStr(v: any, field: string, maxLen = 5000): string | null | { error: string } {
+  if (v === null || v === undefined || v === '') return null
+  if (typeof v !== 'string') return { error: `Le champ "${field}" doit être une chaîne de caractères` }
+  const trimmed = v.trim()
+  if (trimmed.length > maxLen) return { error: `Le champ "${field}" dépasse ${maxLen} caractères` }
+  return trimmed || null
+}
+
+// Entier dans une plage donnée. Tolère number et string numérique.
+function reqInt(v: any, field: string, min = -2147483648, max = 2147483647): number | { error: string } {
+  const n = typeof v === 'string' ? parseInt(v, 10) : v
+  if (typeof n !== 'number' || !Number.isFinite(n) || !Number.isInteger(n)) {
+    return { error: `Le champ "${field}" doit être un entier` }
+  }
+  if (n < min || n > max) return { error: `Le champ "${field}" doit être entre ${min} et ${max}` }
+  return n
+}
+
+// Vérifie qu'une valeur appartient à une liste fermée (enum).
+function reqEnum<T extends string>(v: any, field: string, allowed: readonly T[]): T | { error: string } {
+  if (!allowed.includes(v)) return { error: `Le champ "${field}" doit être l'un de : ${allowed.join(', ')}` }
+  return v as T
+}
+
+// Helper : si l'un des resultats de validation contient { error }, renvoie une 400.
+// Sinon, renvoie null (ok).
+function isValidationError(r: any): r is { error: string } {
+  return r && typeof r === 'object' && typeof r.error === 'string'
+}
+
+// ============================================
+// MINI-VALIDATEUR NATIF — alternative légère à Zod (~50 lignes vs ~80 kB pour Zod)
+// Usage : const v = validateBody(body, { name: 'string:1-100', age: 'int?:0-150' })
+// Retourne { ok: true, data } ou { ok: false, error: 'champ name requis' }
+// ============================================
+type FieldRule =
+  | `string:${number}-${number}`        // string:1-100   (longueur min-max)
+  | `string?:${number}-${number}`       // string?:0-500  (optionnel)
+  | `int:${number}-${number}`           // int:0-100
+  | `int?:${number}-${number}`
+  | `enum:${string}`                    // enum:active|draft|archived
+  | `enum?:${string}`
+  | 'email' | 'email?'
+  | 'bool' | 'bool?'
+  | 'array' | 'array?'                  // array sans typage interne (laisser route gérer)
+  | 'object' | 'object?'
+  | 'any' | 'any?'                      // tolère n'importe quoi (échappatoire)
+
+interface ValidationResult<T> {
+  ok: boolean
+  data?: T
+  error?: string
+}
+
+function validateBody<T = any>(body: any, schema: Record<string, FieldRule>): ValidationResult<T> {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, error: 'Body invalide (objet attendu)' }
+  }
+  const out: any = {}
+  for (const [field, rule] of Object.entries(schema)) {
+    const optional = rule.includes('?')
+    const value = body[field]
+    const present = value !== undefined && value !== null && !(typeof value === 'string' && value.trim() === '')
+    if (!present) {
+      if (optional) continue
+      return { ok: false, error: `Champ requis : ${field}` }
+    }
+    // Parse type + contraintes
+    if (rule.startsWith('string')) {
+      if (typeof value !== 'string') return { ok: false, error: `${field} doit être une chaîne` }
+      const m = rule.match(/(\d+)-(\d+)/)
+      const min = m ? +m[1] : 0
+      const max = m ? +m[2] : 10000
+      const trimmed = value.trim()
+      if (trimmed.length < min) return { ok: false, error: `${field} trop court (min ${min})` }
+      if (trimmed.length > max) return { ok: false, error: `${field} trop long (max ${max})` }
+      out[field] = trimmed
+    } else if (rule.startsWith('int')) {
+      const n = typeof value === 'number' ? value : parseInt(value, 10)
+      if (!Number.isFinite(n) || !Number.isInteger(n)) return { ok: false, error: `${field} doit être un entier` }
+      const m = rule.match(/(-?\d+)-(-?\d+)/)
+      const min = m ? +m[1] : -2147483648
+      const max = m ? +m[2] : 2147483647
+      if (n < min || n > max) return { ok: false, error: `${field} hors plage (${min}-${max})` }
+      out[field] = n
+    } else if (rule.startsWith('enum')) {
+      const m = rule.match(/enum\??:(.+)/)
+      const allowed = m ? m[1].split('|') : []
+      if (!allowed.includes(String(value))) return { ok: false, error: `${field} invalide (attendu : ${allowed.join(', ')})` }
+      out[field] = value
+    } else if (rule.startsWith('email')) {
+      // Regex email standard (RFC 5322 simplifié, suffisant en prod)
+      if (typeof value !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        return { ok: false, error: `${field} email invalide` }
+      }
+      if (value.length > 254) return { ok: false, error: `${field} email trop long` }
+      out[field] = value.toLowerCase().trim()
+    } else if (rule.startsWith('bool')) {
+      if (typeof value !== 'boolean' && value !== 0 && value !== 1) return { ok: false, error: `${field} doit être bool` }
+      out[field] = !!value
+    } else if (rule.startsWith('array')) {
+      if (!Array.isArray(value)) return { ok: false, error: `${field} doit être un tableau` }
+      out[field] = value
+    } else if (rule.startsWith('object')) {
+      if (typeof value !== 'object' || Array.isArray(value)) return { ok: false, error: `${field} doit être un objet` }
+      out[field] = value
+    } else if (rule.startsWith('any')) {
+      out[field] = value
+    }
+  }
+  return { ok: true, data: out as T }
+}
+
+// Helper Hono : retourne directement la réponse 400 si invalide
+function bad(c: any, error: string) {
+  return c.json({ error }, 400)
+}
+
+// ============================================
 // AUTH MIDDLEWARE — tokens random stockés en DB (user_sessions)
 // ============================================
 const authMiddleware = async (c: any, next: any) => {
@@ -789,9 +923,16 @@ app.get('/api/categories', authMiddleware, async (c) => {
 app.post('/api/categories', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
-  const { name, icon, color, parent_id } = await c.req.json()
-  const hotelId = user.role === 'super_admin' ? (await c.req.json()).hotel_id || user.hotel_id : user.hotel_id
-  const result = await c.env.DB.prepare('INSERT INTO categories (hotel_id, name, icon, color, parent_id) VALUES (?, ?, ?, ?, ?)').bind(hotelId, name, icon || 'fa-folder', color || '#3B82F6', parent_id || null).run()
+  // BUGFIX: lire le body UNE seule fois (avant : await c.req.json() était appelé 2x → erreur 'Body already read')
+  const body = await c.req.json() as { name?: any; icon?: any; color?: any; parent_id?: any; hotel_id?: any }
+  const name = reqStr(body.name, 'name', 100)
+  if (isValidationError(name)) return c.json(name, 400)
+  const icon = optStr(body.icon, 'icon', 60); if (isValidationError(icon)) return c.json(icon, 400)
+  const color = optStr(body.color, 'color', 20); if (isValidationError(color)) return c.json(color, 400)
+  // Sécurité : super_admin peut spécifier hotel_id, sinon on force celui de l'user
+  const hotelId = user.role === 'super_admin' ? (body.hotel_id || user.hotel_id) : user.hotel_id
+  if (!hotelId) return c.json({ error: 'hotel_id requis' }, 400)
+  const result = await c.env.DB.prepare('INSERT INTO categories (hotel_id, name, icon, color, parent_id) VALUES (?, ?, ?, ?, ?)').bind(hotelId, name, icon || 'fa-folder', color || '#3B82F6', body.parent_id || null).run()
   return c.json({ id: result.meta.last_row_id, name })
 })
 
@@ -801,8 +942,12 @@ app.put('/api/categories/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const owned = await assertHotelOwnership(c.env.DB, 'categories', id, user)
   if (owned instanceof Response) return owned
-  const { name, icon, color } = await c.req.json()
-  await c.env.DB.prepare('UPDATE categories SET name = ?, icon = ?, color = ? WHERE id = ?').bind(name, icon, color, id).run()
+  const body = await c.req.json() as { name?: any; icon?: any; color?: any }
+  const name = reqStr(body.name, 'name', 100)
+  if (isValidationError(name)) return c.json(name, 400)
+  const icon = optStr(body.icon, 'icon', 60); if (isValidationError(icon)) return c.json(icon, 400)
+  const color = optStr(body.color, 'color', 20); if (isValidationError(color)) return c.json(color, 400)
+  await c.env.DB.prepare('UPDATE categories SET name = ?, icon = ?, color = ? WHERE id = ?').bind(name, icon || 'fa-folder', color || '#3B82F6', id).run()
   return c.json({ success: true })
 })
 
@@ -1179,12 +1324,15 @@ app.post('/api/suggestions', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé — seuls les utilisateurs avec droits de modification peuvent soumettre des suggestions' }, 403)
 
-  const { procedure_id, type, title, description } = await c.req.json()
+  const body = await c.req.json() as { procedure_id?: any; type?: any; title?: any; description?: any }
+  const type = reqStr(body.type, 'type', 50); if (isValidationError(type)) return c.json(type, 400)
+  const title = reqStr(body.title, 'title', 200); if (isValidationError(title)) return c.json(title, 400)
+  const description = optStr(body.description, 'description', 5000); if (isValidationError(description)) return c.json(description, 400)
   const hotelId = user.hotel_id
 
   const result = await c.env.DB.prepare(
     `INSERT INTO suggestions (hotel_id, procedure_id, user_id, type, title, description) VALUES (?, ?, ?, ?, ?, ?)`
-  ).bind(hotelId, procedure_id || null, user.id, type, title, description).run()
+  ).bind(hotelId, body.procedure_id || null, user.id, type, title, description).run()
 
   return c.json({ id: result.meta.last_row_id })
 })
@@ -1195,11 +1343,14 @@ app.put('/api/suggestions/:id', authMiddleware, async (c) => {
   const id = c.req.param('id')
   const owned = await assertHotelOwnership(c.env.DB, 'suggestions', id, user)
   if (owned instanceof Response) return owned
-  const { status, admin_response } = await c.req.json()
+  const body = await c.req.json() as { status?: any; admin_response?: any }
+  const status = reqEnum(body.status, 'status', ['pending', 'in_review', 'approved', 'rejected', 'implemented'] as const)
+  if (isValidationError(status)) return c.json(status, 400)
+  const adminResponse = optStr(body.admin_response, 'admin_response', 5000); if (isValidationError(adminResponse)) return c.json(adminResponse, 400)
 
   await c.env.DB.prepare(
     `UPDATE suggestions SET status = ?, admin_response = ?, reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?`
-  ).bind(status, admin_response || null, user.id, id).run()
+  ).bind(status, adminResponse, user.id, id).run()
 
   return c.json({ success: true })
 })
@@ -1387,15 +1538,20 @@ app.get('/api/chat/unread-total', authMiddleware, async (c) => {
 app.post('/api/chat/groups', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canManageChannels(user) || !user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
-  const { name, icon, color } = await c.req.json()
-  if (!name) return c.json({ error: 'Nom requis' }, 400)
+  const body = await c.req.json().catch(() => null)
+  const v = validateBody<{ name: string; icon?: string; color?: string }>(body, {
+    name: 'string:1-60',
+    icon: 'string?:1-40',
+    color: 'string?:1-20'
+  })
+  if (!v.ok) return bad(c, v.error!)
 
   const maxOrder = await c.env.DB.prepare('SELECT MAX(sort_order) as m FROM chat_groups WHERE hotel_id = ?').bind(user.hotel_id).first() as any
   const result = await c.env.DB.prepare(
     'INSERT INTO chat_groups (hotel_id, name, icon, color, sort_order, is_system) VALUES (?, ?, ?, ?, ?, 0)'
-  ).bind(user.hotel_id, name, icon || 'fa-folder', color || '#3B82F6', (maxOrder?.m || 0) + 1).run()
+  ).bind(user.hotel_id, v.data!.name, v.data!.icon || 'fa-folder', v.data!.color || '#3B82F6', (maxOrder?.m || 0) + 1).run()
 
-  return c.json({ id: result.meta.last_row_id, name })
+  return c.json({ id: result.meta.last_row_id, name: v.data!.name })
 })
 
 // PUT /api/chat/groups/:id — Renommer un groupe
@@ -1403,7 +1559,14 @@ app.put('/api/chat/groups/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canManageChannels(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
-  const { name, icon, color } = await c.req.json()
+  const body = await c.req.json()
+  const v = validateBody<{ name: string; icon?: string; color?: string }>(body, {
+    name: 'string:1-100',
+    icon: 'string?:0-60',
+    color: 'string?:0-20',
+  })
+  if (!v.ok) return bad(c, v.error)
+  const { name, icon, color } = v.data
 
   const group = await c.env.DB.prepare('SELECT hotel_id FROM chat_groups WHERE id = ?').bind(id).first() as any
   if (!group || group.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
@@ -1445,19 +1608,25 @@ app.delete('/api/chat/groups/:id', authMiddleware, async (c) => {
 app.post('/api/chat/channels', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canManageChannels(user) || !user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
-  const { group_id, name, description, icon } = await c.req.json()
-  if (!name || !group_id) return c.json({ error: 'Nom et groupe requis' }, 400)
+  const body = await c.req.json().catch(() => null)
+  const v = validateBody<{ group_id: number; name: string; description?: string; icon?: string }>(body, {
+    group_id: 'int:1-2147483647',
+    name: 'string:1-80',
+    description: 'string?:0-500',
+    icon: 'string?:1-40'
+  })
+  if (!v.ok) return bad(c, v.error!)
 
   // Vérifier que le groupe appartient à l'hôtel de l'utilisateur
-  const group = await c.env.DB.prepare('SELECT hotel_id FROM chat_groups WHERE id = ?').bind(group_id).first() as any
+  const group = await c.env.DB.prepare('SELECT hotel_id FROM chat_groups WHERE id = ?').bind(v.data!.group_id).first() as any
   if (!group || group.hotel_id !== user.hotel_id) return c.json({ error: 'Groupe invalide' }, 400)
 
-  const maxOrder = await c.env.DB.prepare('SELECT MAX(sort_order) as m FROM chat_channels WHERE group_id = ?').bind(group_id).first() as any
+  const maxOrder = await c.env.DB.prepare('SELECT MAX(sort_order) as m FROM chat_channels WHERE group_id = ?').bind(v.data!.group_id).first() as any
   const result = await c.env.DB.prepare(
     'INSERT INTO chat_channels (hotel_id, group_id, name, description, icon, sort_order, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).bind(user.hotel_id, group_id, name, description || null, icon || 'fa-hashtag', (maxOrder?.m || 0) + 1, user.id).run()
+  ).bind(user.hotel_id, v.data!.group_id, v.data!.name, v.data!.description || null, v.data!.icon || 'fa-hashtag', (maxOrder?.m || 0) + 1, user.id).run()
 
-  return c.json({ id: result.meta.last_row_id, name })
+  return c.json({ id: result.meta.last_row_id, name: v.data!.name })
 })
 
 // PUT /api/chat/channels/:id — Modifier un salon
@@ -1531,10 +1700,10 @@ app.post('/api/chat/channels/:id/messages', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canAccessChat(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
-  const { content } = await c.req.json()
-
-  if (!content || !content.trim()) return c.json({ error: 'Message vide' }, 400)
-  if (content.length > 5000) return c.json({ error: 'Message trop long (max 5000 caractères)' }, 400)
+  const body = await c.req.json().catch(() => null)
+  const v = validateBody<{ content: string }>(body, { content: 'string:1-5000' })
+  if (!v.ok) return bad(c, v.error!)
+  const content = v.data!.content
 
   const channel = await c.env.DB.prepare('SELECT hotel_id FROM chat_channels WHERE id = ?').bind(id).first() as any
   if (!channel || channel.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
@@ -1669,13 +1838,16 @@ app.post('/api/hotel-info/categories', authMiddleware, async (c) => {
   const hotelId = user.role === 'super_admin' ? parseInt(c.req.query('hotel_id') || '0') : user.hotel_id
   if (!hotelId) return c.json({ error: 'Aucun hôtel' }, 400)
 
-  const { name, icon, color, sort_order } = await c.req.json()
-  if (!name) return c.json({ error: 'Nom requis' }, 400)
+  const body = await c.req.json() as { name?: any; icon?: any; color?: any; sort_order?: any }
+  const name = reqStr(body.name, 'name', 100)
+  if (isValidationError(name)) return c.json(name, 400)
+  const icon = optStr(body.icon, 'icon', 60); if (isValidationError(icon)) return c.json(icon, 400)
+  const color = optStr(body.color, 'color', 20); if (isValidationError(color)) return c.json(color, 400)
 
   const r = await c.env.DB.prepare(`
     INSERT INTO hotel_info_categories (hotel_id, name, icon, color, sort_order)
     VALUES (?, ?, ?, ?, ?)
-  `).bind(hotelId, name, icon || 'fa-circle-info', color || '#3B82F6', sort_order || 0).run()
+  `).bind(hotelId, name, icon || 'fa-circle-info', color || '#3B82F6', body.sort_order || 0).run()
 
   await invalidateWikotCache(c.env, hotelId)
   return c.json({ id: r.meta.last_row_id, success: true })
@@ -1688,13 +1860,23 @@ app.put('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
   const id = parseInt(c.req.param('id'))
   const owned = await assertHotelOwnership(c.env.DB, 'hotel_info_categories', id, user)
   if (owned instanceof Response) return owned
-  const { name, icon, color, sort_order } = await c.req.json()
+  const body = await c.req.json() as { name?: any; icon?: any; color?: any; sort_order?: any }
+  // Champs optionnels en édition (UPDATE COALESCE) : on valide seulement ce qui est fourni
+  if (body.name !== undefined) {
+    const r = reqStr(body.name, 'name', 100); if (isValidationError(r)) return c.json(r, 400)
+  }
+  if (body.icon !== undefined && body.icon !== null) {
+    const r = optStr(body.icon, 'icon', 60); if (isValidationError(r)) return c.json(r, 400)
+  }
+  if (body.color !== undefined && body.color !== null) {
+    const r = optStr(body.color, 'color', 20); if (isValidationError(r)) return c.json(r, 400)
+  }
 
   await c.env.DB.prepare(`
     UPDATE hotel_info_categories
     SET name = COALESCE(?, name), icon = COALESCE(?, icon), color = COALESCE(?, color), sort_order = COALESCE(?, sort_order)
     WHERE id = ?
-  `).bind(name, icon, color, sort_order, id).run()
+  `).bind(body.name || null, body.icon || null, body.color || null, body.sort_order, id).run()
 
   await invalidateWikotCache(c.env, (owned as any).hotel_id || user.hotel_id || 0)
   return c.json({ success: true })
@@ -1720,13 +1902,15 @@ app.post('/api/hotel-info/items', authMiddleware, async (c) => {
   const hotelId = user.role === 'super_admin' ? parseInt(c.req.query('hotel_id') || '0') : user.hotel_id
   if (!hotelId) return c.json({ error: 'Aucun hôtel' }, 400)
 
-  const { category_id, title, content, sort_order } = await c.req.json()
-  if (!title) return c.json({ error: 'Titre requis' }, 400)
+  const body = await c.req.json() as { category_id?: any; title?: any; content?: any; sort_order?: any }
+  const title = reqStr(body.title, 'title', 200)
+  if (isValidationError(title)) return c.json(title, 400)
+  const content = optStr(body.content, 'content', 10000); if (isValidationError(content)) return c.json(content, 400)
 
   const r = await c.env.DB.prepare(`
     INSERT INTO hotel_info_items (hotel_id, category_id, title, content, sort_order)
     VALUES (?, ?, ?, ?, ?)
-  `).bind(hotelId, category_id || null, title, content || '', sort_order || 0).run()
+  `).bind(hotelId, body.category_id || null, title, content || '', body.sort_order || 0).run()
 
   await invalidateWikotCache(c.env, hotelId)
   return c.json({ id: r.meta.last_row_id, success: true })
@@ -1739,14 +1923,20 @@ app.put('/api/hotel-info/items/:id', authMiddleware, async (c) => {
   const id = parseInt(c.req.param('id'))
   const owned = await assertHotelOwnership(c.env.DB, 'hotel_info_items', id, user)
   if (owned instanceof Response) return owned
-  const { category_id, title, content, sort_order } = await c.req.json()
+  const body = await c.req.json() as { category_id?: any; title?: any; content?: any; sort_order?: any }
+  if (body.title !== undefined && body.title !== null) {
+    const r = reqStr(body.title, 'title', 200); if (isValidationError(r)) return c.json(r, 400)
+  }
+  if (body.content !== undefined && body.content !== null) {
+    const r = optStr(body.content, 'content', 10000); if (isValidationError(r)) return c.json(r, 400)
+  }
 
   await c.env.DB.prepare(`
     UPDATE hotel_info_items
     SET category_id = ?, title = COALESCE(?, title), content = COALESCE(?, content), sort_order = COALESCE(?, sort_order),
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `).bind(category_id || null, title, content, sort_order, id).run()
+  `).bind(body.category_id || null, body.title || null, body.content || null, body.sort_order, id).run()
 
   await invalidateWikotCache(c.env, (owned as any).hotel_id || user.hotel_id || 0)
   return c.json({ success: true })
@@ -3405,16 +3595,23 @@ app.get('/api/rooms', authMiddleware, async (c) => {
 app.post('/api/rooms', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
-  const body = await c.req.json() as { room_number: string; floor?: string; capacity?: number; sort_order?: number }
-  if (!body.room_number || !String(body.room_number).trim()) return c.json({ error: 'Numéro de chambre obligatoire' }, 400)
   const hotelId = user.hotel_id
   if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const raw = await c.req.json().catch(() => null)
+  const v = validateBody<{ room_number: string; floor?: string; capacity?: number; sort_order?: number }>(raw, {
+    room_number: 'string:1-30',
+    floor: 'string?:0-30',
+    capacity: 'int?:1-20',
+    sort_order: 'int?:0-100000'
+  })
+  if (!v.ok) return bad(c, v.error!)
 
   try {
     const result = await c.env.DB.prepare(`
       INSERT INTO rooms (hotel_id, room_number, floor, capacity, sort_order, is_active)
       VALUES (?, ?, ?, ?, ?, 1)
-    `).bind(hotelId, String(body.room_number).trim(), body.floor || null, body.capacity || 2, body.sort_order || 0).run()
+    `).bind(hotelId, v.data!.room_number, v.data!.floor || null, v.data!.capacity || 2, v.data!.sort_order || 0).run()
     const roomId = result.meta.last_row_id
 
     // Création automatique du compte client associé (inactif au départ)
@@ -3422,7 +3619,7 @@ app.post('/api/rooms', authMiddleware, async (c) => {
       INSERT INTO client_accounts (hotel_id, room_id, is_active) VALUES (?, ?, 0)
     `).bind(hotelId, roomId).run()
 
-    return c.json({ id: roomId, room_number: body.room_number })
+    return c.json({ id: roomId, room_number: v.data!.room_number })
   } catch (e: any) {
     if (String(e?.message || '').includes('UNIQUE')) return c.json({ error: 'Ce numéro de chambre existe déjà' }, 400)
     return c.json({ error: e?.message || 'Erreur serveur' }, 500)

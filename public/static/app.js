@@ -580,29 +580,76 @@ function setLoginTab(tab) {
 // LOGIN PAGE
 // ============================================
 function renderLoginPage() {
-  const tab = state.loginTab || 'staff';
+  const tab = state.loginTab || 'client';
   return `
-  <div class="min-h-screen bg-gradient-to-br from-navy-900 via-navy-800 to-navy-700 flex items-center justify-center p-4">
-    <div class="w-full max-w-md">
-      <div class="text-center mb-8 fade-in">
-        <div class="inline-flex items-center justify-center w-20 h-20 bg-brand-400 rounded-2xl shadow-lg mb-4">
-          <i class="fas fa-concierge-bell text-3xl text-white"></i>
+  <div class="min-h-screen flex flex-col lg:flex-row" style="background: var(--c-cream);">
+    <!-- COLONNE GAUCHE — branding premium (caché sur mobile) -->
+    <div class="hidden lg:flex lg:w-1/2 relative overflow-hidden" style="background: var(--c-navy);">
+      <!-- Pattern subtil en SVG inline (ultra-léger, pas d'image) -->
+      <div class="absolute inset-0 opacity-[0.07]" style="background-image: radial-gradient(circle at 1px 1px, #C9A961 1px, transparent 0); background-size: 32px 32px;"></div>
+      <!-- Liseré or à droite -->
+      <div class="absolute right-0 top-0 bottom-0 w-px" style="background: linear-gradient(to bottom, transparent, var(--c-gold), transparent);"></div>
+      <div class="relative z-10 flex flex-col justify-between p-12 xl:p-16 w-full">
+        <div>
+          <div class="flex items-center gap-3">
+            <div class="w-11 h-11 rounded-xl flex items-center justify-center" style="background: var(--c-gold);">
+              <i class="fas fa-concierge-bell text-lg" style="color: var(--c-navy);"></i>
+            </div>
+            <span class="font-display text-2xl font-semibold text-white">Wikot</span>
+          </div>
         </div>
-        <h1 class="text-4xl font-bold text-white tracking-tight">Wik<span class="text-brand-400">ot</span></h1>
+        <div class="max-w-md">
+          <p class="text-xs uppercase tracking-[0.2em] mb-4" style="color: var(--c-gold);">L'excellence hôtelière</p>
+          <h2 class="font-display text-4xl xl:text-5xl font-medium text-white leading-tight mb-6">
+            Chaque détail<br/>
+            <span style="color: var(--c-gold);">soigneusement orchestré.</span>
+          </h2>
+          <p class="text-sm leading-relaxed" style="color: rgba(255,255,255,0.7);">
+            La plateforme qui réunit vos procédures, votre équipe et vos clients
+            dans une expérience cohérente et premium.
+          </p>
+        </div>
+        <div class="flex items-center gap-6 text-xs" style="color: rgba(255,255,255,0.5);">
+          <span class="flex items-center gap-2"><i class="fas fa-shield-halved" style="color: var(--c-gold);"></i> Sécurisé</span>
+          <span class="flex items-center gap-2"><i class="fas fa-bolt" style="color: var(--c-gold);"></i> Instantané</span>
+          <span class="flex items-center gap-2"><i class="fas fa-globe" style="color: var(--c-gold);"></i> Multi-hôtels</span>
+        </div>
       </div>
-      <div class="bg-white rounded-2xl shadow-2xl overflow-hidden fade-in">
-        <!-- Tabs : Espace Client à gauche (par défaut), Espace Équipe à droite -->
-        <div class="flex border-b border-gray-200">
-          <button onclick="setLoginTab('client')" class="flex-1 py-4 text-sm font-semibold transition-colors ${tab === 'client' ? 'text-brand-500 border-b-2 border-brand-400 bg-brand-50' : 'text-gray-500 hover:bg-gray-50'}">
-            <i class="fas fa-bed mr-2"></i>Espace Client
-          </button>
-          <button onclick="setLoginTab('staff')" class="flex-1 py-4 text-sm font-semibold transition-colors ${tab === 'staff' ? 'text-brand-500 border-b-2 border-brand-400 bg-brand-50' : 'text-gray-500 hover:bg-gray-50'}">
-            <i class="fas fa-user-tie mr-2"></i>Espace Équipe
-          </button>
+    </div>
+
+    <!-- COLONNE DROITE — formulaires -->
+    <div class="flex-1 flex items-center justify-center p-6 lg:p-12">
+      <div class="w-full max-w-md">
+        <!-- Logo mobile uniquement -->
+        <div class="flex lg:hidden items-center justify-center gap-3 mb-8 fade-in">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center" style="background: var(--c-gold);">
+            <i class="fas fa-concierge-bell text-lg" style="color: var(--c-navy);"></i>
+          </div>
+          <span class="font-display text-2xl font-semibold" style="color: var(--c-navy);">Wikot</span>
         </div>
-        <div class="p-8">
-          ${tab === 'client' ? renderClientLoginForm() : renderStaffLoginForm()}
+
+        <div class="bg-white rounded-2xl shadow-premium-lg overflow-hidden fade-in" style="border: 1px solid var(--c-line);">
+          <!-- Tabs Client / Équipe -->
+          <div class="flex" style="background: var(--c-cream-deep);">
+            <button onclick="setLoginTab('client')"
+              class="flex-1 py-4 text-sm font-semibold transition-all"
+              style="${tab === 'client' ? 'background: white; color: var(--c-navy); box-shadow: inset 0 -2px 0 var(--c-gold);' : 'color: rgba(15,27,40,0.5);'}">
+              <i class="fas fa-bed mr-2"></i>Espace Client
+            </button>
+            <button onclick="setLoginTab('staff')"
+              class="flex-1 py-4 text-sm font-semibold transition-all"
+              style="${tab === 'staff' ? 'background: white; color: var(--c-navy); box-shadow: inset 0 -2px 0 var(--c-gold);' : 'color: rgba(15,27,40,0.5);'}">
+              <i class="fas fa-user-tie mr-2"></i>Espace Équipe
+            </button>
+          </div>
+          <div class="p-7 sm:p-9">
+            ${tab === 'client' ? renderClientLoginForm() : renderStaffLoginForm()}
+          </div>
         </div>
+
+        <p class="text-center text-xs mt-6" style="color: rgba(15,27,40,0.4);">
+          &copy; ${new Date().getFullYear()} Wikot &middot; Conçu pour l'hôtellerie d'exception
+        </p>
       </div>
     </div>
   </div>`;
@@ -610,72 +657,70 @@ function renderLoginPage() {
 
 function renderStaffLoginForm() {
   return `
-    <h2 class="text-xl font-semibold text-navy-800 mb-1">Connexion Équipe</h2>
-    <p class="text-xs text-gray-500 mb-6">Réservée au personnel et à la direction de l'hôtel.</p>
+    <h2 class="font-display text-2xl font-semibold mb-1" style="color: var(--c-navy);">Connexion Équipe</h2>
+    <p class="text-xs mb-7" style="color: rgba(15,27,40,0.5);">Réservée au personnel et à la direction de l'hôtel.</p>
     <form onsubmit="event.preventDefault(); login(document.getElementById('email').value, document.getElementById('password').value)">
       <div class="mb-4">
-        <label class="block text-sm font-medium text-navy-600 mb-1.5">Email</label>
+        <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">Email</label>
         <div class="relative">
-          <i class="fas fa-envelope absolute left-3 top-3 text-navy-300"></i>
+          <i class="fas fa-envelope absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
           <input id="email" type="email" required placeholder="votre@email.com"
-            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
+            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm">
         </div>
       </div>
       <div class="mb-6">
-        <label class="block text-sm font-medium text-navy-600 mb-1.5">Mot de passe</label>
+        <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">Mot de passe</label>
         <div class="relative">
-          <i class="fas fa-lock absolute left-3 top-3 text-navy-300"></i>
+          <i class="fas fa-lock absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
           <input id="password" type="password" required placeholder="••••••••"
-            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
+            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm">
         </div>
       </div>
-      <button type="submit" class="w-full bg-brand-400 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-lg transition-colors shadow-md">
+      <button type="submit" class="btn-premium w-full font-semibold py-3 rounded-lg transition-all" style="background: var(--c-navy); color: white;">
         <i class="fas fa-sign-in-alt mr-2"></i>Se connecter
       </button>
     </form>`;
 }
 
 function renderClientLoginForm() {
+  const stepBadge = (n) => `<span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold mr-2" style="background: var(--c-gold); color: var(--c-navy);">${n}</span>`;
   return `
-    <h2 class="text-xl font-semibold text-navy-800 mb-1">Bienvenue dans votre hôtel</h2>
-    <p class="text-xs text-gray-500 mb-6">Munissez-vous de la fiche présente dans votre chambre.</p>
+    <h2 class="font-display text-2xl font-semibold mb-1" style="color: var(--c-navy);">Bienvenue dans votre hôtel</h2>
+    <p class="text-xs mb-7" style="color: rgba(15,27,40,0.5);">Munissez-vous de la fiche présente dans votre chambre.</p>
     <form onsubmit="event.preventDefault(); clientLogin(document.getElementById('client_hotel_code').value, document.getElementById('client_room_number').value, document.getElementById('client_guest_name').value)">
       <div class="mb-4">
-        <label class="block text-sm font-medium text-navy-600 mb-1.5">
-          <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-400 text-white text-[10px] font-bold mr-2">1</span>
-          Code de l'hôtel
+        <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">
+          ${stepBadge(1)}Code de l'hôtel
         </label>
         <div class="relative">
-          <i class="fas fa-hotel absolute left-3 top-3 text-navy-300"></i>
+          <i class="fas fa-hotel absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
           <input id="client_hotel_code" type="text" required placeholder="Ex: GRDPARIS" autocomplete="off"
-            style="text-transform: uppercase; letter-spacing: 1px;"
-            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm font-mono">
+            style="text-transform: uppercase; letter-spacing: 1.5px;"
+            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm font-mono">
         </div>
       </div>
       <div class="mb-4">
-        <label class="block text-sm font-medium text-navy-600 mb-1.5">
-          <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-400 text-white text-[10px] font-bold mr-2">2</span>
-          Numéro de chambre
+        <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">
+          ${stepBadge(2)}Numéro de chambre
         </label>
         <div class="relative">
-          <i class="fas fa-door-open absolute left-3 top-3 text-navy-300"></i>
+          <i class="fas fa-door-open absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
           <input id="client_room_number" type="text" required placeholder="Ex: 12" autocomplete="off"
-            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
+            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm">
         </div>
       </div>
       <div class="mb-6">
-        <label class="block text-sm font-medium text-navy-600 mb-1.5">
-          <span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-brand-400 text-white text-[10px] font-bold mr-2">3</span>
-          Votre nom
+        <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">
+          ${stepBadge(3)}Votre nom
         </label>
         <div class="relative">
-          <i class="fas fa-user absolute left-3 top-3 text-navy-300"></i>
+          <i class="fas fa-user absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
           <input id="client_guest_name" type="text" required placeholder="Ex: Dupont" autocomplete="off"
-            class="w-full pl-10 pr-4 py-2.5 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm">
+            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm">
         </div>
-        <p class="text-[11px] text-gray-400 mt-1.5"><i class="fas fa-info-circle mr-1"></i>Le nom utilisé lors de la réservation.</p>
+        <p class="text-[11px] mt-2" style="color: rgba(15,27,40,0.4);"><i class="fas fa-info-circle mr-1" style="color: var(--c-gold);"></i>Le nom utilisé lors de la réservation.</p>
       </div>
-      <button type="submit" class="w-full bg-brand-400 hover:bg-brand-500 text-white font-semibold py-2.5 rounded-lg transition-colors shadow-md">
+      <button type="submit" class="btn-premium w-full font-semibold py-3 rounded-lg transition-all" style="background: var(--c-navy); color: white;">
         <i class="fas fa-key mr-2"></i>Accéder à mon espace
       </button>
     </form>`;

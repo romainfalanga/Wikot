@@ -4038,22 +4038,149 @@ app.get('*', (c) => {
       theme: {
         extend: {
           colors: {
-            brand: { 50:'#fef3e2',100:'#fde4b9',200:'#fbc970',300:'#f9ae28',400:'#f59e0b',500:'#d97706',600:'#b45309',700:'#92400e',800:'#78350f',900:'#451a03' },
-            navy: { 50:'#f0f4f8',100:'#d9e2ec',200:'#bcccdc',300:'#9fb3c8',400:'#829ab1',500:'#627d98',600:'#486581',700:'#334e68',800:'#243b53',900:'#102a43' }
+            // === PALETTE PREMIUM HÔTELLERIE ===
+            // brand = or champagne (CTA, badges premium, accents)
+            brand: { 50:'#FBF7EE',100:'#F5ECD2',200:'#EBD8A4',300:'#DFC076',400:'#D4AC54',500:'#C9A961',600:'#A68845',700:'#7E682F',800:'#56481F',900:'#2E2611' },
+            // navy = bleu nuit profond (texte, sidebar, éléments forts)
+            navy: { 50:'#F4F6F9',100:'#E2E7EE',200:'#C2CCD9',300:'#94A3B8',400:'#5C7185',500:'#3A4F66',600:'#1F3147',700:'#162536',800:'#0F1B28',900:'#0A1628' },
+            // cream = ivoire chaleureux (fond principal)
+            cream: { 50:'#FDFCF9',100:'#FAF8F5',200:'#F5F1EA',300:'#EDE7DB',400:'#DCD3C0',500:'#C8BCA3' },
+            // gold = synonyme brand pour clarté sémantique
+            gold: { 400:'#D4AC54',500:'#C9A961',600:'#A68845' },
+            // wine = bordeaux pour alertes premium
+            wine: { 500:'#8B2635',600:'#6E1E2A',700:'#52171F' }
+          },
+          fontFamily: {
+            display: ['Fraunces', 'Georgia', 'serif'],
+            sans: ['Inter', 'system-ui', 'sans-serif']
+          },
+          boxShadow: {
+            'premium-sm': '0 1px 2px rgba(15,27,40,0.04), 0 1px 3px rgba(15,27,40,0.06)',
+            'premium': '0 4px 12px rgba(15,27,40,0.06), 0 1px 3px rgba(15,27,40,0.04)',
+            'premium-lg': '0 8px 24px rgba(15,27,40,0.08), 0 2px 6px rgba(15,27,40,0.04)',
+            'premium-xl': '0 16px 40px rgba(15,27,40,0.10), 0 4px 12px rgba(15,27,40,0.05)'
           }
         }
       }
     }
   </script>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-    * { font-family: 'Inter', sans-serif; }
-    .fade-in { animation: fadeIn 0.3s ease-in; }
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-    .slide-in { animation: slideIn 0.3s ease-out; }
-    @keyframes slideIn { from { transform: translateX(-20px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    /* === POLICES — Inter (UI) + Fraunces (titres premium) === */
+    /* Une seule requête CSS pour les 2 polices, swap natif (pas de FOIT) */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap');
+    * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    .font-display { font-family: 'Fraunces', Georgia, serif; letter-spacing: -0.01em; }
+
+    /* === PALETTE CSS VARIABLES (utilisable partout) === */
+    :root {
+      --c-cream: #FAF8F5;
+      --c-cream-deep: #F5F1EA;
+      --c-navy: #0A1628;
+      --c-navy-soft: #1F3147;
+      --c-gold: #C9A961;
+      --c-gold-light: #D4AC54;
+      --c-gold-deep: #A68845;
+      --c-wine: #8B2635;
+      --c-line: rgba(15,27,40,0.08);
+      --c-line-strong: rgba(15,27,40,0.14);
+    }
+
+    /* === ANIMATIONS LÉGÈRES (mobile-friendly, GPU only) === */
+    .fade-in { animation: fadeIn 0.18s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .slide-in { animation: slideIn 0.18s ease-out; }
+    @keyframes slideIn { from { transform: translateX(-8px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     .pulse-dot { animation: pulse 2s infinite; }
     @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+    /* === COMPOSANTS PREMIUM RÉUTILISABLES === */
+    /* Card premium : fond clair, bordure subtile, ombre douce, hover-lift léger */
+    .card-premium {
+      background: #fff;
+      border: 1px solid var(--c-line);
+      border-radius: 12px;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .card-premium:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(15,27,40,0.06), 0 1px 3px rgba(15,27,40,0.04);
+      border-color: var(--c-line-strong);
+    }
+    /* Bouton primary or champagne */
+    .btn-gold {
+      background: var(--c-gold);
+      color: var(--c-navy);
+      font-weight: 600;
+      transition: background 0.15s ease, box-shadow 0.15s ease;
+    }
+    .btn-gold:hover { background: var(--c-gold-deep); color: #fff; }
+    .btn-gold:active { transform: translateY(0.5px); }
+    /* Bouton primary navy */
+    .btn-navy {
+      background: var(--c-navy);
+      color: #fff;
+      font-weight: 600;
+      transition: background 0.15s ease;
+    }
+    .btn-navy:hover { background: var(--c-navy-soft); }
+    /* Bouton secondaire ghost */
+    .btn-ghost {
+      background: transparent;
+      color: var(--c-navy);
+      border: 1px solid var(--c-line-strong);
+      font-weight: 500;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .btn-ghost:hover { background: var(--c-cream-deep); border-color: var(--c-navy-soft); }
+
+    /* === COMPOSANTS PREMIUM (login, modals, formulaires) === */
+    .input-premium {
+      background: #fff;
+      border: 1px solid var(--c-line-strong);
+      color: var(--c-navy);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+    .input-premium::placeholder { color: rgba(15,27,40,0.35); }
+    .input-premium:hover { border-color: rgba(15,27,40,0.25); }
+    .input-premium:focus {
+      border-color: var(--c-gold);
+      box-shadow: 0 0 0 3px rgba(201,169,97,0.18);
+      background: #fff;
+    }
+
+    .btn-premium {
+      position: relative;
+      overflow: hidden;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
+      box-shadow: 0 1px 2px rgba(10,22,40,0.08), 0 4px 12px rgba(10,22,40,0.06);
+    }
+    .btn-premium:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 2px 4px rgba(10,22,40,0.10), 0 10px 24px rgba(10,22,40,0.12);
+      background: var(--c-navy-soft) !important;
+    }
+    .btn-premium:active { transform: translateY(0); }
+
+    /* Ombrages premium pour cartes / panneaux */
+    .shadow-premium-sm { box-shadow: 0 1px 2px rgba(10,22,40,0.04), 0 2px 6px rgba(10,22,40,0.04); }
+    .shadow-premium    { box-shadow: 0 2px 4px rgba(10,22,40,0.05), 0 8px 20px rgba(10,22,40,0.06); }
+    .shadow-premium-lg { box-shadow: 0 4px 8px rgba(10,22,40,0.06), 0 24px 48px rgba(10,22,40,0.10); }
+
+    /* === SKELETONS (CSS pur, ultra-léger) === */
+    .skeleton {
+      background: linear-gradient(90deg, #ECE7DB 0%, #F5F1EA 50%, #ECE7DB 100%);
+      background-size: 200% 100%;
+      animation: skeletonShimmer 1.4s linear infinite;
+      border-radius: 6px;
+    }
+    @keyframes skeletonShimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    /* Désactiver les anims pour les utilisateurs qui les refusent (accessibilité + batterie) */
+    @media (prefers-reduced-motion: reduce) {
+      .fade-in, .slide-in, .pulse-dot, .skeleton, .card-premium { animation: none !important; transition: none !important; }
+    }
     /* Highlight visuel pour les champs Back Wikot que l'IA vient de modifier */
     .back-wikot-touched {
       animation: backWikotTouched 1.8s ease-out;
@@ -4067,10 +4194,13 @@ app.get('*', (c) => {
     .step-connector { position: relative; }
     .step-connector::before { content: ''; position: absolute; left: 19px; top: 40px; bottom: -8px; width: 2px; background: #e5e7eb; }
     .step-connector:last-child::before { display: none; }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: #f1f5f9; }
-    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    /* Scrollbar premium discrète, harmonisée avec la palette ivoire */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--c-cream-deep); }
+    ::-webkit-scrollbar-thumb { background: #C8BCA3; border-radius: 4px; border: 2px solid var(--c-cream-deep); }
+    ::-webkit-scrollbar-thumb:hover { background: var(--c-gold-deep); }
+    /* Firefox */
+    html { scrollbar-color: #C8BCA3 var(--c-cream-deep); scrollbar-width: thin; }
     .sidebar-item { transition: all 0.15s ease; }
     .sidebar-item:hover { background: rgba(255,255,255,0.1); }
     .sidebar-item.active { background: rgba(255,255,255,0.15); border-right: 3px solid #f59e0b; }
@@ -4194,7 +4324,7 @@ app.get('*', (c) => {
     }
   </style>
 </head>
-<body class="bg-gray-50 min-h-screen">
+<body class="min-h-screen" style="background-color: var(--c-cream); color: var(--c-navy);">
   <div id="app"></div>
   <script src="/static/app.js"></script>
 </body>

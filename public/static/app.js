@@ -123,7 +123,7 @@ function showToast(message, type = 'info') {
   const icons = { info: 'fa-info-circle', success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle' };
   const toast = document.createElement('div');
   toast.className = `fixed top-4 right-4 z-[9999] ${colors[type]} text-white px-5 py-3 rounded-lg shadow-xl flex items-center gap-3 fade-in max-w-md`;
-  toast.innerHTML = `<i class="fas ${icons[type]}"></i><span class="text-sm font-medium">${message}</span>`;
+  toast.innerHTML = `<i class="fas ${icons[type]}"></i><span class="text-sm font-medium">${escapeHtml(message)}</span>`;
   document.body.appendChild(toast);
   setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
 }
@@ -4756,7 +4756,7 @@ function showModal(title, content) {
   <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center sm:p-4 modal-overlay" onclick="if(event.target===this)closeModal()">
     <div class="bg-white shadow-2xl w-full max-w-2xl modal-panel fade-in">
       <div class="flex items-center justify-between p-4 sm:p-5 border-b border-gray-100 sticky top-0 bg-white z-10 modal-header">
-        <h3 class="text-base sm:text-lg font-semibold text-navy-800 truncate pr-3">${title}</h3>
+        <h3 class="text-base sm:text-lg font-semibold text-navy-800 truncate pr-3">${escapeHtml(title)}</h3>
         <button onclick="closeModal()" class="w-9 h-9 rounded-lg bg-navy-50 hover:bg-navy-100 flex items-center justify-center text-navy-500 transition-colors shrink-0">
           <i class="fas fa-times"></i>
         </button>

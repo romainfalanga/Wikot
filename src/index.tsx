@@ -1015,6 +1015,8 @@ app.put('/api/suggestions/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
+  const owned = await assertHotelOwnership(c.env.DB, 'suggestions', id, user)
+  if (owned instanceof Response) return owned
   const { status, admin_response } = await c.req.json()
 
   await c.env.DB.prepare(
@@ -1048,7 +1050,12 @@ app.post('/api/templates', authMiddleware, async (c) => {
 app.delete('/api/templates/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (isSuperAdmin(user) || user.role === 'employee') return c.json({ error: 'Non autorisé' }, 403)
-  await c.env.DB.prepare('DELETE FROM templates WHERE id = ?').bind(c.req.param('id')).run()
+  const id = c.req.param('id')
+  // Templates n'ont pas forcément hotel_id, mais on vérifie quand même
+  const tpl = await c.env.DB.prepare('SELECT hotel_id FROM templates WHERE id = ?').bind(id).first() as any
+  if (!tpl) return c.json({ error: 'Template non trouvé' }, 404)
+  if (tpl.hotel_id && tpl.hotel_id !== user.hotel_id) return c.json({ error: 'Accès refusé' }, 403)
+  await c.env.DB.prepare('DELETE FROM templates WHERE id = ?').bind(id).run()
   return c.json({ success: true })
 })
 
@@ -2329,11 +2336,20 @@ app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
   return c.json({ conversation: conv, messages: decodedMessages, actions: actions.results })
 })
 
-// DELETE archive une conversation
+// DELETE archive une conversation (staff)
 app.delete('/api/wikot/conversations/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   const id = parseInt(c.req.param('id'))
-  await c.env.DB.prepare('UPDATE wikot_conversations SET is_archived = 1 WHERE id = ? AND user_id = ?').bind(id, user.id).run()
+  // Vérifie que la conversation appartient bien au user (staff) et à son hôtel
+  const conv = await c.env.DB.prepare(
+    'SELECT id, user_id, hotel_id FROM wikot_conversations WHERE id = ?'
+  ).bind(id).first<any>()
+  if (!conv) return c.json({ error: 'Conversation introuvable' }, 404)
+  if (conv.user_id !== user.id) return c.json({ error: 'Accès refusé' }, 403)
+  if (conv.hotel_id !== user.hotel_id && user.role !== 'super_admin') {
+    return c.json({ error: 'Accès refusé' }, 403)
+  }
+  await c.env.DB.prepare('UPDATE wikot_conversations SET is_archived = 1 WHERE id = ?').bind(id).run()
   return c.json({ success: true })
 })
 

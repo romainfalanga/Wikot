@@ -5,6 +5,7 @@ type Bindings = {
   DB: D1Database
   OPENROUTER_API_KEY?: string
   AUDIO_BUCKET?: R2Bucket
+  WIKOT_CACHE?: KVNamespace
 }
 
 type WikotUser = {
@@ -1527,6 +1528,7 @@ app.post('/api/hotel-info/categories', authMiddleware, async (c) => {
     VALUES (?, ?, ?, ?, ?)
   `).bind(hotelId, name, icon || 'fa-circle-info', color || '#3B82F6', sort_order || 0).run()
 
+  await invalidateWikotCache(c.env, hotelId)
   return c.json({ id: r.meta.last_row_id, success: true })
 })
 
@@ -1545,6 +1547,7 @@ app.put('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
     WHERE id = ?
   `).bind(name, icon, color, sort_order, id).run()
 
+  await invalidateWikotCache(c.env, (owned as any).hotel_id || user.hotel_id || 0)
   return c.json({ success: true })
 })
 
@@ -1557,6 +1560,7 @@ app.delete('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
   if (owned instanceof Response) return owned
 
   await c.env.DB.prepare(`DELETE FROM hotel_info_categories WHERE id = ?`).bind(id).run()
+  await invalidateWikotCache(c.env, (owned as any).hotel_id || user.hotel_id || 0)
   return c.json({ success: true })
 })
 
@@ -1575,6 +1579,7 @@ app.post('/api/hotel-info/items', authMiddleware, async (c) => {
     VALUES (?, ?, ?, ?, ?)
   `).bind(hotelId, category_id || null, title, content || '', sort_order || 0).run()
 
+  await invalidateWikotCache(c.env, hotelId)
   return c.json({ id: r.meta.last_row_id, success: true })
 })
 
@@ -1594,6 +1599,7 @@ app.put('/api/hotel-info/items/:id', authMiddleware, async (c) => {
     WHERE id = ?
   `).bind(category_id || null, title, content, sort_order, id).run()
 
+  await invalidateWikotCache(c.env, (owned as any).hotel_id || user.hotel_id || 0)
   return c.json({ success: true })
 })
 
@@ -1606,8 +1612,58 @@ app.delete('/api/hotel-info/items/:id', authMiddleware, async (c) => {
   if (owned instanceof Response) return owned
 
   await c.env.DB.prepare(`DELETE FROM hotel_info_items WHERE id = ?`).bind(id).run()
+  await invalidateWikotCache(c.env, (owned as any).hotel_id || user.hotel_id || 0)
   return c.json({ success: true })
 })
+
+// ============================================
+// CACHE — invalidation du knowledgeBase Front Wikot
+// ============================================
+// Le cache KV a un TTL de 5 min. Pour les modifs admin (hotel_info), on flush manuellement
+// pour que le client voit la nouvelle info immédiatement sans attendre l'expiration TTL.
+async function invalidateWikotCache(env: Bindings, hotelId: number) {
+  if (!env.WIKOT_CACHE || !hotelId) return
+  try { await env.WIKOT_CACHE.delete(`kb:${hotelId}`) } catch {}
+}
+
+// ============================================
+// RATE LIMITING — KV-based, fenêtre glissante simple
+// ============================================
+// Limite le nombre de requêtes par identité (user/client/IP) sur des fenêtres temporelles.
+// Si KV indisponible → fail-open (on laisse passer pour ne jamais casser l'app).
+// Renvoie true si la requête est autorisée, false si elle dépasse la limite.
+async function checkRateLimit(
+  env: Bindings,
+  bucket: string,
+  identity: string,
+  limit: number,
+  windowSec: number
+): Promise<{ ok: boolean; remaining: number }> {
+  if (!env.WIKOT_CACHE || !identity) return { ok: true, remaining: limit }
+  const now = Math.floor(Date.now() / 1000)
+  const windowStart = Math.floor(now / windowSec) * windowSec
+  const key = `rl:${bucket}:${identity}:${windowStart}`
+  try {
+    const raw = await env.WIKOT_CACHE.get(key)
+    const count = raw ? parseInt(raw, 10) || 0 : 0
+    if (count >= limit) return { ok: false, remaining: 0 }
+    // TTL = fin de fenêtre + 1s, KV minimum 60s
+    const ttl = Math.max(60, (windowStart + windowSec) - now + 1)
+    await env.WIKOT_CACHE.put(key, String(count + 1), { expirationTtl: ttl })
+    return { ok: true, remaining: limit - count - 1 }
+  } catch {
+    return { ok: true, remaining: limit } // fail-open
+  }
+}
+
+// Helper pour réponse 429
+function rateLimitedResponse(c: any, retryAfter: number) {
+  return c.json(
+    { error: 'Trop de requêtes, veuillez patienter quelques instants.' },
+    429,
+    { 'Retry-After': String(retryAfter) }
+  )
+}
 
 // ============================================
 // WIKOT — AGENT IA (OpenRouter + Gemini 2.0 Flash)
@@ -2486,11 +2542,12 @@ app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
   return c.json({ conversation: conv, messages: decodedMessages, actions: actions.results })
 })
 
-// DELETE archive une conversation (staff)
+// DELETE supprime définitivement une conversation (staff)
+// La mémoire des anciennes conversations Wikot a été retirée → on supprime
+// vraiment au lieu d'archiver, et on nettoie les audios R2 associés.
 app.delete('/api/wikot/conversations/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   const id = parseInt(c.req.param('id'))
-  // Vérifie que la conversation appartient bien au user (staff) et à son hôtel
   const conv = await c.env.DB.prepare(
     'SELECT id, user_id, hotel_id FROM wikot_conversations WHERE id = ?'
   ).bind(id).first<any>()
@@ -2499,13 +2556,32 @@ app.delete('/api/wikot/conversations/:id', authMiddleware, async (c) => {
   if (conv.hotel_id !== user.hotel_id && user.role !== 'super_admin') {
     return c.json({ error: 'Accès refusé' }, 403)
   }
-  await c.env.DB.prepare('UPDATE wikot_conversations SET is_archived = 1 WHERE id = ?').bind(id).run()
+
+  // 1) Récupère toutes les audio_keys liées pour suppression R2 différée
+  const audios = await c.env.DB.prepare(
+    `SELECT audio_key FROM wikot_messages WHERE conversation_id = ? AND audio_key IS NOT NULL`
+  ).bind(id).all()
+  const audioKeys = (audios.results as any[]).map(r => r.audio_key).filter(Boolean)
+
+  // 2) Suppression DB en cascade (wikot_messages + pending_actions via FK CASCADE)
+  await c.env.DB.prepare('DELETE FROM wikot_conversations WHERE id = ?').bind(id).run()
+
+  // 3) Cleanup R2 non bloquant
+  if (audioKeys.length > 0 && c.env.AUDIO_BUCKET) {
+    const bucket = c.env.AUDIO_BUCKET
+    c.executionCtx?.waitUntil?.(
+      Promise.all(audioKeys.map(k => bucket.delete(k).catch(() => {})))
+    )
+  }
   return c.json({ success: true })
 })
 
 // POST envoyer un message → réponse Wikot
 app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const user = c.get('user')
+  // Rate-limit : max 30 messages Wikot / minute / user
+  const rl = await checkRateLimit(c.env, 'wikot_msg', `u:${user.id}`, 30, 60)
+  if (!rl.ok) return rateLimitedResponse(c, 60)
   const convId = parseInt(c.req.param('id'))
   const body = await c.req.json() as any
   const content = body.content
@@ -2552,15 +2628,17 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     audioSizeBytes || null
   ).run()
 
-  // Récupérer l'historique des messages (vraiment limité à 30 côté DB pour économiser les tokens et le temps CPU)
-  // On prend les 30 derniers en DESC puis on remet en ASC pour conserver l'ordre chronologique côté LLM.
-  const historyDesc = await c.env.DB.prepare(`
-    SELECT role, content, tool_calls, tool_call_id, audio_key, audio_mime
-    FROM wikot_messages WHERE conversation_id = ?
-    ORDER BY created_at DESC, id DESC
-    LIMIT 30
-  `).bind(convId).all()
-  const history = { results: ((historyDesc.results || []) as any[]).slice().reverse() }
+  // STATELESS : pas d'historique. Chaque message est traité indépendamment.
+  // → moins de tokens OpenRouter, moins de CPU, UX plus simple.
+  // On garde uniquement le message courant (user) pour l'envoyer au LLM.
+  const history = { results: [{
+    role: 'user',
+    content: hasText ? content : '',
+    tool_calls: null,
+    tool_call_id: null,
+    audio_key: audioKey,
+    audio_mime: audioMime
+  }] as any[] }
 
   // Récupérer infos hôtel
   const hotel = await c.env.DB.prepare('SELECT name FROM hotels WHERE id = ?').bind(user.hotel_id).first() as any
@@ -2766,17 +2844,33 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
           LEFT JOIN procedures lp ON lp.id = s.linked_procedure_id
           WHERE s.procedure_id = ? ORDER BY s.step_number
         `).bind(p.id).all()
+        // OPTIM N+1 → 1 seule requête : on récupère TOUTES les étapes des sous-procédures
+        // d'un coup avec un IN (...) plutôt qu'un SELECT par étape liée.
+        const linkedIds = Array.from(new Set(
+          (stepsRes.results as any[])
+            .map(s => s.linked_procedure_id)
+            .filter((v): v is number => Number.isInteger(v))
+        ))
+        const linkedStepsByProc = new Map<number, any[]>()
+        if (linkedIds.length > 0) {
+          const placeholders = linkedIds.map(() => '?').join(',')
+          const allSubSteps = await c.env.DB.prepare(`
+            SELECT procedure_id, step_number, title, content
+            FROM steps
+            WHERE procedure_id IN (${placeholders})
+            ORDER BY procedure_id, step_number
+          `).bind(...linkedIds).all()
+          for (const ss of (allSubSteps.results as any[])) {
+            const arr = linkedStepsByProc.get(ss.procedure_id) || []
+            arr.push({ step_number: ss.step_number, title: ss.title, content: ss.content })
+            linkedStepsByProc.set(ss.procedure_id, arr)
+          }
+        }
         const steps: any[] = []
         for (const st of (stepsRes.results as any[])) {
-          // Si l'étape pointe vers une sous-procédure, on récupère aussi les étapes de la sous-procédure
-          let linkedSteps: any[] = []
-          if (st.linked_procedure_id) {
-            const subRes = await c.env.DB.prepare(`
-              SELECT step_number, title, content
-              FROM steps WHERE procedure_id = ? ORDER BY step_number
-            `).bind(st.linked_procedure_id).all()
-            linkedSteps = subRes.results as any[]
-          }
+          const linkedSteps = st.linked_procedure_id
+            ? (linkedStepsByProc.get(st.linked_procedure_id) || [])
+            : []
           steps.push({
             id: st.id, step_number: st.step_number, title: st.title, content: st.content,
             linked_procedure_id: st.linked_procedure_id, linked_title: st.linked_title,
@@ -2954,16 +3048,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     })
   }
 
-  // Mettre à jour updated_at de la conversation + auto-titre si c'est le 1er échange
-  if ((history.results as any[]).filter(m => m.role === 'user').length === 0) {
-    const safeContent = (content || '').toString()
-    const autoTitle = safeContent.length > 0
-      ? (safeContent.length > 60 ? safeContent.substring(0, 57) + '...' : safeContent)
-      : (audioKey ? '🎙️ Message vocal' : 'Nouvelle conversation')
-    await c.env.DB.prepare('UPDATE wikot_conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(autoTitle, convId).run()
-  } else {
-    await c.env.DB.prepare('UPDATE wikot_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(convId).run()
-  }
+  // STATELESS : pas de re-titrage à chaque message. On met juste à jour updated_at
+  // (utile pour purger les conversations inactives si besoin).
+  await c.env.DB.prepare('UPDATE wikot_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(convId).run()
 
   return c.json({
     user_message_id: userMsgRes.meta.last_row_id,
@@ -3617,6 +3704,9 @@ app.post('/api/ai-import/occupancy', authMiddleware, async (c) => {
   if (!canEditClients(user)) return c.json({ error: 'Permission requise' }, 403)
   const hotelId = user.hotel_id
   if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+  // Rate-limit : max 10 imports IA / minute / user (gros consommateur tokens)
+  const rl = await checkRateLimit(c.env, 'ai_import', `u:${user.id}`, 10, 60)
+  if (!rl.ok) return rateLimitedResponse(c, 60)
 
   const apiKey = c.env.OPENROUTER_API_KEY
   if (!apiKey) return c.json({ error: 'Wikot indisponible : clé API non configurée' }, 503)
@@ -3658,6 +3748,9 @@ app.post('/api/ai-import/restaurant', authMiddleware, async (c) => {
   if (!canEditRestaurant(user)) return c.json({ error: 'Permission requise' }, 403)
   const hotelId = user.hotel_id
   if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+  // Rate-limit : max 10 imports IA / minute / user
+  const rl = await checkRateLimit(c.env, 'ai_import', `u:${user.id}`, 10, 60)
+  if (!rl.ok) return rateLimitedResponse(c, 60)
 
   const apiKey = c.env.OPENROUTER_API_KEY
   if (!apiKey) return c.json({ error: 'Wikot indisponible : clé API non configurée' }, 503)
@@ -4694,6 +4787,9 @@ const FRONT_WIKOT_TOOLS = [
 
 app.post('/api/client/wikot/conversations/:id/message', clientAuthMiddleware, async (c) => {
   const client = c.get('client')
+  // Rate-limit : max 20 messages / minute / client account
+  const rl = await checkRateLimit(c.env, 'wikot_msg_client', `c:${client.id}`, 20, 60)
+  if (!rl.ok) return rateLimitedResponse(c, 60)
   const convId = c.req.param('id')
   const body = await c.req.json() as any
   const userMessage = String(body.content || '').trim()
@@ -4732,32 +4828,43 @@ app.post('/api/client/wikot/conversations/:id/message', clientAuthMiddleware, as
     audioSizeBytes || null
   ).run()
 
-  // Construire le catalogue : toutes les hotel_info de l'hôtel (id + cat + titre + contenu)
-  const categories = await c.env.DB.prepare(`
-    SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY sort_order, name
-  `).bind(client.hotel_id).all()
-  const items = await c.env.DB.prepare(`
-    SELECT id, category_id, title, content FROM hotel_info_items
-    WHERE hotel_id = ? ORDER BY sort_order, title
-  `).bind(client.hotel_id).all()
+  // OPTIM : cache KV (TTL 5 min) du couple { itemsList, knowledgeBase }
+  // Le catalogue change rarement (modifs côté admin) ; on évite 2 SELECT D1 par message.
+  // Invalidation : on flush le cache à chaque écriture sur hotel_info_items / categories
+  // (voir helper invalidateWikotCache) → ainsi le client voit ses modifs immédiatement.
+  const cacheKey = `kb:${client.hotel_id}`
+  let knowledgeBase = ''
+  let itemsList: any[] = []
+  let cached: { itemsList: any[]; knowledgeBase: string } | null = null
+  if (c.env.WIKOT_CACHE) {
+    try { cached = await c.env.WIKOT_CACHE.get(cacheKey, 'json') } catch {}
+  }
+  if (cached && Array.isArray(cached.itemsList) && typeof cached.knowledgeBase === 'string') {
+    itemsList = cached.itemsList
+    knowledgeBase = cached.knowledgeBase
+  } else {
+    const categories = await c.env.DB.prepare(`
+      SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY sort_order, name
+    `).bind(client.hotel_id).all()
+    const items = await c.env.DB.prepare(`
+      SELECT id, category_id, title, content FROM hotel_info_items
+      WHERE hotel_id = ? ORDER BY sort_order, title
+    `).bind(client.hotel_id).all()
+    const catMap: Record<number, string> = {}
+    for (const cat of categories.results as any[]) catMap[cat.id] = cat.name
+    itemsList = items.results as any[]
+    knowledgeBase = itemsList.map((it: any) => {
+      const preview = String(it.content || '').slice(0, 220).replace(/\s+/g, ' ').trim()
+      return `[id=${it.id}] (${catMap[it.category_id] || 'Général'}) ${it.title} — ${preview}`
+    }).join('\n')
+    if (c.env.WIKOT_CACHE) {
+      try { await c.env.WIKOT_CACHE.put(cacheKey, JSON.stringify({ itemsList, knowledgeBase }), { expirationTtl: 300 }) } catch {}
+    }
+  }
 
-  const catMap: Record<number, string> = {}
-  for (const cat of categories.results as any[]) catMap[cat.id] = cat.name
-
-  // Catalogue compact pour le LLM : id, catégorie, titre, début du contenu
-  const itemsList = items.results as any[]
-  const knowledgeBase = itemsList.map((it: any) => {
-    const preview = String(it.content || '').slice(0, 220).replace(/\s+/g, ' ').trim()
-    return `[id=${it.id}] (${catMap[it.category_id] || 'Général'}) ${it.title} — ${preview}`
-  }).join('\n')
-
-  // Historique récent (8 derniers messages user/assistant)
-  const history = await c.env.DB.prepare(`
-    SELECT role, content, audio_key, audio_mime FROM wikot_messages
-    WHERE conversation_id = ? AND role IN ('user', 'assistant')
-    ORDER BY created_at DESC LIMIT 8
-  `).bind(convId).all()
-  const historyMessages = (history.results as any[]).reverse()
+  // STATELESS : pas d'historique côté Front Wikot client non plus.
+  // Chaque message est traité indépendamment → moins de tokens, UX plus simple.
+  const historyMessages: any[] = []
 
   const systemPrompt = `Tu es Front Wikot, le concierge virtuel de l'hôtel ${client.hotel_name}.
 Tu aides ${client.guest_name} (chambre ${client.room_number}).
@@ -4949,6 +5056,9 @@ app.post('/api/audio/upload', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
   if (!c.env.AUDIO_BUCKET) return c.json({ error: 'Stockage audio indisponible' }, 503)
+  // Rate-limit : max 30 uploads audio / minute / user
+  const rl = await checkRateLimit(c.env, 'audio_up', `u:${user.id}`, 30, 60)
+  if (!rl.ok) return rateLimitedResponse(c, 60)
 
   const contentType = normalizeAudioMime(c.req.header('Content-Type'))
   if (!AUDIO_ALLOWED_MIME.has(contentType)) {
@@ -4986,6 +5096,9 @@ app.post('/api/audio/upload', authMiddleware, async (c) => {
 app.post('/api/client/audio/upload', clientAuthMiddleware, async (c) => {
   const client = c.get('client')
   if (!c.env.AUDIO_BUCKET) return c.json({ error: 'Stockage audio indisponible' }, 503)
+  // Rate-limit : max 20 uploads audio / minute / client account
+  const rl = await checkRateLimit(c.env, 'audio_up_client', `c:${client.id}`, 20, 60)
+  if (!rl.ok) return rateLimitedResponse(c, 60)
 
   const contentType = normalizeAudioMime(c.req.header('Content-Type'))
   if (!AUDIO_ALLOWED_MIME.has(contentType)) {

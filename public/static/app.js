@@ -2577,35 +2577,13 @@ function userCanUseWikotMax() {
   return state.user.can_edit_procedures === 1 || state.user.can_edit_info === 1;
 }
 
-async function loadWikotConversations(mode) {
-  mode = mode || activeWikotMode();
-  const s = wikotState(mode);
-  const data = await api(`/wikot/conversations?mode=${mode}`);
-  if (data) s.conversations = data.conversations || [];
-}
+// STATELESS : on ne charge plus de liste de conversations.
+// loadWikotConversations devient un no-op (gardé pour compat avec d'éventuels appels résiduels).
+async function loadWikotConversations(mode) { /* stateless */ }
+async function loadWikotConversation() { /* stateless — pas d'historique à recharger */ }
 
-async function loadWikotConversation(convId, mode) {
-  mode = mode || activeWikotMode();
-  const s = wikotState(mode);
-  s.loading = true;
-  render();
-  const data = await api(`/wikot/conversations/${convId}`);
-  s.loading = false;
-  if (!data) return;
-  s.currentConvId = convId;
-  s.messages = (data.messages || []).map(m => ({
-    id: m.id,
-    role: m.role,
-    content: m.content,
-    // Le backend renvoie déjà references (array) et answer_card (object) désérialisés
-    references: Array.isArray(m.references) ? m.references : [],
-    answer_card: m.answer_card || null
-  }));
-  s.actions = data.actions || [];
-  render();
-  scrollWikotToBottom(mode);
-}
-
+// "Nouvelle conversation" = on crée une conv côté serveur (juste un conteneur)
+// et on remet à zéro l'état local. Plus de re-fetch de liste.
 async function newWikotConversation(mode) {
   mode = mode || activeWikotMode();
   const s = wikotState(mode);
@@ -2614,7 +2592,6 @@ async function newWikotConversation(mode) {
     body: JSON.stringify({ mode })
   });
   if (!data) return;
-  await loadWikotConversations(mode);
   s.currentConvId = data.id;
   s.messages = [];
   s.actions = [];
@@ -2625,19 +2602,20 @@ async function newWikotConversation(mode) {
   }, 100);
 }
 
-async function deleteWikotConversation(convId, ev, mode) {
-  if (ev) ev.stopPropagation();
+// Reset éphémère du chat (bouton "Effacer") — pas de DELETE serveur, juste on oublie le state local.
+function resetWikotChat(mode) {
   mode = mode || activeWikotMode();
   const s = wikotState(mode);
-  if (!confirm('Archiver cette conversation ?')) return;
-  await api(`/wikot/conversations/${convId}`, { method: 'DELETE' });
-  if (s.currentConvId === convId) {
-    s.currentConvId = null;
-    s.messages = [];
-    s.actions = [];
-  }
-  await loadWikotConversations(mode);
+  s.currentConvId = null;
+  s.messages = [];
+  s.actions = [];
   render();
+}
+
+// Compat : on garde une stub qui fait juste un reset local (au cas où un onclick résiduel l'appelle).
+async function deleteWikotConversation(convId, ev, mode) {
+  if (ev) ev.stopPropagation();
+  resetWikotChat(mode);
 }
 
 async function sendWikotMessage(mode) {
@@ -2744,7 +2722,7 @@ async function sendWikotMessage(mode) {
     applyBackWikotFormUpdates(result.form_updates);
   }
 
-  await loadWikotConversations(mode);
+  // STATELESS : pas de re-fetch de liste de conversations.
   render();
   scrollWikotToBottom(mode);
 }
@@ -3537,7 +3515,7 @@ async function openBackWikotWorkshop() {
   s.currentConvId = data.id;
   s.messages = [];
   s.actions = [];
-  await loadWikotConversations('max');
+  // STATELESS : pas de re-fetch d'historique
   state.backWikotStep = 'workshop';
   render();
   setTimeout(() => {
@@ -3756,19 +3734,13 @@ function renderWikotView(mode) {
 
   const cfg = WIKOT_MODE_CONFIG[mode];
   const s = wikotState(mode);
-  const initialFlag = mode === 'max' ? '_wikotMaxInitialLoad' : '_wikotInitialLoad';
 
-  // Lazy-load la liste des conversations à la première ouverture
-  if (!state[initialFlag]) {
-    state[initialFlag] = true;
-    loadWikotConversations(mode).then(() => render());
-  }
+  // STATELESS : pas d'historique des conversations.
+  // Chaque session est éphémère ; on initialise simplement les messages en mémoire.
+  if (!s.messages) s.messages = [];
+  if (!s.actions) s.actions = [];
 
-  const convs = s.conversations || [];
-  const currentConv = convs.find(c => c.id === s.currentConvId);
   const messages = s.messages || [];
-  const sidebarVisible = s.sidebarOpen;
-  const isLoading = s.loading;
   const isSending = s.sending;
 
   const quickButtonsHtml = cfg.quickButtons.map(btn => `
@@ -3793,65 +3765,28 @@ function renderWikotView(mode) {
 
   return `
   <div class="fade-in flex flex-col" style="height: calc(100vh - 8rem); max-height: calc(100vh - 8rem);">
-    <!-- Header Wikot/Back Wikot premium -->
+    <!-- Header Wikot premium (stateless : pas d'historique) -->
     <div class="flex items-center justify-between mb-4 shrink-0">
       <div class="flex items-center gap-3 min-w-0">
-        <button onclick="toggleWikotSidebar('${mode}')" class="lg:hidden w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: #fff; border: 1px solid var(--c-line-strong); color: var(--c-navy);" title="Mes conversations">
-          <i class="fas fa-list"></i>
-        </button>
         <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);">
           <i class="fas ${cfg.icon}"></i>
         </div>
         <div class="min-w-0">
           <h1 class="font-display text-xl sm:text-2xl font-semibold truncate" style="color: var(--c-navy);">${cfg.title}</h1>
-          <p class="text-xs truncate uppercase tracking-wider" style="color: var(--c-gold-deep);">${currentConv ? escapeHtml(currentConv.title) : cfg.subtitle}</p>
+          <p class="text-xs truncate uppercase tracking-wider" style="color: var(--c-gold-deep);">${cfg.subtitle}</p>
         </div>
       </div>
-      <button onclick="newWikotConversation('${mode}')" class="btn-premium px-4 py-2.5 rounded-lg text-sm font-semibold inline-flex items-center gap-2 shrink-0" style="background: var(--c-navy); color: #fff;">
-        <i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">Nouvelle</span>
+      <button onclick="resetWikotChat('${mode}')" class="btn-premium px-4 py-2.5 rounded-lg text-sm font-semibold inline-flex items-center gap-2 shrink-0" style="background: var(--c-navy); color: #fff;" title="Réinitialiser le chat">
+        <i class="fas fa-rotate-right text-xs"></i><span class="hidden sm:inline">Effacer</span>
       </button>
     </div>
 
-    <!-- Layout chat avec sidebar conversations -->
+    <!-- Layout chat sans sidebar (stateless) -->
     <div class="flex-1 flex gap-4 min-h-0 overflow-hidden">
-      <!-- Sidebar conversations premium -->
-      <div class="${sidebarVisible ? 'fixed inset-0 z-30 lg:bg-transparent lg:relative lg:inset-auto lg:z-auto' : 'hidden'} lg:block" style="${sidebarVisible ? 'background: rgba(10,22,40,0.45);' : ''}">
-        <div class="${sidebarVisible ? 'absolute left-0 top-0 bottom-0 w-72 lg:relative lg:w-64' : 'lg:w-64'} flex flex-col h-full lg:rounded-xl overflow-hidden" style="background: #fff; border: 1px solid var(--c-line);">
-          <div class="px-4 py-3 flex items-center justify-between" style="border-bottom: 1px solid var(--c-line); background: linear-gradient(180deg, #fff 0%, var(--c-cream) 100%);">
-            <span class="text-xs uppercase tracking-wider font-semibold" style="color: var(--c-gold-deep);">Mes conversations</span>
-            <button onclick="toggleWikotSidebar('${mode}')" class="lg:hidden w-7 h-7 rounded flex items-center justify-center" style="color: rgba(15,27,40,0.5);" title="Fermer">
-              <i class="fas fa-xmark"></i>
-            </button>
-          </div>
-          <div class="flex-1 overflow-y-auto">
-            ${convs.length === 0 ? `
-              <div class="p-5 text-center text-xs" style="color: rgba(15,27,40,0.45);">
-                Aucune conversation.<br>Cliquez sur « Nouvelle » pour démarrer.
-              </div>
-            ` : convs.map(c => {
-              const isActive = s.currentConvId === c.id;
-              return `
-              <div onclick="loadWikotConversation(${c.id}, '${mode}'); ${mode === 'max' ? 'state.wikotMaxSidebarOpen' : 'state.wikotSidebarOpen'}=false;" class="px-4 py-3 cursor-pointer transition-all" style="border-bottom: 1px solid var(--c-line); ${isActive ? 'background: rgba(201,169,97,0.10); border-left: 2px solid var(--c-gold);' : ''}" onmouseover="if(!${isActive}) this.style.background='var(--c-cream)';" onmouseout="if(!${isActive}) this.style.background='transparent';">
-                <div class="flex items-start justify-between gap-2">
-                  <div class="flex-1 min-w-0">
-                    <div class="text-sm font-medium truncate" style="color: var(--c-navy);">${escapeHtml(c.title)}</div>
-                    <div class="text-[10px] mt-0.5 uppercase tracking-wider" style="color: rgba(15,27,40,0.4);">${new Date(c.updated_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
-                  </div>
-                  <button onclick="deleteWikotConversation(${c.id}, event, '${mode}')" class="w-6 h-6 rounded flex items-center justify-center shrink-0 transition-all" style="color: rgba(15,27,40,0.3);" onmouseover="this.style.background='rgba(226,125,110,0.12)'; this.style.color='#C84C3F';" onmouseout="this.style.background='transparent'; this.style.color='rgba(15,27,40,0.3)';" title="Archiver">
-                    <i class="fas fa-trash text-[10px]"></i>
-                  </button>
-                </div>
-              </div>
-            `;}).join('')}
-          </div>
-        </div>
-      </div>
-
       <!-- Zone chat principale premium -->
       <div class="flex-1 flex flex-col rounded-xl overflow-hidden min-w-0" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 2px 4px rgba(10,22,40,0.05), 0 8px 20px rgba(10,22,40,0.04);">
         <div id="${cfg.messagesId}" class="flex-1 overflow-y-auto p-3 sm:p-5" style="background: var(--c-cream);">
-          ${messages.length === 0 && !isLoading ? emptyState : ''}
-          ${isLoading ? `<div class="flex justify-center items-center h-full text-sm" style="color: rgba(15,27,40,0.5);"><i class="fas fa-spinner fa-spin mr-2" style="color: var(--c-gold);"></i>Chargement…</div>` : ''}
+          ${messages.length === 0 ? emptyState : ''}
           ${messages.map(m => renderWikotMessage(m, mode)).join('')}
           ${isSending ? `
             <div class="flex justify-start mb-4">
@@ -3907,12 +3842,7 @@ function quickWikot(text, mode) {
 // BACK WIKOT — VUES (home / select-target / workshop)
 // ============================================
 function renderBackWikotView() {
-  // Lazy-load conversations à la première ouverture
-  if (!state._wikotMaxInitialLoad) {
-    state._wikotMaxInitialLoad = true;
-    loadWikotConversations('max').then(() => render());
-  }
-
+  // STATELESS : pas de chargement d'historique. Chaque session est éphémère.
   const step = state.backWikotStep || 'home';
   if (step === 'select-target') return renderBackWikotSelectTarget();
   if (step === 'workshop') return renderBackWikotWorkshop();
@@ -3920,12 +3850,9 @@ function renderBackWikotView() {
 }
 
 // --------------------------------------------
-// VUE 1 : HOME (4 gros boutons + historique)
+// VUE 1 : HOME (4 gros boutons — stateless, plus d'historique)
 // --------------------------------------------
 function renderBackWikotHome() {
-  const convs = state.wikotMaxConversations || [];
-  const visibleConvs = convs.filter(c => c.workflow_mode); // on n'affiche que les conversations attachées à un workflow
-
   const buttonHtml = (key) => {
     const wf = BACK_WIKOT_WORKFLOWS[key];
     const enabled = userCanRunBackWikotWorkflow(key);
@@ -3950,31 +3877,6 @@ function renderBackWikotHome() {
     `;
   };
 
-  const historyHtml = visibleConvs.length === 0 ? `
-    <div class="text-center py-6 text-xs text-navy-400">
-      <i class="fas fa-clock-rotate-left text-2xl text-navy-200 mb-2 block"></i>
-      Aucune conversation Back Wikot pour le moment.
-    </div>
-  ` : visibleConvs.map(c => {
-    const wf = BACK_WIKOT_WORKFLOWS[c.workflow_mode];
-    const wfLabel = wf ? wf.label : c.workflow_mode;
-    const wfIcon = wf ? wf.icon : 'fa-file-pen';
-    return `
-      <div class="bg-white border border-gray-200 rounded-xl p-3 hover:border-orange-300 hover:shadow-sm transition-all flex items-center gap-3">
-        <div class="w-9 h-9 rounded-lg bg-orange-50 text-orange-600 flex items-center justify-center shrink-0">
-          <i class="fas ${wfIcon}"></i>
-        </div>
-        <div class="flex-1 min-w-0 cursor-pointer" onclick="resumeBackWikotConversation(${c.id})">
-          <div class="text-sm font-semibold text-navy-800 truncate">${escapeHtml(c.title || 'Sans titre')}</div>
-          <div class="text-[11px] text-navy-500 truncate">${escapeHtml(wfLabel)} · ${new Date(c.updated_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
-        </div>
-        <button onclick="deleteWikotConversation(${c.id}, event, 'max')" class="w-8 h-8 rounded-lg hover:bg-red-50 text-gray-300 hover:text-red-500 flex items-center justify-center shrink-0" title="Archiver">
-          <i class="fas fa-trash text-xs"></i>
-        </button>
-      </div>
-    `;
-  }).join('');
-
   return `
     <div class="fade-in space-y-6">
       <div class="flex items-center gap-3">
@@ -3992,18 +3894,6 @@ function renderBackWikotHome() {
         ${buttonHtml('update_procedure')}
         ${buttonHtml('create_info')}
         ${buttonHtml('update_info')}
-      </div>
-
-      <div class="bg-gray-50 border border-gray-200 rounded-2xl p-4">
-        <div class="flex items-center justify-between mb-3">
-          <h2 class="text-sm font-semibold text-navy-800 flex items-center gap-2">
-            <i class="fas fa-clock-rotate-left text-orange-500"></i>Mes dernières sessions
-          </h2>
-          <span class="text-[11px] text-navy-400">${visibleConvs.length} conversation${visibleConvs.length > 1 ? 's' : ''}</span>
-        </div>
-        <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
-          ${historyHtml}
-        </div>
       </div>
     </div>
   `;
@@ -4218,9 +4108,7 @@ function renderBackWikotWorkshop() {
   const isSending = s.sending;
   const isSaving = state.backWikotSaving;
 
-  // Sidebar historique : on filtre par workflow_mode pour rester dans le contexte
-  const allConvs = state.wikotMaxConversations || [];
-  const sameWorkflowConvs = allConvs.filter(c => c.workflow_mode === wfMode);
+  // STATELESS : plus de sidebar historique des conversations.
 
   const formHtml = f.kind === 'procedure' ? renderBackWikotProcedureForm(f) : renderBackWikotInfoForm(f);
 
@@ -4270,22 +4158,10 @@ function renderBackWikotWorkshop() {
               <i class="fas fa-pen-ruler"></i>
             </div>
             <span class="text-sm font-semibold text-navy-800">Back Wikot</span>
-            <button onclick="toggleBackWikotHistorySidebar()" class="ml-auto w-7 h-7 rounded hover:bg-orange-50 text-navy-500" title="Historique">
-              <i class="fas fa-clock-rotate-left text-xs"></i>
+            <button onclick="resetWikotChat('max')" class="ml-auto w-7 h-7 rounded hover:bg-orange-50 text-navy-500" title="Effacer le chat">
+              <i class="fas fa-rotate-right text-xs"></i>
             </button>
           </div>
-          ${state.backWikotHistoryOpen ? `
-            <div class="border-b border-orange-100 bg-white max-h-48 overflow-y-auto">
-              ${sameWorkflowConvs.length === 0 ? `
-                <div class="text-center py-3 text-[11px] text-navy-400 italic">Aucune autre session pour ce workflow.</div>
-              ` : sameWorkflowConvs.map(c => `
-                <div onclick="resumeBackWikotConversation(${c.id}); state.backWikotHistoryOpen=false;" class="px-3 py-2 border-b border-gray-50 hover:bg-orange-50 cursor-pointer ${s.currentConvId === c.id ? 'bg-orange-50 border-l-2 border-l-orange-400' : ''}">
-                  <div class="text-xs font-medium text-navy-800 truncate">${escapeHtml(c.title || 'Sans titre')}</div>
-                  <div class="text-[10px] text-navy-400">${new Date(c.updated_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
-                </div>
-              `).join('')}
-            </div>
-          ` : ''}
           <div id="wikot-max-messages" class="flex-1 overflow-y-auto p-3">
             ${messages.length === 0 && !isLoading ? `
               <div class="text-center py-6">
@@ -4336,10 +4212,8 @@ function renderBackWikotWorkshop() {
   `;
 }
 
-function toggleBackWikotHistorySidebar() {
-  state.backWikotHistoryOpen = !state.backWikotHistoryOpen;
-  render();
-}
+// STATELESS : plus d'historique. Stub conservé au cas où un onclick résiduel l'appelle.
+function toggleBackWikotHistorySidebar() { /* no-op */ }
 
 // Form procédure : titre, déclencheur, description, catégorie, étapes
 // Helper : retourne les classes CSS pour le highlight d'un champ récemment modifié par l'IA
@@ -7767,19 +7641,12 @@ function renderClientHome() {
 async function ensureClientWikotLoaded() {
   if (state._clientWikotLoaded) return;
   state._clientWikotLoaded = true;
-  const data = await clientApi('/client/wikot/conversations');
-  if (data) state.clientWikotConversations = data.conversations || [];
-  // Si aucune conversation, en créer une fraîche
-  if (state.clientWikotConversations.length === 0) {
-    const created = await clientApi('/client/wikot/conversations', { method: 'POST' });
-    if (created) {
-      state.clientWikotCurrentConvId = created.id;
-      state.clientWikotMessages = [];
-    }
-  } else {
-    state.clientWikotCurrentConvId = state.clientWikotConversations[0].id;
-    const conv = await clientApi(`/client/wikot/conversations/${state.clientWikotCurrentConvId}`);
-    if (conv) state.clientWikotMessages = conv.messages || [];
+  // STATELESS : pas d'historique. On crée une conversation fraîche à chaque session.
+  const created = await clientApi('/client/wikot/conversations', { method: 'POST' });
+  if (created) {
+    state.clientWikotCurrentConvId = created.id;
+    state.clientWikotMessages = [];
+    state.clientWikotConversations = [];
   }
   render();
 }

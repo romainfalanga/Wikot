@@ -16,5 +16,11 @@
       "binding": "AUDIO_BUCKET",
       "bucket_name": "wikot-audio"
     }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "WIKOT_CACHE",
+      "id": "8bee31e777aa4d9184099b28727cd235"
+    }
   ]
 }

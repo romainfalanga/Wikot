@@ -507,19 +507,32 @@ app.get('/api/hotels', authMiddleware, async (c) => {
 app.post('/api/hotels', authMiddleware, async (c) => {
   const user = c.get('user')
   if (user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
-  const { name, address, logo_url } = await c.req.json()
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
-  const result = await c.env.DB.prepare('INSERT INTO hotels (name, slug, address, logo_url) VALUES (?, ?, ?, ?)').bind(name, slug, address || null, logo_url || null).run()
-  return c.json({ id: result.meta.last_row_id, name, slug })
+  const { name, address, logo_url } = await c.req.json() as { name?: string; address?: string; logo_url?: string }
+  // VALIDATION stricte
+  const nameTrim = typeof name === 'string' ? name.trim() : ''
+  if (!nameTrim) return c.json({ error: 'Le nom est obligatoire' }, 400)
+  if (nameTrim.length > 150) return c.json({ error: 'Nom trop long (max 150)' }, 400)
+  const slug = nameTrim.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+  if (!slug) return c.json({ error: 'Nom invalide' }, 400)
+  try {
+    const result = await c.env.DB.prepare('INSERT INTO hotels (name, slug, address, logo_url) VALUES (?, ?, ?, ?)').bind(nameTrim, slug, address || null, logo_url || null).run()
+    return c.json({ id: result.meta.last_row_id, name: nameTrim, slug })
+  } catch (e: any) {
+    return c.json({ error: 'Un hôtel avec ce nom existe déjà' }, 400)
+  }
 })
 
 app.put('/api/hotels/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
-  const { name, address } = await c.req.json()
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
-  await c.env.DB.prepare('UPDATE hotels SET name = ?, slug = ?, address = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(name, slug, address || null, id).run()
+  const { name, address } = await c.req.json() as { name?: string; address?: string }
+  const nameTrim = typeof name === 'string' ? name.trim() : ''
+  if (!nameTrim) return c.json({ error: 'Le nom est obligatoire' }, 400)
+  if (nameTrim.length > 150) return c.json({ error: 'Nom trop long (max 150)' }, 400)
+  const slug = nameTrim.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
+  if (!slug) return c.json({ error: 'Nom invalide' }, 400)
+  await c.env.DB.prepare('UPDATE hotels SET name = ?, slug = ?, address = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(nameTrim, slug, address || null, id).run()
   return c.json({ success: true })
 })
 
@@ -632,9 +645,22 @@ app.post('/api/users', authMiddleware, async (c) => {
   }
   if (!email || !password || !name) return c.json({ error: 'Champs manquants' }, 400)
   if (password.length < 8) return c.json({ error: 'Le mot de passe doit faire au moins 8 caractères' }, 400)
+  // VALIDATION stricte : format email + longueurs
+  const emailTrim = String(email).trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrim)) return c.json({ error: 'Email invalide' }, 400)
+  const nameTrim = String(name).trim()
+  if (!nameTrim || nameTrim.length > 100) return c.json({ error: 'Nom invalide (1-100 caractères)' }, 400)
+  if (password.length > 200) return c.json({ error: 'Mot de passe trop long' }, 400)
+  // Rôle whitelist
+  const allowedRoles = ['employee', 'admin', 'super_admin']
+  const finalRole = allowedRoles.includes(role || '') ? role : 'employee'
 
   const targetHotel = currentUser.role === 'admin' ? currentUser.hotel_id : hotel_id
-  if (currentUser.role === 'admin' && role === 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  if (currentUser.role === 'admin' && finalRole === 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  // Un super_admin doit avoir un hotel_id rattaché ou explicite (pour l'admin c'est forcé)
+  if (currentUser.role === 'super_admin' && !targetHotel && finalRole !== 'super_admin') {
+    return c.json({ error: 'hotel_id requis pour ce rôle' }, 400)
+  }
 
   // Hash PBKDF2 dès la création — pas de stockage plaintext
   // password_hash = '' (sentinelle) car la colonne est NOT NULL au schéma
@@ -643,8 +669,8 @@ app.post('/api/users', authMiddleware, async (c) => {
     const result = await c.env.DB.prepare(`
       INSERT INTO users (hotel_id, email, password_hash, password_hash_v2, password_salt, password_algo, name, role)
       VALUES (?, ?, '', ?, ?, ?, ?, ?)
-    `).bind(targetHotel, email, hash, salt, algo, name, role || 'employee').run()
-    return c.json({ id: result.meta.last_row_id, email, name, role })
+    `).bind(targetHotel, emailTrim, hash, salt, algo, nameTrim, finalRole).run()
+    return c.json({ id: result.meta.last_row_id, email: emailTrim, name: nameTrim, role: finalRole })
   } catch (e: any) {
     return c.json({ error: 'Cet email est déjà utilisé' }, 400)
   }
@@ -823,6 +849,13 @@ app.post('/api/procedures', authMiddleware, async (c) => {
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const body = await c.req.json()
   const hotelId = user.role === 'super_admin' ? (body.hotel_id || user.hotel_id) : user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+  // VALIDATION stricte : title et trigger_event requis (NOT NULL en DB)
+  const title = typeof body.title === 'string' ? body.title.trim() : ''
+  const triggerEvent = typeof body.trigger_event === 'string' ? body.trigger_event.trim() : ''
+  if (!title) return c.json({ error: 'Le titre est obligatoire' }, 400)
+  if (!triggerEvent) return c.json({ error: "L'événement déclencheur est obligatoire" }, 400)
+  if (title.length > 200) return c.json({ error: 'Titre trop long (max 200 caractères)' }, 400)
 
   // Note : trigger_icon (anciennement supprimé de l'UI) a default 'fa-bolt' en DB
   // Note : status (anciennement supprimé de l'UI) → on force 'active' (toutes les procédures sont actives)

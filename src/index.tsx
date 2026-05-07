@@ -522,26 +522,40 @@ app.delete('/api/hotels/:id', authMiddleware, async (c) => {
   // Vérifier que l'hôtel existe
   const hotel = await c.env.DB.prepare('SELECT id, name FROM hotels WHERE id = ?').bind(id).first() as any
   if (!hotel) return c.json({ error: 'Hôtel non trouvé' }, 404)
-  // Supprimer dans l'ordre : les données liées d'abord
-  const users = await c.env.DB.prepare('SELECT id FROM users WHERE hotel_id = ?').bind(id).all()
-  for (const u of users.results as any[]) {
-    await c.env.DB.prepare('DELETE FROM changelog_reads WHERE user_id = ?').bind(u.id).run()
-  }
-  await c.env.DB.prepare('DELETE FROM changelog WHERE hotel_id = ?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM suggestions WHERE hotel_id = ?').bind(id).run()
-  const procedures = await c.env.DB.prepare('SELECT id FROM procedures WHERE hotel_id = ?').bind(id).all()
-  for (const p of procedures.results as any[]) {
-    const conditions = await c.env.DB.prepare('SELECT id FROM conditions WHERE procedure_id = ?').bind(p.id).all()
-    for (const cond of conditions.results as any[]) {
-      await c.env.DB.prepare('DELETE FROM condition_steps WHERE condition_id = ?').bind(cond.id).run()
-    }
-    await c.env.DB.prepare('DELETE FROM conditions WHERE procedure_id = ?').bind(p.id).run()
-    await c.env.DB.prepare('DELETE FROM steps WHERE procedure_id = ?').bind(p.id).run()
-  }
-  await c.env.DB.prepare('DELETE FROM procedures WHERE hotel_id = ?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM categories WHERE hotel_id = ?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM users WHERE hotel_id = ?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM hotels WHERE id = ?').bind(id).run()
+  // Suppression hôtel — version optimisée avec batch.
+  // CASCADE automatique sur : steps, conditions, condition_steps (procedures FK),
+  // chat_messages, chat_channels (chat_groups FK), wikot_messages, wikot_pending_actions
+  // (wikot_conversations FK), client_sessions (client_accounts FK),
+  // hotel_info_categories/items, restaurant_week_templates (hotels FK).
+  // Reste à supprimer manuellement les tables dont la FK hotels n'a pas CASCADE.
+  // Tout est exécuté en 1 transaction batch (atomicité + perf).
+  await c.env.DB.batch([
+    // changelog_reads doit être nettoyé via les users de cet hôtel
+    c.env.DB.prepare(`DELETE FROM changelog_reads WHERE user_id IN (SELECT id FROM users WHERE hotel_id = ?)`).bind(id),
+    c.env.DB.prepare('DELETE FROM changelog WHERE hotel_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM suggestions WHERE hotel_id = ?').bind(id),
+    // procedures supprime CASCADE steps, conditions, condition_steps
+    c.env.DB.prepare('DELETE FROM procedures WHERE hotel_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM categories WHERE hotel_id = ?').bind(id),
+    // chat: groups CASCADE channels qui CASCADE messages
+    c.env.DB.prepare(`DELETE FROM chat_reads WHERE user_id IN (SELECT id FROM users WHERE hotel_id = ?)`).bind(id),
+    c.env.DB.prepare('DELETE FROM chat_groups WHERE hotel_id = ?').bind(id),
+    // wikot: conversations CASCADE messages + pending_actions
+    c.env.DB.prepare('DELETE FROM wikot_conversations WHERE hotel_id = ?').bind(id),
+    // client: client_accounts CASCADE sessions
+    c.env.DB.prepare('DELETE FROM client_accounts WHERE hotel_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM client_sessions WHERE hotel_id = ?').bind(id),
+    // restaurant
+    c.env.DB.prepare('DELETE FROM restaurant_reservations WHERE hotel_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM restaurant_exceptions WHERE hotel_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM restaurant_schedule WHERE hotel_id = ?').bind(id),
+    c.env.DB.prepare('DELETE FROM rooms WHERE hotel_id = ?').bind(id),
+    // user_sessions liées aux users de cet hôtel
+    c.env.DB.prepare(`DELETE FROM user_sessions WHERE user_id IN (SELECT id FROM users WHERE hotel_id = ?)`).bind(id),
+    c.env.DB.prepare('DELETE FROM users WHERE hotel_id = ?').bind(id),
+    // enfin l'hôtel lui-même
+    c.env.DB.prepare('DELETE FROM hotels WHERE id = ?').bind(id),
+  ])
   return c.json({ success: true })
 })
 
@@ -706,6 +720,13 @@ app.get('/api/procedures', authMiddleware, async (c) => {
   const search = c.req.query('search')
   const includeSubprocedures = c.req.query('include_subprocedures') === '1' // explicite, pour le détail
 
+  // Pagination optionnelle (rétro-compatible : sans param = comportement actuel)
+  // ?limit=50&offset=0 pour scaler quand un hôtel aura 500+ procédures
+  const limitRaw = parseInt(c.req.query('limit') || '0')
+  const offsetRaw = parseInt(c.req.query('offset') || '0')
+  const limit = limitRaw > 0 && limitRaw <= 500 ? limitRaw : 0
+  const offset = offsetRaw > 0 ? offsetRaw : 0
+
   // FILTRAGE DES SOUS-PROCÉDURES :
   // On utilise désormais le flag explicite procedures.is_subprocedure (cf. migration 0010).
   // - is_subprocedure=0 → procédure principale (visible dans la liste)
@@ -730,6 +751,11 @@ app.get('/api/procedures', authMiddleware, async (c) => {
   if (search) { query += ' AND (p.title LIKE ? OR p.trigger_event LIKE ? OR p.description LIKE ?)'; params.push(`%${search}%`, `%${search}%`, `%${search}%`) }
 
   query += ' ORDER BY c.sort_order, p.title'
+
+  if (limit > 0) {
+    query += ' LIMIT ? OFFSET ?'
+    params.push(limit, offset)
+  }
 
   const stmt = c.env.DB.prepare(query)
   const procedures = await stmt.bind(...params).all()
@@ -882,11 +908,8 @@ app.put('/api/procedures/:id', authMiddleware, async (c) => {
 
   // Re-create conditions
   if (body.conditions) {
-    // Delete old condition steps first
-    const oldConditions = await c.env.DB.prepare('SELECT id FROM conditions WHERE procedure_id = ?').bind(id).all()
-    for (const cond of oldConditions.results as any[]) {
-      await c.env.DB.prepare('DELETE FROM condition_steps WHERE condition_id = ?').bind(cond.id).run()
-    }
+    // CASCADE: condition_steps sont supprimés automatiquement quand on supprime conditions
+    // (FK condition_id ON DELETE CASCADE). 1 requête au lieu de 1+N.
     await c.env.DB.prepare('DELETE FROM conditions WHERE procedure_id = ?').bind(id).run()
 
     for (const cond of body.conditions) {
@@ -954,14 +977,10 @@ app.delete('/api/procedures/:id', authMiddleware, async (c) => {
   if (owned instanceof Response) return owned
 
   const proc = await c.env.DB.prepare('SELECT hotel_id, title FROM procedures WHERE id = ?').bind(id).first() as any
-  
-  // Delete condition steps first
-  const conditions = await c.env.DB.prepare('SELECT id FROM conditions WHERE procedure_id = ?').bind(id).all()
-  for (const cond of conditions.results as any[]) {
-    await c.env.DB.prepare('DELETE FROM condition_steps WHERE condition_id = ?').bind(cond.id).run()
-  }
-  await c.env.DB.prepare('DELETE FROM conditions WHERE procedure_id = ?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM steps WHERE procedure_id = ?').bind(id).run()
+
+  // CASCADE delete: steps, conditions, condition_steps sont supprimés automatiquement
+  // grâce à ON DELETE CASCADE sur procedure_id (FK définie dans le schéma initial).
+  // 1 requête au lieu de 4-N, gain perf majeur.
   await c.env.DB.prepare('DELETE FROM procedures WHERE id = ?').bind(id).run()
 
   if (proc) {
@@ -2300,12 +2319,24 @@ app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
   const conv = await c.env.DB.prepare('SELECT * FROM wikot_conversations WHERE id = ? AND user_id = ?').bind(id, user.id).first() as any
   if (!conv) return c.json({ error: 'Conversation introuvable' }, 404)
 
+  // Pagination : on récupère les N derniers messages (défaut 100, max 500).
+  // Les conversations Wikot peuvent grossir ; on protège la perf.
+  const limitRaw = parseInt(c.req.query('limit') || '100')
+  const limit = Math.min(Math.max(limitRaw, 1), 500)
+
+  // Sous-requête : on prend les N derniers ORDER BY created_at DESC,
+  // puis on les ré-ordonne ASC pour l'affichage.
   const messages = await c.env.DB.prepare(`
     SELECT id, role, content, references_json, created_at
-    FROM wikot_messages
-    WHERE conversation_id = ? AND role IN ('user', 'assistant')
-    ORDER BY created_at, id
-  `).bind(id).all()
+    FROM (
+      SELECT id, role, content, references_json, created_at
+      FROM wikot_messages
+      WHERE conversation_id = ? AND role IN ('user', 'assistant')
+      ORDER BY created_at DESC, id DESC
+      LIMIT ?
+    )
+    ORDER BY created_at ASC, id ASC
+  `).bind(id, limit).all()
 
   // Décoder references_json : si c'est { answer_card: ... } → on expose answer_card,
   // sinon c'est un tableau de références sourcing classiques (mode max).

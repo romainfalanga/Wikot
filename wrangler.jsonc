@@ -22,5 +22,8 @@
       "binding": "WIKOT_CACHE",
       "id": "8bee31e777aa4d9184099b28727cd235"
     }
-  ]
+  ],
+  "triggers": {
+    "crons": ["0 3 * * *"]
+  }
 }

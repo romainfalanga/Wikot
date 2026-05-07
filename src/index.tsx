@@ -5602,4 +5602,47 @@ app.get('*', (c) => {
 </html>`)
 })
 
-export default app
+// ============================================
+// CRON R2 CLEANUP — supprime les audios orphelins > 24h
+// ============================================
+// Mode STATELESS : aucun audio n'est référencé en DB après l'envoi du message
+// → tous les audios deviennent orphelins après usage. On les purge à 24h.
+// La clé contient le timestamp : {scope}/{hotelId}/{ownerId}/{ts}-{rnd}.audio
+async function scheduledCleanup(env: Bindings) {
+  if (!env.AUDIO_BUCKET) return
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000 // 24h
+  let cursor: string | undefined = undefined
+  let deleted = 0
+  let scanned = 0
+  // Limite de sécurité : 50 batches max (50 * 1000 = 50k objets/exécution)
+  for (let i = 0; i < 50; i++) {
+    const list: R2Objects = await env.AUDIO_BUCKET.list({ limit: 1000, cursor })
+    scanned += list.objects.length
+    const toDelete: string[] = []
+    for (const obj of list.objects) {
+      // Parse le timestamp depuis la clé : .../{ts}-{rnd}.audio
+      const m = obj.key.match(/\/(\d{13})-[a-z0-9]+\.audio$/)
+      if (m) {
+        const ts = parseInt(m[1], 10)
+        if (ts < cutoff) toDelete.push(obj.key)
+      } else if (obj.uploaded && obj.uploaded.getTime() < cutoff) {
+        // Fallback : ancien format → on se fie à uploaded
+        toDelete.push(obj.key)
+      }
+    }
+    if (toDelete.length > 0) {
+      await env.AUDIO_BUCKET.delete(toDelete)
+      deleted += toDelete.length
+    }
+    if (!list.truncated) break
+    cursor = list.cursor
+  }
+  console.log(`[cron] R2 cleanup: scanned=${scanned}, deleted=${deleted}`)
+}
+
+export default {
+  fetch: app.fetch,
+  scheduled: async (_event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) => {
+    ctx.waitUntil(scheduledCleanup(env))
+  }
+}

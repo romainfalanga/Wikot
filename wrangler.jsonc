@@ -10,5 +10,11 @@
       "database_name": "wikot-production",
       "database_id": "be6ae379-24fd-4e06-9987-e3e2cb480289"
     }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "AUDIO_BUCKET",
+      "bucket_name": "wikot-audio"
+    }
   ]
 }

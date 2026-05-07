@@ -4,6 +4,7 @@ import { cors } from 'hono/cors'
 type Bindings = {
   DB: D1Database
   OPENROUTER_API_KEY?: string
+  AUDIO_BUCKET?: R2Bucket
 }
 
 type WikotUser = {
@@ -18,6 +19,8 @@ type WikotUser = {
   can_edit_clients: number
   can_edit_restaurant: number
   can_edit_settings: number
+  can_create_tasks: number
+  can_assign_tasks: number
 }
 
 type ClientUser = {
@@ -116,6 +119,7 @@ const authMiddleware = async (c: any, next: any) => {
            u.id, u.hotel_id, u.email, u.name, u.role,
            u.can_edit_procedures, u.can_edit_info, u.can_manage_chat,
            u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings,
+           u.can_create_tasks, u.can_assign_tasks,
            u.is_active
     FROM user_sessions s
     JOIN users u ON s.user_id = u.id
@@ -141,6 +145,7 @@ const authMiddleware = async (c: any, next: any) => {
     can_edit_procedures: row.can_edit_procedures, can_edit_info: row.can_edit_info,
     can_manage_chat: row.can_manage_chat, can_edit_clients: row.can_edit_clients,
     can_edit_restaurant: row.can_edit_restaurant, can_edit_settings: row.can_edit_settings,
+    can_create_tasks: row.can_create_tasks, can_assign_tasks: row.can_assign_tasks,
     is_active: row.is_active
   })
   await next()
@@ -202,6 +207,7 @@ app.post('/api/auth/login', async (c) => {
     SELECT id, hotel_id, email, name, role,
            can_edit_procedures, can_edit_info, can_manage_chat,
            can_edit_clients, can_edit_restaurant, can_edit_settings,
+           can_create_tasks, can_assign_tasks,
            password_hash, password_hash_v2, password_salt, password_algo
     FROM users WHERE email = ? AND is_active = 1
   `).bind(email).first() as any
@@ -251,7 +257,8 @@ app.post('/api/auth/login', async (c) => {
       id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role,
       can_edit_procedures: user.can_edit_procedures, can_edit_info: user.can_edit_info,
       can_manage_chat: user.can_manage_chat, can_edit_clients: user.can_edit_clients,
-      can_edit_restaurant: user.can_edit_restaurant, can_edit_settings: user.can_edit_settings
+      can_edit_restaurant: user.can_edit_restaurant, can_edit_settings: user.can_edit_settings,
+      can_create_tasks: user.can_create_tasks, can_assign_tasks: user.can_assign_tasks
     }
   })
 })
@@ -566,9 +573,9 @@ app.get('/api/users', authMiddleware, async (c) => {
   const user = c.get('user')
   let users
   if (user.role === 'super_admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name').all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name').all()
   } else if (user.role === 'admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name').bind(user.hotel_id).all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name').bind(user.hotel_id).all()
   } else {
     return c.json({ error: 'Non autorisé' }, 403)
   }
@@ -588,6 +595,8 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
     can_edit_clients?: boolean | number
     can_edit_restaurant?: boolean | number
     can_edit_settings?: boolean | number
+    can_create_tasks?: boolean | number
+    can_assign_tasks?: boolean | number
   }
 
   // Check the target user belongs to same hotel (for admin)
@@ -605,6 +614,8 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
   if (body.can_edit_clients !== undefined)    { fields.push('can_edit_clients = ?');    values.push(body.can_edit_clients ? 1 : 0) }
   if (body.can_edit_restaurant !== undefined) { fields.push('can_edit_restaurant = ?'); values.push(body.can_edit_restaurant ? 1 : 0) }
   if (body.can_edit_settings !== undefined)   { fields.push('can_edit_settings = ?');   values.push(body.can_edit_settings ? 1 : 0) }
+  if (body.can_create_tasks !== undefined)    { fields.push('can_create_tasks = ?');    values.push(body.can_create_tasks ? 1 : 0) }
+  if (body.can_assign_tasks !== undefined)    { fields.push('can_assign_tasks = ?');    values.push(body.can_assign_tasks ? 1 : 0) }
   if (fields.length === 0) return c.json({ error: 'Aucune permission à mettre à jour' }, 400)
 
   values.push(id)
@@ -1599,6 +1610,9 @@ app.delete('/api/hotel-info/items/:id', authMiddleware, async (c) => {
 // ============================================
 
 const WIKOT_MODEL = 'google/gemini-2.0-flash-001'
+// Modèle multimodal (vision + audio) — utilisé dès qu'il y a une image/audio dans la requête.
+// Coût input ~$0.30/M tok (vs $0.10 pour 2.0 Flash) → on bascule auto seulement quand nécessaire.
+const WIKOT_MODEL_MULTIMODAL = 'google/gemini-2.5-flash'
 const WIKOT_API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
 // Helper : récupère les permissions effectives d'un utilisateur
@@ -2213,8 +2227,27 @@ async function executeReadTool(db: D1Database, hotelId: number, toolName: string
   }
 }
 
-// Appelle OpenRouter
+// Détecte si un message OpenAI contient au moins une partie multimodale
+// (image_url ou input_audio). Si oui, on doit basculer sur un modèle multimodal.
+function messagesHaveMultimodalContent(messages: any[]): boolean {
+  for (const m of messages) {
+    if (Array.isArray(m?.content)) {
+      for (const part of m.content) {
+        if (part && typeof part === 'object' && (part.type === 'image_url' || part.type === 'input_audio' || part.type === 'audio_url')) {
+          return true
+        }
+      }
+    }
+  }
+  return false
+}
+
+// Appelle OpenRouter — choisit automatiquement le modèle :
+// - texte pur : Gemini 2.0 Flash (rapide, $0.10/M)
+// - dès qu'il y a une image OU un audio : Gemini 2.5 Flash (multimodal, $0.30/M)
 async function callOpenRouter(apiKey: string, messages: any[], tools: any[]): Promise<any> {
+  const useMultimodal = messagesHaveMultimodalContent(messages)
+  const model = useMultimodal ? WIKOT_MODEL_MULTIMODAL : WIKOT_MODEL
   const res = await fetch(WIKOT_API_URL, {
     method: 'POST',
     headers: {
@@ -2224,7 +2257,7 @@ async function callOpenRouter(apiKey: string, messages: any[], tools: any[]): Pr
       'X-Title': 'Wikot'
     },
     body: JSON.stringify({
-      model: WIKOT_MODEL,
+      model,
       messages,
       tools: tools.length > 0 ? tools : undefined,
       tool_choice: tools.length > 0 ? 'auto' : undefined,
@@ -2234,6 +2267,51 @@ async function callOpenRouter(apiKey: string, messages: any[], tools: any[]): Pr
   if (!res.ok) {
     const text = await res.text()
     throw new Error(`OpenRouter ${res.status}: ${text}`)
+  }
+  return await res.json()
+}
+
+// Appel direct multimodal (sans tools) — utilisé pour l'extraction structurée
+// d'informations depuis un document image/PDF (Code Wikot, Restaurant import).
+// Force le modèle 2.5 Flash et réclame une réponse JSON pure.
+async function callGeminiVisionExtraction(
+  apiKey: string,
+  systemPrompt: string,
+  userText: string,
+  fileBase64: string,
+  fileMime: string
+): Promise<any> {
+  // Pour un PDF ou une image, on utilise le format OpenAI image_url avec data URL.
+  // OpenRouter route ça vers Gemini qui sait lire image/* et application/pdf.
+  const dataUrl = `data:${fileMime};base64,${fileBase64}`
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: userText },
+        { type: 'image_url', image_url: { url: dataUrl } }
+      ]
+    }
+  ]
+  const res = await fetch(WIKOT_API_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://wikot.fr',
+      'X-Title': 'Wikot Vision'
+    },
+    body: JSON.stringify({
+      model: WIKOT_MODEL_MULTIMODAL,
+      messages,
+      temperature: 0.1,
+      response_format: { type: 'json_object' }
+    })
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`OpenRouter vision ${res.status}: ${text}`)
   }
   return await res.json()
 }
@@ -3358,8 +3436,7 @@ app.post('/api/occupancy/room/:room_id', authMiddleware, async (c) => {
 })
 
 // Données pour les fiches plastifiées (1 par chambre active occupée)
-// Renvoie chambre + code hôtel + nom client courant. Le HTML imprimable
-// est généré côté front (template print).
+// LEGACY — conservé pour rétrocompatibilité, mais le bouton frontend a été retiré.
 app.get('/api/occupancy/print-cards', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
@@ -3376,6 +3453,649 @@ app.get('/api/occupancy/print-cards', authMiddleware, async (c) => {
   `).bind(hotelId).all()
   return c.json({ hotel, rooms: rooms.results })
 })
+
+// ============================================
+// CODE HÔTEL — Mise à jour du code de connexion client
+// ============================================
+app.put('/api/occupancy/hotel-code', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const body = await c.req.json() as { code?: string }
+  const rawCode = (body.code || '').trim().toUpperCase()
+  if (rawCode.length < 3 || rawCode.length > 32) {
+    return c.json({ error: 'Code invalide (3 à 32 caractères)' }, 400)
+  }
+  // Caractères autorisés : alphanumérique + tirets/underscores
+  if (!/^[A-Z0-9_-]+$/.test(rawCode)) {
+    return c.json({ error: 'Caractères autorisés : A-Z, 0-9, tirets et underscores' }, 400)
+  }
+  // Unicité globale
+  const existing = await c.env.DB.prepare(
+    'SELECT id FROM hotels WHERE client_login_code = ? AND id != ?'
+  ).bind(rawCode, hotelId).first()
+  if (existing) return c.json({ error: 'Ce code est déjà utilisé par un autre hôtel' }, 409)
+
+  await c.env.DB.prepare(
+    'UPDATE hotels SET client_login_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+  ).bind(rawCode, hotelId).run()
+
+  return c.json({ success: true, code: rawCode })
+})
+
+// ============================================
+// IMPORT IA — Documents clients (Code Wikot) & réservations (Restaurant)
+// Reçoit un fichier (image/PDF) en multipart, l'envoie à Gemini 2.5 Flash
+// avec un prompt structuré, renvoie un JSON de lignes pré-remplies.
+// L'utilisateur doit ensuite valider manuellement avant application.
+// ============================================
+
+const OCCUPANCY_EXTRACTION_PROMPT = `Tu es un expert en extraction de données depuis des documents hôteliers.
+Tu analyses un document (image, PDF, capture d'écran) listant les clients présents dans un hôtel.
+
+OBJECTIF : Extraire pour chaque client occupant une chambre :
+- room_number : numéro de chambre (string, garder le format exact, ex : "101", "12B")
+- guest_name : nom complet du client (string, en respectant la casse "Prénom NOM" ou "M. DUPONT")
+- checkout_date : date de départ au format ISO YYYY-MM-DD (string)
+
+ADAPTABILITÉ :
+- Le document peut être une capture d'écran d'un PMS (Mews, Opera, Misterbooking, ASTERIO, Thais, etc.)
+- Il peut être au format tableau, liste, planning Gantt, fichier Excel exporté
+- Les colonnes peuvent avoir des noms variés : "Chambre"/"Room"/"N°", "Nom"/"Client"/"Guest"/"Hôte", "Départ"/"Check-out"/"Out"/"Sortie"
+- Les dates peuvent être au format DD/MM/YYYY, MM/DD/YYYY, "5 mai 2026", "05-05-26"
+- Tu dois CHERCHER chirurgicalement ces 3 informations même si la mise en page est inhabituelle
+
+RÈGLES :
+- Si une date est ambiguë (DD/MM vs MM/DD), considère le format européen DD/MM par défaut
+- Si l'année n'est pas indiquée, utilise l'année courante
+- Ignore les chambres marquées "libre", "vide", "vacant", "available", "OOO" (out of order)
+- Conserve les majuscules/minuscules du nom telles qu'écrites dans le document
+- Si tu ne trouves aucun client : renvoie une liste vide
+
+FORMAT DE RÉPONSE — JSON STRICT uniquement, sans texte autour :
+{
+  "rows": [
+    { "room_number": "101", "guest_name": "Jean DUPONT", "checkout_date": "2026-05-09" },
+    ...
+  ]
+}`
+
+const RESTAURANT_EXTRACTION_PROMPT = `Tu es un expert en extraction de données depuis des documents de réservations restaurant/petit-déjeuner d'un hôtel.
+
+OBJECTIF : Extraire chaque réservation avec :
+- date : date de la réservation au format ISO YYYY-MM-DD
+- meal_type : "breakfast" (petit-déj), "lunch" (déjeuner) ou "dinner" (dîner)
+- time : heure au format HH:MM (24h)
+- guest_name : nom du client (string)
+- guests_count : nombre de personnes (entier, défaut 1)
+- room_number : numéro de chambre si mentionné (string, sinon "")
+- notes : note libre si présente (allergies, préférences, etc., sinon "")
+
+ADAPTABILITÉ :
+- Le document peut être un export PMS, un tableau Word/Excel, un planning manuscrit photographié
+- Les libellés peuvent varier : "Petit-déj"/"Breakfast"/"PDJ", "Déj"/"Lunch"/"Midi", "Dîner"/"Dinner"/"Soir"
+- Les heures peuvent être 8h, 8:00, 08:00, "à 20h30"
+- Tu dois t'adapter à toutes les mises en page possibles
+
+RÈGLES :
+- Format européen DD/MM par défaut pour les dates ambiguës
+- Si le repas est seulement implicite (heure < 11h = breakfast, 11h-15h = lunch, >18h = dinner)
+- Si guests_count absent, défaut = 1
+- Ignore les réservations annulées (rayées, "annulé", "cancelled")
+- Si aucune réservation : liste vide
+
+FORMAT DE RÉPONSE — JSON STRICT uniquement :
+{
+  "rows": [
+    { "date": "2026-05-08", "meal_type": "breakfast", "time": "08:00", "guest_name": "Jean DUPONT", "guests_count": 2, "room_number": "101", "notes": "" },
+    ...
+  ]
+}`
+
+// Helper : convertir un ArrayBuffer en base64 (compatible Workers, sans Buffer)
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize)
+    binary += String.fromCharCode.apply(null, Array.from(chunk) as any)
+  }
+  return btoa(binary)
+}
+
+// POST /api/ai-import/occupancy — extraction clients (Code Wikot)
+app.post('/api/ai-import/occupancy', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Permission requise' }, 403)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const apiKey = c.env.OPENROUTER_API_KEY
+  if (!apiKey) return c.json({ error: 'Wikot indisponible : clé API non configurée' }, 503)
+
+  const formData = await c.req.formData()
+  const file = formData.get('file') as File | null
+  if (!file) return c.json({ error: 'Fichier manquant' }, 400)
+  if (file.size > 10 * 1024 * 1024) return c.json({ error: 'Fichier trop lourd (max 10 Mo)' }, 413)
+
+  const mime = file.type || 'application/octet-stream'
+  const buf = await file.arrayBuffer()
+  const b64 = arrayBufferToBase64(buf)
+
+  let parsed: any
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const userText = `Aujourd'hui : ${todayStr}. Extrais tous les clients en chambre de ce document.`
+    const resp = await callGeminiVisionExtraction(apiKey, OCCUPANCY_EXTRACTION_PROMPT, userText, b64, mime)
+    const content = resp?.choices?.[0]?.message?.content || ''
+    parsed = typeof content === 'string' ? JSON.parse(content) : content
+  } catch (e: any) {
+    return c.json({ error: 'Échec de l\'analyse : ' + (e?.message || 'erreur inconnue') }, 500)
+  }
+
+  const rows = Array.isArray(parsed?.rows) ? parsed.rows : []
+
+  // On persiste l'import brut pour audit / replay
+  const ins = await c.env.DB.prepare(
+    `INSERT INTO ai_imports (hotel_id, import_type, source_filename, source_mime, raw_extraction, rows_count, created_by)
+     VALUES (?, 'occupancy', ?, ?, ?, ?, ?)`
+  ).bind(hotelId, file.name || null, mime, JSON.stringify(parsed), rows.length, user.id).run()
+
+  return c.json({ import_id: ins.meta.last_row_id, rows })
+})
+
+// POST /api/ai-import/restaurant — extraction réservations (Restaurant)
+app.post('/api/ai-import/restaurant', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Permission requise' }, 403)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const apiKey = c.env.OPENROUTER_API_KEY
+  if (!apiKey) return c.json({ error: 'Wikot indisponible : clé API non configurée' }, 503)
+
+  const formData = await c.req.formData()
+  const file = formData.get('file') as File | null
+  if (!file) return c.json({ error: 'Fichier manquant' }, 400)
+  if (file.size > 10 * 1024 * 1024) return c.json({ error: 'Fichier trop lourd (max 10 Mo)' }, 413)
+
+  const mime = file.type || 'application/octet-stream'
+  const buf = await file.arrayBuffer()
+  const b64 = arrayBufferToBase64(buf)
+
+  let parsed: any
+  try {
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const userText = `Aujourd'hui : ${todayStr}. Extrais toutes les réservations de ce document.`
+    const resp = await callGeminiVisionExtraction(apiKey, RESTAURANT_EXTRACTION_PROMPT, userText, b64, mime)
+    const content = resp?.choices?.[0]?.message?.content || ''
+    parsed = typeof content === 'string' ? JSON.parse(content) : content
+  } catch (e: any) {
+    return c.json({ error: 'Échec de l\'analyse : ' + (e?.message || 'erreur inconnue') }, 500)
+  }
+
+  const rows = Array.isArray(parsed?.rows) ? parsed.rows : []
+  const ins = await c.env.DB.prepare(
+    `INSERT INTO ai_imports (hotel_id, import_type, source_filename, source_mime, raw_extraction, rows_count, created_by)
+     VALUES (?, 'restaurant', ?, ?, ?, ?, ?)`
+  ).bind(hotelId, file.name || null, mime, JSON.stringify(parsed), rows.length, user.id).run()
+
+  return c.json({ import_id: ins.meta.last_row_id, rows })
+})
+
+// POST /api/ai-import/occupancy/apply — applique les lignes validées par l'utilisateur
+app.post('/api/ai-import/occupancy/apply', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditClients(user)) return c.json({ error: 'Permission requise' }, 403)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const body = await c.req.json() as { import_id?: number; rows: Array<{ room_number: string; guest_name: string; checkout_date?: string }> }
+  if (!Array.isArray(body.rows)) return c.json({ error: 'Format invalide' }, 400)
+
+  const todayStr = new Date().toISOString().slice(0, 10)
+  let applied = 0
+  const errors: any[] = []
+
+  for (const r of body.rows) {
+    const roomNum = String(r.room_number || '').trim()
+    const guest = String(r.guest_name || '').trim()
+    if (!roomNum || !guest) { errors.push({ row: r, error: 'Champs incomplets' }); continue }
+
+    // Trouve la chambre par numéro dans cet hôtel
+    const room = await c.env.DB.prepare(
+      'SELECT id FROM rooms WHERE hotel_id = ? AND room_number = ? AND is_active = 1'
+    ).bind(hotelId, roomNum).first() as any
+    if (!room) { errors.push({ row: r, error: `Chambre ${roomNum} introuvable` }); continue }
+
+    const normalized = normalizeName(guest)
+    const checkoutDate = r.checkout_date || todayStr
+
+    await c.env.DB.prepare(`
+      UPDATE client_accounts
+      SET guest_name = ?, guest_name_normalized = ?, checkout_date = ?, is_active = 1,
+          session_valid_until = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE hotel_id = ? AND room_id = ?
+    `).bind(guest, normalized, checkoutDate, checkoutDate + ' 12:00:00', hotelId, room.id).run()
+
+    await c.env.DB.prepare(
+      'DELETE FROM client_sessions WHERE client_account_id IN (SELECT id FROM client_accounts WHERE hotel_id = ? AND room_id = ?)'
+    ).bind(hotelId, room.id).run()
+
+    await c.env.DB.prepare(`
+      INSERT INTO room_occupancy (hotel_id, room_id, occupancy_date, guest_name, guest_name_normalized, checkout_date, created_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).bind(hotelId, room.id, todayStr, guest, normalized, checkoutDate, user.id).run()
+
+    applied++
+  }
+
+  if (body.import_id) {
+    await c.env.DB.prepare(
+      'UPDATE ai_imports SET applied_at = CURRENT_TIMESTAMP, applied_by = ? WHERE id = ? AND hotel_id = ?'
+    ).bind(user.id, body.import_id, hotelId).run()
+  }
+
+  return c.json({ success: true, applied, errors })
+})
+
+// POST /api/ai-import/restaurant/apply — applique les réservations validées
+app.post('/api/ai-import/restaurant/apply', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Permission requise' }, 403)
+  const hotelId = user.hotel_id
+  if (!hotelId) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const body = await c.req.json() as { import_id?: number; rows: Array<{ date: string; meal_type: string; time?: string; guest_name: string; guests_count?: number; room_number?: string; notes?: string }> }
+  if (!Array.isArray(body.rows)) return c.json({ error: 'Format invalide' }, 400)
+
+  let applied = 0
+  const errors: any[] = []
+
+  for (const r of body.rows) {
+    if (!r.date || !r.guest_name) { errors.push({ row: r, error: 'Champs incomplets' }); continue }
+    const meal = ['breakfast', 'lunch', 'dinner'].includes(r.meal_type) ? r.meal_type : 'breakfast'
+
+    // Tente de retrouver la chambre par numéro pour lier la réservation
+    let roomId: number | null = null
+    if (r.room_number) {
+      const room = await c.env.DB.prepare(
+        'SELECT id FROM rooms WHERE hotel_id = ? AND room_number = ? AND is_active = 1'
+      ).bind(hotelId, String(r.room_number).trim()).first() as any
+      if (room) roomId = room.id
+    }
+
+    // Annoter les notes avec un tag d'origine pour pouvoir distinguer les imports IA
+    const noteWithTag = (r.notes || '').toString().trim()
+    const finalNotes = noteWithTag ? `${noteWithTag} [import IA]` : '[import IA]'
+
+    try {
+      await c.env.DB.prepare(`
+        INSERT INTO restaurant_reservations
+          (hotel_id, room_id, reservation_date, meal_type, time_slot, guest_count, guest_name, notes, status, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)
+      `).bind(
+        hotelId,
+        roomId,
+        r.date,
+        meal,
+        r.time || null,
+        r.guests_count || 1,
+        String(r.guest_name).trim(),
+        finalNotes,
+        user.id
+      ).run()
+      applied++
+    } catch (e: any) {
+      errors.push({ row: r, error: e?.message || 'Insert failed' })
+    }
+  }
+
+  if (body.import_id) {
+    await c.env.DB.prepare(
+      'UPDATE ai_imports SET applied_at = CURRENT_TIMESTAMP, applied_by = ? WHERE id = ? AND hotel_id = ?'
+    ).bind(user.id, body.import_id, hotelId).run()
+  }
+
+  return c.json({ success: true, applied, errors })
+})
+
+// ============================================
+// MODULE TASKS — "À faire" (templates récurrents + instances datées + assignments)
+// Permissions : can_create_tasks (créer/éditer), can_assign_tasks (attribuer)
+// Voir + valider sa tâche = par défaut pour tous (rôle admin/employee)
+// ============================================
+
+function canCreateTasks(user: WikotUser): boolean {
+  return user.role === 'admin' || user.can_create_tasks === 1
+}
+function canAssignTasks(user: WikotUser): boolean {
+  return user.role === 'admin' || user.can_assign_tasks === 1
+}
+
+// Helpers récurrence (bitmask 7 bits : lun=bit0..dim=bit6)
+function dateMatchesRecurrence(dateStr: string, recurrenceDays: number, activeFrom?: string | null, activeTo?: string | null): boolean {
+  if (activeFrom && dateStr < activeFrom) return false
+  if (activeTo && dateStr > activeTo) return false
+  const d = new Date(dateStr + 'T12:00:00Z')
+  // getUTCDay : 0=dimanche..6=samedi → on remappe pour lun=0..dim=6
+  const dow = d.getUTCDay()
+  const mondayBased = dow === 0 ? 6 : dow - 1
+  return ((recurrenceDays >> mondayBased) & 1) === 1
+}
+
+// GET /api/tasks?date=YYYY-MM-DD — toutes les tâches du jour pour l'hôtel
+// Renvoie aussi les templates manquants à générer (matérialisation lazy).
+app.get('/api/tasks', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  const dateStr = c.req.query('date') || new Date().toISOString().slice(0, 10)
+
+  // 1) Matérialisation lazy : pour chaque template actif dont la récurrence matche la date,
+  //    on crée une instance si elle n'existe pas déjà (idempotent grâce à l'unique index).
+  const templates = await c.env.DB.prepare(
+    `SELECT id, title, description, recurrence_days, active_from, active_to, suggested_time, category
+     FROM task_templates WHERE hotel_id = ? AND is_active = 1`
+  ).bind(user.hotel_id).all()
+
+  for (const t of (templates.results || []) as any[]) {
+    if (!dateMatchesRecurrence(dateStr, t.recurrence_days, t.active_from, t.active_to)) continue
+    try {
+      await c.env.DB.prepare(
+        `INSERT INTO task_instances (hotel_id, template_id, task_date, title, description, suggested_time, category, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(user.hotel_id, t.id, dateStr, t.title, t.description, t.suggested_time, t.category, t.id).run()
+    } catch (_) {
+      // Conflict (déjà créée) → on ignore, c'est l'effet attendu de l'unique index
+    }
+  }
+
+  // 2) Récupère toutes les instances du jour avec leurs assignments
+  const instances = await c.env.DB.prepare(
+    `SELECT ti.id, ti.template_id, ti.task_date, ti.title, ti.description, ti.suggested_time, ti.category, ti.status, ti.is_unassigned_visible, ti.created_at
+     FROM task_instances ti
+     WHERE ti.hotel_id = ? AND ti.task_date = ?
+     ORDER BY COALESCE(ti.suggested_time,'99:99'), ti.id`
+  ).bind(user.hotel_id, dateStr).all()
+
+  const instanceIds = (instances.results || []).map((i: any) => i.id)
+  let assignments: any[] = []
+  if (instanceIds.length > 0) {
+    const placeholders = instanceIds.map(() => '?').join(',')
+    const r = await c.env.DB.prepare(
+      `SELECT ta.id, ta.task_instance_id, ta.user_id, ta.status, ta.completed_at, ta.notes, ta.assigned_by, u.name as user_name
+       FROM task_assignments ta
+       JOIN users u ON u.id = ta.user_id
+       WHERE ta.task_instance_id IN (${placeholders})`
+    ).bind(...instanceIds).all()
+    assignments = r.results || []
+  }
+
+  // Liste des employés du staff pour l'attribution (admin + employees)
+  const staff = await c.env.DB.prepare(
+    `SELECT id, name, role FROM users WHERE hotel_id = ? AND role IN ('admin','employee') ORDER BY name`
+  ).bind(user.hotel_id).all()
+
+  return c.json({
+    date: dateStr,
+    instances: instances.results,
+    assignments,
+    staff: staff.results,
+    me: { id: user.id, can_create_tasks: canCreateTasks(user) ? 1 : 0, can_assign_tasks: canAssignTasks(user) ? 1 : 0 }
+  })
+})
+
+// GET /api/tasks/templates — liste des modèles récurrents
+app.get('/api/tasks/templates', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  const r = await c.env.DB.prepare(
+    `SELECT id, title, description, recurrence_days, active_from, active_to, suggested_time, category, is_active, created_at
+     FROM task_templates WHERE hotel_id = ? ORDER BY is_active DESC, title`
+  ).bind(user.hotel_id).all()
+  return c.json({ templates: r.results })
+})
+
+// POST /api/tasks/templates — créer un modèle récurrent
+app.post('/api/tasks/templates', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  const body = await c.req.json() as any
+  const title = String(body.title || '').trim()
+  if (!title) return c.json({ error: 'Titre requis' }, 400)
+  const recurrence = Number.isFinite(body.recurrence_days) ? body.recurrence_days : 127
+  if (recurrence < 0 || recurrence > 127) return c.json({ error: 'Récurrence invalide' }, 400)
+  const r = await c.env.DB.prepare(
+    `INSERT INTO task_templates (hotel_id, title, description, recurrence_days, active_from, active_to, suggested_time, category, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    user.hotel_id, title,
+    body.description || null, recurrence,
+    body.active_from || null, body.active_to || null,
+    body.suggested_time || null, body.category || null,
+    user.id
+  ).run()
+  return c.json({ id: r.meta.last_row_id, success: true })
+})
+
+// PUT /api/tasks/templates/:id — modifier un modèle
+app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
+  const id = parseInt(c.req.param('id'))
+  const tpl = await c.env.DB.prepare('SELECT id, hotel_id FROM task_templates WHERE id = ?').bind(id).first() as any
+  if (!tpl || tpl.hotel_id !== user.hotel_id) return c.json({ error: 'Template introuvable' }, 404)
+  const body = await c.req.json() as any
+  await c.env.DB.prepare(
+    `UPDATE task_templates SET
+       title = COALESCE(?, title),
+       description = ?,
+       recurrence_days = COALESCE(?, recurrence_days),
+       active_from = ?,
+       active_to = ?,
+       suggested_time = ?,
+       category = ?,
+       is_active = COALESCE(?, is_active),
+       updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  ).bind(
+    body.title || null,
+    body.description ?? null,
+    Number.isFinite(body.recurrence_days) ? body.recurrence_days : null,
+    body.active_from ?? null,
+    body.active_to ?? null,
+    body.suggested_time ?? null,
+    body.category ?? null,
+    typeof body.is_active === 'number' ? body.is_active : null,
+    id
+  ).run()
+  return c.json({ success: true })
+})
+
+// DELETE /api/tasks/templates/:id — supprimer un modèle (les instances futures non générées disparaissent)
+app.delete('/api/tasks/templates/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
+  const id = parseInt(c.req.param('id'))
+  const tpl = await c.env.DB.prepare('SELECT id, hotel_id FROM task_templates WHERE id = ?').bind(id).first() as any
+  if (!tpl || tpl.hotel_id !== user.hotel_id) return c.json({ error: 'Template introuvable' }, 404)
+  await c.env.DB.prepare('DELETE FROM task_templates WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// POST /api/tasks/instances — créer une tâche ponctuelle pour une date donnée
+app.post('/api/tasks/instances', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  const body = await c.req.json() as any
+  const title = String(body.title || '').trim()
+  if (!title) return c.json({ error: 'Titre requis' }, 400)
+  const date = String(body.task_date || new Date().toISOString().slice(0, 10))
+  const r = await c.env.DB.prepare(
+    `INSERT INTO task_instances (hotel_id, template_id, task_date, title, description, suggested_time, category, created_by)
+     VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`
+  ).bind(user.hotel_id, date, title, body.description || null, body.suggested_time || null, body.category || null, user.id).run()
+  return c.json({ id: r.meta.last_row_id, success: true })
+})
+
+// PUT /api/tasks/instances/:id — modifier une instance (titre, description, heure, etc.)
+app.put('/api/tasks/instances/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
+  const id = parseInt(c.req.param('id'))
+  const inst = await c.env.DB.prepare('SELECT id, hotel_id FROM task_instances WHERE id = ?').bind(id).first() as any
+  if (!inst || inst.hotel_id !== user.hotel_id) return c.json({ error: 'Tâche introuvable' }, 404)
+  const body = await c.req.json() as any
+  await c.env.DB.prepare(
+    `UPDATE task_instances SET
+       title = COALESCE(?, title),
+       description = ?,
+       suggested_time = ?,
+       category = ?,
+       task_date = COALESCE(?, task_date),
+       status = COALESCE(?, status),
+       updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  ).bind(
+    body.title || null,
+    body.description ?? null,
+    body.suggested_time ?? null,
+    body.category ?? null,
+    body.task_date || null,
+    body.status || null,
+    id
+  ).run()
+  return c.json({ success: true })
+})
+
+// DELETE /api/tasks/instances/:id
+app.delete('/api/tasks/instances/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
+  const id = parseInt(c.req.param('id'))
+  const inst = await c.env.DB.prepare('SELECT id, hotel_id FROM task_instances WHERE id = ?').bind(id).first() as any
+  if (!inst || inst.hotel_id !== user.hotel_id) return c.json({ error: 'Tâche introuvable' }, 404)
+  await c.env.DB.prepare('DELETE FROM task_instances WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// POST /api/tasks/instances/:id/assign — assigner ou désassigner des users
+// Body : { user_ids: [1, 2, 3] } — remplace l'ensemble des assignments
+app.post('/api/tasks/instances/:id/assign', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canAssignTasks(user)) return c.json({ error: 'Permission requise' }, 403)
+  const id = parseInt(c.req.param('id'))
+  const inst = await c.env.DB.prepare('SELECT id, hotel_id FROM task_instances WHERE id = ?').bind(id).first() as any
+  if (!inst || inst.hotel_id !== user.hotel_id) return c.json({ error: 'Tâche introuvable' }, 404)
+  const body = await c.req.json() as { user_ids: number[] }
+  const userIds = Array.isArray(body.user_ids) ? body.user_ids.filter(n => Number.isInteger(n)) : []
+
+  // Vérifie que tous les users appartiennent à l'hôtel
+  if (userIds.length > 0) {
+    const placeholders = userIds.map(() => '?').join(',')
+    const r = await c.env.DB.prepare(
+      `SELECT id FROM users WHERE hotel_id = ? AND id IN (${placeholders})`
+    ).bind(user.hotel_id, ...userIds).all()
+    const valid = new Set((r.results || []).map((u: any) => u.id))
+    for (const uid of userIds) {
+      if (!valid.has(uid)) return c.json({ error: `User ${uid} invalide` }, 400)
+    }
+  }
+
+  // Replace : delete tous puis re-insert (préserver les statuses pending sur ré-assignation
+  // n'a pas de sens car on remplace l'ensemble — l'utilisateur le veut explicitement)
+  // On préserve toutefois les "done" pour ne pas perdre l'historique.
+  const existing = await c.env.DB.prepare(
+    'SELECT user_id, status, completed_at, notes FROM task_assignments WHERE task_instance_id = ?'
+  ).bind(id).all()
+  const doneMap = new Map<number, any>()
+  for (const a of (existing.results || []) as any[]) {
+    if (a.status === 'done') doneMap.set(a.user_id, a)
+  }
+
+  await c.env.DB.prepare('DELETE FROM task_assignments WHERE task_instance_id = ?').bind(id).run()
+  for (const uid of userIds) {
+    const previous = doneMap.get(uid)
+    if (previous) {
+      await c.env.DB.prepare(
+        `INSERT INTO task_assignments (task_instance_id, user_id, status, completed_at, notes, assigned_by)
+         VALUES (?, ?, 'done', ?, ?, ?)`
+      ).bind(id, uid, previous.completed_at, previous.notes, user.id).run()
+    } else {
+      await c.env.DB.prepare(
+        `INSERT INTO task_assignments (task_instance_id, user_id, status, assigned_by)
+         VALUES (?, ?, 'pending', ?)`
+      ).bind(id, uid, user.id).run()
+    }
+  }
+
+  // Mise à jour du statut global de l'instance
+  await refreshInstanceStatus(c.env.DB, id)
+
+  return c.json({ success: true })
+})
+
+// POST /api/tasks/instances/:id/complete — l'utilisateur courant valide SA tâche
+// Body : { notes?: string } — n'importe quel user assigné peut valider la sienne.
+app.post('/api/tasks/instances/:id/complete', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = parseInt(c.req.param('id'))
+  const inst = await c.env.DB.prepare('SELECT id, hotel_id FROM task_instances WHERE id = ?').bind(id).first() as any
+  if (!inst || inst.hotel_id !== user.hotel_id) return c.json({ error: 'Tâche introuvable' }, 404)
+  const body = await c.req.json().catch(() => ({})) as any
+  const notes = (body.notes || '').toString().trim() || null
+
+  // Si l'utilisateur n'est pas encore assigné, on l'auto-assigne (cas tâche libre prise au vol)
+  const existing = await c.env.DB.prepare(
+    'SELECT id, status FROM task_assignments WHERE task_instance_id = ? AND user_id = ?'
+  ).bind(id, user.id).first() as any
+
+  if (!existing) {
+    await c.env.DB.prepare(
+      `INSERT INTO task_assignments (task_instance_id, user_id, status, completed_at, notes, assigned_by)
+       VALUES (?, ?, 'done', CURRENT_TIMESTAMP, ?, ?)`
+    ).bind(id, user.id, notes, user.id).run()
+  } else {
+    await c.env.DB.prepare(
+      `UPDATE task_assignments SET status = 'done', completed_at = CURRENT_TIMESTAMP, notes = ? WHERE id = ?`
+    ).bind(notes, existing.id).run()
+  }
+
+  await refreshInstanceStatus(c.env.DB, id)
+  return c.json({ success: true })
+})
+
+// POST /api/tasks/instances/:id/uncomplete — annule la validation de l'utilisateur courant
+app.post('/api/tasks/instances/:id/uncomplete', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const id = parseInt(c.req.param('id'))
+  const inst = await c.env.DB.prepare('SELECT id, hotel_id FROM task_instances WHERE id = ?').bind(id).first() as any
+  if (!inst || inst.hotel_id !== user.hotel_id) return c.json({ error: 'Tâche introuvable' }, 404)
+  await c.env.DB.prepare(
+    `UPDATE task_assignments SET status = 'pending', completed_at = NULL WHERE task_instance_id = ? AND user_id = ?`
+  ).bind(id, user.id).run()
+  await refreshInstanceStatus(c.env.DB, id)
+  return c.json({ success: true })
+})
+
+// Helper : recalcule le statut global de l'instance basé sur les assignments
+async function refreshInstanceStatus(db: D1Database, instanceId: number) {
+  const r = await db.prepare(
+    `SELECT
+       COUNT(*) as total,
+       SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) as done_count
+     FROM task_assignments WHERE task_instance_id = ?`
+  ).bind(instanceId).first() as any
+  let status = 'pending'
+  if (r && r.total > 0 && r.done_count === r.total) status = 'done'
+  else if (r && r.done_count > 0) status = 'in_progress'
+  await db.prepare('UPDATE task_instances SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(status, instanceId).run()
+}
 
 // ============================================
 // RESTAURANT ROUTES — planning + exceptions + réservations

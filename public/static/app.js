@@ -167,6 +167,16 @@ function userCanEditRestaurant() {
   return state.user.role === 'admin' || Number(state.user.can_edit_restaurant) === 1;
 }
 
+function userCanCreateTasks() {
+  if (!state.user) return false;
+  return state.user.role === 'admin' || Number(state.user.can_create_tasks) === 1;
+}
+
+function userCanAssignTasks() {
+  if (!state.user) return false;
+  return state.user.role === 'admin' || Number(state.user.can_assign_tasks) === 1;
+}
+
 // Note: la permission can_edit_settings est conservée en DB pour compat,
 // mais la page Paramètres hôtel n'existe plus côté UI.
 
@@ -198,7 +208,8 @@ async function login(email, password) {
     state.user = data.user;
     state.currentHotelId = data.user.hotel_id;
     // Super admin → dashboard infrastructure ; admin et employé → procédures (dashboard admin retiré)
-    state.currentView = data.user.role === 'super_admin' ? 'dashboard' : 'procedures';
+    // Super admin → dashboard infra ; admin & employés → Wikot (chatbot) en page d'accueil
+    state.currentView = data.user.role === 'super_admin' ? 'dashboard' : 'wikot';
     localStorage.setItem('wikot_token', data.token);
     localStorage.setItem('wikot_user', JSON.stringify(data.user));
     showToast(`Bienvenue ${data.user.name} !`, 'success');
@@ -757,8 +768,9 @@ function renderMainLayout() {
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       { id: 'rooms', icon: 'fa-door-closed', label: 'Chambres' },
-      { id: 'occupancy', icon: 'fa-id-card', label: 'Présents du jour' },
+      { id: 'occupancy', icon: 'fa-id-card', label: 'Code Wikot' },
       { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' },
+      { id: 'tasks', icon: 'fa-list-check', label: 'À faire' },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
@@ -772,11 +784,13 @@ function renderMainLayout() {
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       ...(userCanEditClients() ? [
         { id: 'rooms', icon: 'fa-door-closed', label: 'Chambres' },
-        { id: 'occupancy', icon: 'fa-id-card', label: 'Présents du jour' }
+        { id: 'occupancy', icon: 'fa-id-card', label: 'Code Wikot' }
       ] : []),
       ...(userCanEditRestaurant() ? [
         { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' }
       ] : []),
+      // À faire : visible pour TOUS les employés (les permissions limitent juste les actions)
+      { id: 'tasks', icon: 'fa-list-check', label: 'À faire' },
     ];
   }
 
@@ -795,8 +809,9 @@ function renderMainLayout() {
     hotels: 'Hôtels',
     templates: 'Modèles',
     rooms: 'Chambres',
-    occupancy: 'Présents du jour',
+    occupancy: 'Code Wikot',
     restaurant: 'Restaurant',
+    tasks: 'À faire',
   };
   const currentTitle = viewTitles[state.currentView] || 'Wikot';
 
@@ -1006,6 +1021,7 @@ function renderCurrentView() {
     case 'rooms': return renderRoomsView();
     case 'occupancy': return renderOccupancyView();
     case 'restaurant': return renderRestaurantView();
+    case 'tasks': return renderTasksView();
     case 'hotel-settings': state.currentView = isSuperAdmin ? 'dashboard' : 'wikot'; return renderCurrentView();
     default:
       return (state.user && state.user.role === 'super_admin') ? renderDashboard() : renderProceduresList();
@@ -1506,8 +1522,10 @@ async function togglePermission(userId, permKey, newValue) {
     can_edit_procedures: 'modifier les procédures',
     can_edit_info: 'modifier les informations',
     can_manage_chat: 'gérer les salons et conversations',
-    can_edit_clients: 'gérer les chambres et présents du jour',
-    can_edit_restaurant: 'gérer le restaurant'
+    can_edit_clients: 'gérer les chambres et le Code Wikot',
+    can_edit_restaurant: 'gérer le restaurant',
+    can_create_tasks: 'créer et modifier des tâches',
+    can_assign_tasks: 'attribuer des tâches aux employés'
   };
   // Optimistic update : on met à jour le state local immédiatement
   const list = state.users || [];
@@ -1533,11 +1551,13 @@ async function togglePermission(userId, permKey, newValue) {
 // Couvre : procédures, infos, chat, chambres, restaurant, paramètres
 function permissionCheckboxes(u, compact = false) {
   const perms = [
-    { key: 'can_edit_procedures',  label: 'Procédures',         icon: 'fa-sitemap' },
-    { key: 'can_edit_info',        label: 'Informations',       icon: 'fa-circle-info' },
-    { key: 'can_manage_chat',      label: 'Salons / chat',      icon: 'fa-comments' },
-    { key: 'can_edit_clients',     label: 'Chambres & présents',icon: 'fa-door-closed' },
-    { key: 'can_edit_restaurant',  label: 'Restaurant',         icon: 'fa-utensils' }
+    { key: 'can_edit_procedures',  label: 'Procédures',          icon: 'fa-sitemap' },
+    { key: 'can_edit_info',        label: 'Informations',        icon: 'fa-circle-info' },
+    { key: 'can_manage_chat',      label: 'Salons / chat',       icon: 'fa-comments' },
+    { key: 'can_edit_clients',     label: 'Chambres & Code Wikot', icon: 'fa-door-closed' },
+    { key: 'can_edit_restaurant',  label: 'Restaurant',          icon: 'fa-utensils' },
+    { key: 'can_create_tasks',     label: 'Créer des tâches',    icon: 'fa-list-check' },
+    { key: 'can_assign_tasks',     label: 'Attribuer des tâches',icon: 'fa-user-tag' }
   ];
   return `
     <div class="flex flex-col gap-1.5">
@@ -3025,7 +3045,7 @@ const WIKOT_MODE_CONFIG = {
     inputId: 'wikot-input',
     messagesId: 'wikot-messages',
     emptyTitle: 'Bonjour, je suis Wikot',
-    emptyText: "Je connais toutes les procédures et informations de l'hôtel. Pose-moi une question, je cherche, je résume et je te donne le bouton pour aller voir le détail.",
+    emptyText: "Je connais toutes les procédures et informations de l'hôtel. Pose-moi une question, je cherche dans la base et je te donne le bouton pour aller voir le détail.",
     quickButtons: [
       { label: 'Comment faire un check-in ?', q: 'Comment je fais un check-in ?' },
       { label: 'Horaires de la piscine ?', q: 'Quelles sont les horaires de la piscine ?' },
@@ -5969,7 +5989,7 @@ async function seedLecquesRooms() {
 }
 
 // ============================================
-// VIEW: OCCUPANCY — Présents du jour (saisie 12h00 + impression fiches)
+// VIEW: OCCUPANCY — Code Wikot (saisie 12h00 + import IA doc clients)
 // ============================================
 async function loadOccupancy() {
   const data = await api('/occupancy/today');
@@ -6011,12 +6031,13 @@ function renderOccupancyView() {
     <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6">
       <div>
         <p class="section-eyebrow mb-2">Saisie quotidienne</p>
-        <h2 class="section-title-premium text-2xl sm:text-3xl">Présents du jour</h2>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Code Wikot</h2>
         <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.55);">${occupied}/${rooms.length} chambre(s) occupée(s) · à valider à 12h00</p>
-        <p class="text-xs mt-1" style="color: rgba(15,27,40,0.45);">Date : <span class="font-mono">${today}</span> · Code hôtel : <span class="font-mono font-bold" style="color: var(--c-gold-deep);">${hotel.client_login_code || '— (à définir)'}</span></p>
+        <p class="text-xs mt-1" style="color: rgba(15,27,40,0.45);">Date : <span class="font-mono">${today}</span> · Code hôtel : <button onclick="showHotelCodeEditModal()" class="font-mono font-bold underline-offset-2 hover:underline transition-colors" style="color: var(--c-gold-deep); cursor: pointer;" title="Modifier le code hôtel">${hotel.client_login_code || '— (à définir)'}</button></p>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button onclick="printOccupancyCards()" class="px-4 py-2 rounded-lg text-sm font-semibold transition-all" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);"><i class="fas fa-print mr-2"></i>Imprimer les fiches</button>
+        <button onclick="showOccupancyImportModal()" class="px-4 py-2 rounded-lg text-sm font-semibold transition-all" style="background: linear-gradient(135deg, var(--c-gold) 0%, var(--c-gold-deep) 100%); color: #fff; border: 1px solid var(--c-gold-deep);"><i class="fas fa-wand-magic-sparkles mr-2"></i>Importer un document</button>
+        <button onclick="showHotelCodeEditModal()" class="px-4 py-2 rounded-lg text-sm font-semibold transition-all" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);"><i class="fas fa-key mr-2"></i>Modifier le code hôtel</button>
         <button onclick="saveOccupancyDay()" class="btn-premium px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;"><i class="fas fa-save text-xs"></i>Enregistrer la journée</button>
       </div>
     </div>
@@ -6092,75 +6113,754 @@ async function clearRoomOccupancy(roomId) {
   }
 }
 
-async function printOccupancyCards() {
-  const data = await api('/occupancy/print-cards');
-  if (!data) return;
-  const hotel = data.hotel;
-  const rooms = (data.rooms || []).filter(r => r.is_active === 1 && r.guest_name);
-  if (rooms.length === 0) { showToast('Aucune chambre occupée à imprimer', 'warning'); return; }
+// (Anciennement : printOccupancyCards — fonction supprimée car le bouton « Imprimer les fiches »
+// a été retiré. Les fiches papier ne sont plus utilisées : les clients reçoivent leur code via
+// le code Wikot affiché côté admin et leur nom suffit comme mot de passe du jour.)
 
-  // Génère un HTML imprimable avec une page A4 contenant 4 fiches A6
-  const html = `
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-<meta charset="UTF-8">
-<title>Fiches Wikot — ${escapeHtml(hotel.name)}</title>
-<style>
-  @page { size: A4; margin: 8mm; }
-  body { font-family: 'Helvetica Neue', Arial, sans-serif; margin: 0; background: white; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
-  .card { border: 2px dashed #d97706; border-radius: 6mm; padding: 8mm 6mm; page-break-inside: avoid; min-height: 130mm; display: flex; flex-direction: column; justify-content: space-between; }
-  .header { text-align: center; }
-  .hotel-name { font-size: 14pt; font-weight: bold; color: #1e3a5f; }
-  .subtitle { font-size: 9pt; color: #888; margin-top: 2mm; }
-  .step { margin-top: 5mm; padding: 4mm; background: #fef3e2; border-left: 4px solid #d97706; border-radius: 2mm; }
-  .step-num { display: inline-block; width: 8mm; height: 8mm; background: #d97706; color: white; border-radius: 50%; text-align: center; line-height: 8mm; font-weight: bold; font-size: 11pt; margin-right: 3mm; }
-  .step-label { font-size: 9pt; color: #555; }
-  .step-value { font-family: 'Courier New', monospace; font-size: 18pt; font-weight: bold; color: #1e3a5f; letter-spacing: 1px; margin-top: 1mm; word-break: break-word; }
-  .footer { text-align: center; font-size: 8pt; color: #999; margin-top: 4mm; }
-  .room-badge { display: inline-block; background: #1e3a5f; color: white; padding: 2mm 4mm; border-radius: 3mm; font-size: 11pt; font-weight: bold; }
-  @media print { .no-print { display: none; } }
-</style>
-</head>
-<body>
-<div class="no-print" style="padding: 10mm; background: #f0f0f0; text-align: center;">
-  <button onclick="window.print()" style="padding: 8px 20px; background: #d97706; color: white; border: none; border-radius: 4px; font-size: 14px; cursor: pointer;">🖨️ Imprimer ces ${rooms.length} fiches</button>
-  <p style="font-size: 12px; color: #666; margin-top: 8px;">Chaque fiche fait une demi-page A4 — idéale pour plastification A5.</p>
-</div>
-<div class="grid">
-${rooms.map(r => `
-  <div class="card">
-    <div class="header">
-      <div class="hotel-name">${escapeHtml(hotel.name)}</div>
-      <div class="subtitle">Connectez-vous à votre concierge virtuel</div>
-      <div style="margin-top: 4mm;"><span class="room-badge">Chambre ${escapeHtml(r.room_number)}</span></div>
+// ============================================
+// MODAL : Modifier le code hôtel
+// ============================================
+async function showHotelCodeEditModal() {
+  if (!userCanEditClients()) {
+    showToast('Permission requise pour modifier le code hôtel', 'warning');
+    return;
+  }
+  const data = state.occupancyToday || await api('/occupancy/today');
+  if (!data) return;
+  const currentCode = (data.hotel && data.hotel.client_login_code) || '';
+  showModal('Code hôtel', `
+    <p class="text-xs mb-4" style="color: rgba(15,27,40,0.55);">Le code que les clients saisissent pour se connecter à Wikot.</p>
+    <form onsubmit="event.preventDefault(); updateHotelCode(document.getElementById('new_hotel_code').value)">
+      <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Nouveau code</label>
+      <input id="new_hotel_code" type="text" required minlength="3" maxlength="32" autofocus
+        value="${escapeHtml(currentCode)}"
+        placeholder="Ex : GRDPARIS"
+        class="w-full px-3 py-2.5 input-premium rounded-lg text-sm font-mono uppercase tracking-wide" />
+      <p class="text-xs mt-2" style="color: rgba(15,27,40,0.55);">3 à 32 caractères (lettres, chiffres, tirets, underscores). Converti automatiquement en majuscules.</p>
+      <div class="flex gap-2 mt-5">
+        <button type="button" onclick="closeModal()" class="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Annuler</button>
+        <button type="submit" class="flex-1 btn-premium-navy text-white px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-check mr-1.5"></i>Enregistrer</button>
+      </div>
+    </form>
+  `);
+}
+
+async function updateHotelCode(rawCode) {
+  const code = (rawCode || '').trim().toUpperCase();
+  if (code.length < 3) { showToast('Le code doit faire au moins 3 caractères', 'error'); return; }
+  const res = await api('/occupancy/hotel-code', { method: 'PUT', body: JSON.stringify({ code }) });
+  if (res) {
+    showToast('Code hôtel mis à jour', 'success');
+    closeModal();
+    state._occupancyLoaded = false;
+    await loadOccupancy();
+    render();
+  }
+}
+
+// ============================================
+// MODAL : Importer un document clients (Code Wikot — Gemini Vision)
+// ============================================
+function showOccupancyImportModal() {
+  if (!userCanEditClients()) {
+    showToast('Permission requise pour importer un document', 'warning');
+    return;
+  }
+  state.aiImportPreview = null;
+  state.aiImportLoading = false;
+  state.aiImportError = null;
+  showModal('Importer un document clients', renderAiImportModalContent('occupancy'));
+}
+
+// ============================================
+// MODAL : Importer un document réservations (Restaurant — Gemini Vision)
+// ============================================
+function showRestaurantImportModal() {
+  if (!userCanEditRestaurant()) {
+    showToast('Permission requise pour importer un document', 'warning');
+    return;
+  }
+  state.aiImportPreview = null;
+  state.aiImportLoading = false;
+  state.aiImportError = null;
+  showModal('Importer un document réservations', renderAiImportModalContent('restaurant'));
+}
+
+// ============================================
+// CONTENU MODAL IMPORT IA — partagé entre Code Wikot et Restaurant
+// ============================================
+function renderAiImportModalContent(kind) {
+  // kind = 'occupancy' | 'restaurant'
+  const titles = {
+    occupancy: { eyebrow: 'Pré-remplissage IA', title: 'Importer un document clients', subtitle: 'PDF, image ou capture d\'écran de la liste des clients du jour' },
+    restaurant: { eyebrow: 'Pré-remplissage IA', title: 'Importer un document réservations', subtitle: 'PDF, image ou capture d\'écran des réservations resto / petit-déj' }
+  };
+  const t = titles[kind];
+  const preview = state.aiImportPreview;
+  const loading = state.aiImportLoading;
+  const error = state.aiImportError;
+
+  return `
+    <div class="p-6 max-w-2xl">
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-11 h-11 rounded-xl flex items-center justify-center" style="background: linear-gradient(135deg, var(--c-gold) 0%, var(--c-gold-deep) 100%);">
+          <i class="fas fa-wand-magic-sparkles text-white"></i>
+        </div>
+        <div>
+          <p class="section-eyebrow">${t.eyebrow}</p>
+          <h3 class="font-display text-lg font-semibold" style="color: var(--c-navy);">${t.title}</h3>
+          <p class="text-xs" style="color: rgba(15,27,40,0.55);">${t.subtitle}</p>
+        </div>
+      </div>
+
+      ${!preview && !loading ? `
+        <div class="card-premium p-4 mb-4" style="background: rgba(201,169,97,0.08); border-left: 3px solid var(--c-gold);">
+          <p class="text-xs leading-relaxed" style="color: var(--c-navy);"><i class="fas fa-circle-info mr-1.5" style="color: var(--c-gold-deep);"></i><strong>Important :</strong> Wikot va analyser votre document pour <strong>pré-remplir</strong> les informations. C'est uniquement une étape de pré-remplissage : vérifiez ensuite manuellement chaque nom, chambre et date avant de valider — Wikot peut faire des erreurs (orthographe, dates, etc.).</p>
+        </div>
+
+        <label class="block">
+          <input type="file" id="ai_import_file" accept="image/*,application/pdf" class="hidden" onchange="handleAiImportFileSelected('${kind}', event)" />
+          <div class="cursor-pointer rounded-xl p-8 text-center transition-all hover:bg-cream" style="border: 2px dashed var(--c-line-strong); background: var(--c-ivory);" onclick="document.getElementById('ai_import_file').click()">
+            <i class="fas fa-cloud-arrow-up text-4xl mb-3" style="color: var(--c-gold);"></i>
+            <p class="font-display font-semibold mb-1" style="color: var(--c-navy);">Choisir un document</p>
+            <p class="text-xs" style="color: rgba(15,27,40,0.55);">PDF, JPG, PNG · max 10 Mo</p>
+          </div>
+        </label>
+
+        <div class="flex gap-2 mt-5">
+          <button type="button" onclick="closeModal()" class="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Annuler</button>
+        </div>
+      ` : ''}
+
+      ${loading ? `
+        <div class="text-center py-10">
+          <i class="fas fa-circle-notch fa-spin text-4xl mb-4" style="color: var(--c-gold);"></i>
+          <p class="font-display font-semibold" style="color: var(--c-navy);">Wikot analyse votre document...</p>
+          <p class="text-xs mt-2" style="color: rgba(15,27,40,0.55);">Extraction des chambres, noms et dates en cours</p>
+        </div>
+      ` : ''}
+
+      ${error ? `
+        <div class="card-premium p-4 mb-4" style="background: rgba(200,76,63,0.08); border-left: 3px solid #C84C3F;">
+          <p class="text-sm" style="color: #8B2E22;"><i class="fas fa-triangle-exclamation mr-1.5"></i><strong>Erreur :</strong> ${escapeHtml(error)}</p>
+        </div>
+        <div class="flex gap-2">
+          <button type="button" onclick="state.aiImportError=null; render();" class="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-navy); color: #fff;">Réessayer</button>
+          <button type="button" onclick="closeModal()" class="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Fermer</button>
+        </div>
+      ` : ''}
+
+      ${preview && !loading && !error ? renderAiImportPreview(kind, preview) : ''}
     </div>
-    <div>
-      <div class="step">
-        <span class="step-num">1</span><span class="step-label">Code de l'hôtel</span>
-        <div class="step-value">${escapeHtml(hotel.client_login_code || '???')}</div>
+  `;
+}
+
+function renderAiImportPreview(kind, preview) {
+  const rows = preview.rows || [];
+  return `
+    <div class="card-premium p-3 mb-4" style="background: rgba(200,76,63,0.06); border-left: 3px solid #C84C3F;">
+      <p class="text-xs leading-relaxed" style="color: var(--c-navy);"><i class="fas fa-eye mr-1.5" style="color: #C84C3F;"></i><strong>Vérification manuelle obligatoire.</strong> ${rows.length} ligne(s) extraite(s). Contrôlez chaque nom (orthographe), chaque numéro de chambre et chaque date. Wikot peut se tromper.</p>
+    </div>
+
+    <div class="card-premium overflow-hidden mb-4" style="max-height: 380px; overflow-y: auto;">
+      <table class="w-full text-sm">
+        <thead style="background: var(--c-cream-deep); position: sticky; top: 0;">
+          <tr style="border-bottom: 1px solid var(--c-line);">
+            ${kind === 'occupancy' ? `
+              <th class="px-3 py-2 text-left font-semibold text-xs" style="color: var(--c-navy);">Ch.</th>
+              <th class="px-3 py-2 text-left font-semibold text-xs" style="color: var(--c-navy);">Nom du client</th>
+              <th class="px-3 py-2 text-left font-semibold text-xs" style="color: var(--c-navy);">Départ</th>
+            ` : `
+              <th class="px-3 py-2 text-left font-semibold text-xs" style="color: var(--c-navy);">Date</th>
+              <th class="px-3 py-2 text-left font-semibold text-xs" style="color: var(--c-navy);">Repas</th>
+              <th class="px-3 py-2 text-left font-semibold text-xs" style="color: var(--c-navy);">Heure</th>
+              <th class="px-3 py-2 text-left font-semibold text-xs" style="color: var(--c-navy);">Nom</th>
+              <th class="px-3 py-2 text-left font-semibold text-xs" style="color: var(--c-navy);">Pers.</th>
+              <th class="px-3 py-2 text-left font-semibold text-xs" style="color: var(--c-navy);">Ch.</th>
+            `}
+            <th class="px-2 py-2"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((r, i) => `
+            <tr style="border-bottom: 1px solid var(--c-line);">
+              ${kind === 'occupancy' ? `
+                <td class="px-3 py-2"><input type="text" value="${escapeHtml(r.room_number || '')}" oninput="state.aiImportPreview.rows[${i}].room_number=this.value" class="w-16 px-2 py-1 input-premium rounded text-xs font-mono" /></td>
+                <td class="px-3 py-2"><input type="text" value="${escapeHtml(r.guest_name || '')}" oninput="state.aiImportPreview.rows[${i}].guest_name=this.value" class="w-full px-2 py-1 input-premium rounded text-xs" /></td>
+                <td class="px-3 py-2"><input type="date" value="${escapeHtml(r.checkout_date || '')}" oninput="state.aiImportPreview.rows[${i}].checkout_date=this.value" class="px-2 py-1 input-premium rounded text-xs" /></td>
+              ` : `
+                <td class="px-3 py-2"><input type="date" value="${escapeHtml(r.date || '')}" oninput="state.aiImportPreview.rows[${i}].date=this.value" class="px-2 py-1 input-premium rounded text-xs" /></td>
+                <td class="px-3 py-2"><select onchange="state.aiImportPreview.rows[${i}].meal_type=this.value" class="px-2 py-1 input-premium rounded text-xs">
+                  <option value="breakfast" ${r.meal_type==='breakfast'?'selected':''}>Petit-déj</option>
+                  <option value="lunch" ${r.meal_type==='lunch'?'selected':''}>Déjeuner</option>
+                  <option value="dinner" ${r.meal_type==='dinner'?'selected':''}>Dîner</option>
+                </select></td>
+                <td class="px-3 py-2"><input type="time" value="${escapeHtml(r.time || '')}" oninput="state.aiImportPreview.rows[${i}].time=this.value" class="px-2 py-1 input-premium rounded text-xs font-mono" /></td>
+                <td class="px-3 py-2"><input type="text" value="${escapeHtml(r.guest_name || '')}" oninput="state.aiImportPreview.rows[${i}].guest_name=this.value" class="w-full px-2 py-1 input-premium rounded text-xs" /></td>
+                <td class="px-3 py-2"><input type="number" min="1" value="${r.guests_count || 1}" oninput="state.aiImportPreview.rows[${i}].guests_count=parseInt(this.value)||1" class="w-14 px-2 py-1 input-premium rounded text-xs" /></td>
+                <td class="px-3 py-2"><input type="text" value="${escapeHtml(r.room_number || '')}" oninput="state.aiImportPreview.rows[${i}].room_number=this.value" class="w-16 px-2 py-1 input-premium rounded text-xs font-mono" /></td>
+              `}
+              <td class="px-2 py-2 text-right"><button onclick="state.aiImportPreview.rows.splice(${i},1); render();" class="text-xs" style="color: #C84C3F;" title="Supprimer cette ligne"><i class="fas fa-trash"></i></button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="flex gap-2">
+      <button type="button" onclick="closeModal()" class="px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Annuler</button>
+      <button type="button" onclick="state.aiImportPreview=null; render();" class="px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line-strong);"><i class="fas fa-rotate-right mr-1.5"></i>Recommencer</button>
+      <button type="button" onclick="confirmAiImport('${kind}')" class="flex-1 btn-premium-navy text-white px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-check mr-1.5"></i>Valider et appliquer (${rows.length})</button>
+    </div>
+  `;
+}
+
+async function handleAiImportFileSelected(kind, event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { showToast('Fichier trop lourd (max 10 Mo)', 'error'); return; }
+  state.aiImportLoading = true;
+  state.aiImportError = null;
+  render();
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('kind', kind);
+    const url = (window.API_BASE || '/api') + (kind === 'occupancy' ? '/ai-import/occupancy' : '/ai-import/restaurant');
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + state.token },
+      body: fd
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || 'Échec de l\'analyse');
+    state.aiImportPreview = { rows: data.rows || [], import_id: data.import_id };
+    state.aiImportLoading = false;
+  } catch (e) {
+    state.aiImportError = e.message || 'Erreur inconnue';
+    state.aiImportLoading = false;
+  }
+  render();
+}
+
+async function confirmAiImport(kind) {
+  const preview = state.aiImportPreview;
+  if (!preview) return;
+  const rows = (preview.rows || []).filter(r => kind === 'occupancy' ? (r.room_number && r.guest_name) : (r.date && r.guest_name));
+  if (rows.length === 0) { showToast('Aucune ligne valide à appliquer', 'warning'); return; }
+  const url = kind === 'occupancy' ? '/ai-import/occupancy/apply' : '/ai-import/restaurant/apply';
+  const res = await api(url, { method: 'POST', body: JSON.stringify({ import_id: preview.import_id, rows }) });
+  if (res) {
+    showToast(`${res.applied || rows.length} ligne(s) appliquée(s)`, 'success');
+    closeModal();
+    if (kind === 'occupancy') {
+      state._occupancyLoaded = false;
+      await loadOccupancy();
+    } else {
+      state._restaurantLoaded = false;
+      await loadRestaurantData();
+    }
+    render();
+  }
+}
+
+// ============================================
+// VIEW: TASKS — "À faire" (vue jour avec navigation J-1/J/J+1, tâches mises en valeur pour soi)
+// ============================================
+
+// Helpers récurrence (bitmask 7 bits : lun=bit0..dim=bit6)
+const TASK_DAY_LABELS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+const TASK_DAY_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+
+function recurrenceToString(bits) {
+  bits = bits | 0;
+  if (bits === 127) return 'Tous les jours';
+  if (bits === 31) return 'Lun-Ven';
+  if (bits === 96) return 'Sam-Dim';
+  const days = [];
+  for (let i = 0; i < 7; i++) if ((bits >> i) & 1) days.push(TASK_DAY_FULL[i].slice(0, 3));
+  return days.length === 0 ? 'Jamais' : days.join(', ');
+}
+
+function todayIsoStr() { return new Date().toISOString().slice(0, 10); }
+function shiftDate(isoStr, days) {
+  const d = new Date(isoStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+function formatDateLong(isoStr) {
+  return new Date(isoStr + 'T12:00:00Z').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+async function loadTasksForDate(dateStr) {
+  state.tasksLoading = true;
+  const data = await api(`/tasks?date=${dateStr}`);
+  state.tasksLoading = false;
+  if (data) {
+    state.tasksData = data;
+    state.tasksDate = dateStr;
+  }
+}
+
+function renderTasksView() {
+  if (!state.tasksDate) state.tasksDate = todayIsoStr();
+  const dateStr = state.tasksDate;
+
+  if (!state.tasksData || state.tasksData.date !== dateStr) {
+    if (!state.tasksLoading) {
+      loadTasksForDate(dateStr).then(render);
+    }
+    return `<div class="text-center py-12" style="color: rgba(15,27,40,0.55);"><i class="fas fa-spinner fa-spin text-2xl mb-2" style="color: var(--c-gold);"></i><p>Chargement des tâches...</p></div>`;
+  }
+
+  const data = state.tasksData;
+  const me = data.me || {};
+  const myId = state.user.id;
+  const canCreate = !!me.can_create_tasks || userCanCreateTasks();
+  const canAssign = !!me.can_assign_tasks || userCanAssignTasks();
+  const instances = data.instances || [];
+  const assignmentsByInstance = {};
+  for (const a of (data.assignments || [])) {
+    (assignmentsByInstance[a.task_instance_id] = assignmentsByInstance[a.task_instance_id] || []).push(a);
+  }
+
+  // Sépare : mes tâches en cours, mes tâches faites, tâches des autres
+  const myPending = [];
+  const myDone = [];
+  const others = [];
+  const unassigned = [];
+  for (const inst of instances) {
+    const list = assignmentsByInstance[inst.id] || [];
+    const mine = list.find(a => a.user_id === myId);
+    if (mine) {
+      if (mine.status === 'done') myDone.push({ inst, list, mine });
+      else myPending.push({ inst, list, mine });
+    } else if (list.length === 0) {
+      unassigned.push({ inst, list });
+    } else {
+      others.push({ inst, list });
+    }
+  }
+
+  const today = todayIsoStr();
+  const isToday = dateStr === today;
+  const isPast = dateStr < today;
+
+  return `
+  <div class="fade-in">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6">
+      <div>
+        <p class="section-eyebrow mb-2">Tâches du jour</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">À faire</h2>
+        <p class="text-sm mt-1.5 capitalize" style="color: rgba(15,27,40,0.55);">${formatDateLong(dateStr)}${isToday ? ' · aujourd\'hui' : isPast ? ' · passé' : ''}</p>
       </div>
-      <div class="step">
-        <span class="step-num">2</span><span class="step-label">Numéro de chambre</span>
-        <div class="step-value">${escapeHtml(r.room_number)}</div>
-      </div>
-      <div class="step">
-        <span class="step-num">3</span><span class="step-label">Votre nom (mot de passe)</span>
-        <div class="step-value">${escapeHtml(r.guest_name || '???')}</div>
+      <div class="flex flex-wrap gap-2 items-center">
+        <div class="inline-flex rounded-lg overflow-hidden" style="border: 1px solid var(--c-line);">
+          <button onclick="navigateTaskDate(-1)" class="px-3 py-2 text-sm" style="background: #fff; color: var(--c-navy); border-right: 1px solid var(--c-line);" title="Jour précédent"><i class="fas fa-chevron-left"></i></button>
+          <input type="date" value="${dateStr}" onchange="state.tasksDate=this.value; loadTasksForDate(this.value).then(render);" class="px-3 py-2 text-sm font-mono" style="background: #fff; color: var(--c-navy); border: none;" />
+          <button onclick="navigateTaskDate(1)" class="px-3 py-2 text-sm" style="background: #fff; color: var(--c-navy); border-left: 1px solid var(--c-line);" title="Jour suivant"><i class="fas fa-chevron-right"></i></button>
+        </div>
+        ${!isToday ? `<button onclick="state.tasksDate='${today}'; loadTasksForDate('${today}').then(render);" class="px-3 py-2 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);"><i class="fas fa-calendar-day mr-1"></i>Aujourd'hui</button>` : ''}
+        ${canCreate ? `<button onclick="showTaskInstanceForm(null, '${dateStr}')" class="px-3 py-2 rounded-lg text-sm font-semibold btn-premium-navy text-white"><i class="fas fa-plus mr-1"></i>Nouvelle tâche</button>` : ''}
+        ${canCreate ? `<button onclick="showTaskTemplatesModal()" class="px-3 py-2 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);" title="Tâches récurrentes"><i class="fas fa-rotate mr-1"></i>Modèles récurrents</button>` : ''}
       </div>
     </div>
-    <div class="footer">Wikot — votre concierge virtuel · accès 24h/24 jusqu'à votre départ</div>
-  </div>
-`).join('')}
-</div>
-</body>
-</html>`;
-  const w = window.open('', '_blank');
-  if (!w) { showToast('Bloquez-pop-ups : autorisez les fenêtres pop-up pour imprimer', 'warning'); return; }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+
+    ${(!canCreate && !canAssign) ? `
+      <div class="card-premium p-3 mb-4" style="background: rgba(201,169,97,0.08); border-left: 3px solid var(--c-gold);">
+        <p class="text-xs" style="color: var(--c-navy);"><i class="fas fa-circle-info mr-1.5" style="color: var(--c-gold-deep);"></i>Vous voyez toutes les tâches de l'équipe. <strong>Les vôtres sont mises en valeur.</strong> Validez les vôtres en cliquant sur la case.</p>
+      </div>
+    ` : ''}
+
+    ${instances.length === 0 ? `
+      <div class="card-premium p-10 text-center">
+        <i class="fas fa-list-check text-4xl mb-3" style="color: var(--c-line-strong);"></i>
+        <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucune tâche pour ce jour</p>
+        <p class="text-sm mt-1" style="color: rgba(15,27,40,0.55);">${canCreate ? 'Créez une tâche ponctuelle ou un modèle récurrent.' : 'Aucune tâche n\'a encore été planifiée.'}</p>
+      </div>
+    ` : `
+      ${myPending.length > 0 ? renderTaskSection('Mes tâches', myPending, { highlight: true, data, canCreate, canAssign }) : ''}
+      ${myDone.length > 0 ? renderTaskSection('Mes tâches terminées', myDone, { highlight: true, faded: true, data, canCreate, canAssign }) : ''}
+      ${unassigned.length > 0 ? renderTaskSection('Tâches non attribuées', unassigned, { data, canCreate, canAssign, free: true }) : ''}
+      ${others.length > 0 ? renderTaskSection("Tâches de l'équipe", others, { data, canCreate, canAssign }) : ''}
+    `}
+  </div>`;
+}
+
+function renderTaskSection(title, entries, opts) {
+  const myId = state.user.id;
+  return `
+    <div class="mb-6">
+      <h3 class="font-display text-sm font-semibold uppercase tracking-wider mb-3" style="color: ${opts.highlight ? 'var(--c-gold-deep)' : 'rgba(15,27,40,0.5)'};">${title} <span class="text-xs ml-1" style="color: rgba(15,27,40,0.4);">(${entries.length})</span></h3>
+      <div class="grid grid-cols-1 gap-2">
+        ${entries.map(e => renderTaskCard(e.inst, e.list, opts, myId)).join('')}
+      </div>
+    </div>`;
+}
+
+function renderTaskCard(inst, assignments, opts, myId) {
+  const mine = assignments.find(a => a.user_id === myId);
+  const isMine = !!mine;
+  const isDone = mine && mine.status === 'done';
+  const allDone = inst.status === 'done';
+  const canEdit = opts.canCreate;
+  const canAssign = opts.canAssign;
+
+  const assigneeNames = assignments.length === 0
+    ? '<span class="text-xs italic" style="color: rgba(15,27,40,0.4);">Personne</span>'
+    : assignments.map(a => `<span class="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${a.user_id === myId ? 'font-semibold' : ''}" style="${a.user_id === myId ? 'background: var(--c-gold); color: #fff;' : 'background: var(--c-cream-deep); color: var(--c-navy);'}">${a.status === 'done' ? '<i class="fas fa-check text-[9px]"></i>' : ''}${escapeHtml(a.user_name || '?')}</span>`).join(' ');
+
+  const cardStyle = isMine
+    ? `background: linear-gradient(180deg, rgba(201,169,97,0.10) 0%, #fff 60%); border: 1px solid var(--c-gold); box-shadow: 0 1px 0 rgba(201,169,97,0.20);`
+    : opts.faded ? `background: var(--c-cream-deep); opacity: 0.75;`
+    : `background: #fff; border: 1px solid var(--c-line);`;
+
+  return `
+    <div class="card-premium p-3.5 transition-all" style="${cardStyle}">
+      <div class="flex items-start gap-3">
+        ${isMine ? `
+          <button onclick="${isDone ? `uncompleteTask(${inst.id})` : `completeTask(${inst.id})`}" class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center transition-all" style="${isDone ? 'background: var(--c-gold); color: #fff;' : 'background: #fff; color: var(--c-navy); border: 2px solid var(--c-gold);'}" title="${isDone ? 'Annuler la validation' : 'Valider'}">
+            ${isDone ? '<i class="fas fa-check text-xs"></i>' : ''}
+          </button>
+        ` : opts.free ? `
+          <button onclick="completeTask(${inst.id})" class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center transition-all" style="background: #fff; color: var(--c-navy); border: 2px dashed var(--c-line-strong);" title="Prendre cette tâche libre">
+            <i class="fas fa-hand text-[10px]" style="color: var(--c-gold-deep);"></i>
+          </button>
+        ` : `
+          <div class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center" style="background: var(--c-cream-deep); color: ${allDone ? 'var(--c-gold-deep)' : 'rgba(15,27,40,0.3)'};">
+            ${allDone ? '<i class="fas fa-check text-xs"></i>' : '<i class="fas fa-clock text-[10px]"></i>'}
+          </div>
+        `}
+
+        <div class="flex-1 min-w-0">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <p class="font-display font-semibold text-sm leading-tight ${isDone ? 'line-through opacity-60' : ''}" style="color: var(--c-navy);">${escapeHtml(inst.title)}</p>
+              ${inst.description ? `<p class="text-xs mt-1" style="color: rgba(15,27,40,0.6);">${escapeHtml(inst.description)}</p>` : ''}
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11px]" style="color: rgba(15,27,40,0.55);">
+                ${inst.suggested_time ? `<span><i class="fas fa-clock mr-1" style="color: var(--c-gold-deep);"></i>${escapeHtml(inst.suggested_time)}</span>` : ''}
+                ${inst.category ? `<span><i class="fas fa-tag mr-1" style="color: var(--c-gold-deep);"></i>${escapeHtml(inst.category)}</span>` : ''}
+                ${inst.template_id ? `<span class="italic"><i class="fas fa-rotate mr-1"></i>récurrente</span>` : ''}
+              </div>
+              <div class="mt-2 flex flex-wrap items-center gap-1">${assigneeNames}</div>
+            </div>
+            ${(canEdit || canAssign) ? `
+              <div class="flex gap-1 shrink-0">
+                ${canAssign ? `<button onclick="showTaskAssignModal(${inst.id})" class="w-7 h-7 rounded flex items-center justify-center" style="background: var(--c-cream-deep); color: var(--c-navy);" title="Attribuer"><i class="fas fa-user-tag text-[11px]"></i></button>` : ''}
+                ${canEdit ? `<button onclick="showTaskInstanceForm(${inst.id}, '${state.tasksDate}')" class="w-7 h-7 rounded flex items-center justify-center" style="background: var(--c-cream-deep); color: var(--c-navy);" title="Modifier"><i class="fas fa-pen text-[11px]"></i></button>` : ''}
+                ${canEdit ? `<button onclick="deleteTaskInstance(${inst.id})" class="w-7 h-7 rounded flex items-center justify-center" style="background: rgba(200,76,63,0.10); color: #C84C3F;" title="Supprimer"><i class="fas fa-trash text-[11px]"></i></button>` : ''}
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function navigateTaskDate(deltaDays) {
+  const next = shiftDate(state.tasksDate || todayIsoStr(), deltaDays);
+  state.tasksDate = next;
+  loadTasksForDate(next).then(render);
+}
+
+async function completeTask(instanceId) {
+  const res = await api(`/tasks/instances/${instanceId}/complete`, { method: 'POST', body: JSON.stringify({}) });
+  if (res) {
+    showToast('Tâche validée', 'success');
+    await loadTasksForDate(state.tasksDate);
+    render();
+  }
+}
+
+async function uncompleteTask(instanceId) {
+  const res = await api(`/tasks/instances/${instanceId}/uncomplete`, { method: 'POST', body: JSON.stringify({}) });
+  if (res) {
+    await loadTasksForDate(state.tasksDate);
+    render();
+  }
+}
+
+async function deleteTaskInstance(instanceId) {
+  if (!confirm('Supprimer définitivement cette tâche ?')) return;
+  const res = await api(`/tasks/instances/${instanceId}`, { method: 'DELETE' });
+  if (res) {
+    showToast('Tâche supprimée', 'success');
+    await loadTasksForDate(state.tasksDate);
+    render();
+  }
+}
+
+function showTaskInstanceForm(instanceId, dateStr) {
+  // Si instanceId fourni → on édite, sinon on crée
+  const inst = instanceId ? (state.tasksData.instances.find(i => i.id === instanceId) || {}) : {};
+  const isEdit = !!instanceId;
+  showModal(isEdit ? 'Modifier la tâche' : 'Nouvelle tâche', `
+    <form onsubmit="event.preventDefault(); submitTaskInstanceForm(${instanceId || 'null'})">
+      <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Titre <span style="color: #C84C3F;">*</span></label>
+      <input id="ti_title" type="text" required maxlength="200" value="${escapeHtml(inst.title || '')}" autofocus class="w-full px-3 py-2.5 input-premium rounded-lg text-sm mb-3" placeholder="Ex : Vérifier la machine à café" />
+
+      <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Description (optionnel)</label>
+      <textarea id="ti_description" rows="2" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm mb-3" placeholder="Détails...">${escapeHtml(inst.description || '')}</textarea>
+
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Date</label>
+          <input id="ti_date" type="date" required value="${escapeHtml(inst.task_date || dateStr)}" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Heure suggérée</label>
+          <input id="ti_time" type="time" value="${escapeHtml(inst.suggested_time || '')}" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm" />
+        </div>
+      </div>
+
+      <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Catégorie (optionnel)</label>
+      <select id="ti_category" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm mb-4">
+        <option value="">— Aucune —</option>
+        ${['reception','menage','restaurant','maintenance','autre'].map(c => `<option value="${c}" ${(inst.category||'')===c?'selected':''}>${c.charAt(0).toUpperCase()+c.slice(1)}</option>`).join('')}
+      </select>
+
+      <div class="flex gap-2">
+        <button type="button" onclick="closeModal()" class="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Annuler</button>
+        <button type="submit" class="flex-1 btn-premium-navy text-white px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-check mr-1.5"></i>${isEdit ? 'Enregistrer' : 'Créer'}</button>
+      </div>
+    </form>
+  `);
+}
+
+async function submitTaskInstanceForm(instanceId) {
+  const body = {
+    title: document.getElementById('ti_title').value.trim(),
+    description: document.getElementById('ti_description').value.trim() || null,
+    task_date: document.getElementById('ti_date').value,
+    suggested_time: document.getElementById('ti_time').value || null,
+    category: document.getElementById('ti_category').value || null
+  };
+  if (!body.title) { showToast('Titre requis', 'error'); return; }
+  const url = instanceId ? `/tasks/instances/${instanceId}` : '/tasks/instances';
+  const method = instanceId ? 'PUT' : 'POST';
+  const res = await api(url, { method, body: JSON.stringify(body) });
+  if (res) {
+    showToast(instanceId ? 'Tâche modifiée' : 'Tâche créée', 'success');
+    closeModal();
+    state.tasksDate = body.task_date;
+    await loadTasksForDate(body.task_date);
+    render();
+  }
+}
+
+function showTaskAssignModal(instanceId) {
+  const data = state.tasksData;
+  const inst = data.instances.find(i => i.id === instanceId);
+  if (!inst) return;
+  const staff = data.staff || [];
+  const currentlyAssigned = new Set((data.assignments || []).filter(a => a.task_instance_id === instanceId).map(a => a.user_id));
+  showModal(`Attribuer : ${inst.title}`, `
+    <p class="text-xs mb-4" style="color: rgba(15,27,40,0.55);">Cochez les personnes à qui attribuer cette tâche. Décocher retire l'attribution.</p>
+    <div class="space-y-2 mb-5 max-h-72 overflow-y-auto">
+      ${staff.map(u => `
+        <label class="flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all" style="background: ${currentlyAssigned.has(u.id) ? 'rgba(201,169,97,0.10)' : '#fff'}; border: 1px solid var(--c-line);">
+          <input type="checkbox" ${currentlyAssigned.has(u.id) ? 'checked' : ''} data-user-id="${u.id}" class="w-4 h-4 rounded" style="accent-color: var(--c-gold-deep);" />
+          <span class="font-display text-sm" style="color: var(--c-navy);">${escapeHtml(u.name)}</span>
+          <span class="ml-auto text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.6);">${u.role === 'admin' ? 'Admin' : 'Employé'}</span>
+        </label>
+      `).join('')}
+    </div>
+    <div class="flex gap-2">
+      <button type="button" onclick="closeModal()" class="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Annuler</button>
+      <button type="button" onclick="submitTaskAssign(${instanceId})" class="flex-1 btn-premium-navy text-white px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-check mr-1.5"></i>Enregistrer</button>
+    </div>
+  `);
+}
+
+async function submitTaskAssign(instanceId) {
+  const checks = document.querySelectorAll('#modal-container input[type="checkbox"][data-user-id]');
+  const userIds = [];
+  checks.forEach(c => { if (c.checked) userIds.push(parseInt(c.dataset.userId)); });
+  const res = await api(`/tasks/instances/${instanceId}/assign`, { method: 'POST', body: JSON.stringify({ user_ids: userIds }) });
+  if (res) {
+    showToast('Attribution mise à jour', 'success');
+    closeModal();
+    await loadTasksForDate(state.tasksDate);
+    render();
+  }
+}
+
+async function showTaskTemplatesModal() {
+  const r = await api('/tasks/templates');
+  if (!r) return;
+  const templates = r.templates || [];
+  showModal('Tâches récurrentes', `
+    <p class="text-xs mb-4" style="color: rgba(15,27,40,0.55);">Les modèles génèrent automatiquement une tâche pour chaque date qui correspond à la récurrence. Modifier un modèle n'affecte pas les tâches déjà créées.</p>
+    <div class="mb-4">
+      <button onclick="showTaskTemplateForm(null)" class="w-full btn-premium-navy text-white px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-plus mr-1.5"></i>Nouveau modèle récurrent</button>
+    </div>
+    ${templates.length === 0 ? `
+      <div class="text-center py-6" style="color: rgba(15,27,40,0.5);">
+        <i class="fas fa-rotate text-3xl mb-2" style="color: var(--c-line-strong);"></i>
+        <p class="text-sm">Aucun modèle récurrent.</p>
+      </div>
+    ` : `
+      <div class="space-y-2 max-h-80 overflow-y-auto">
+        ${templates.map(t => `
+          <div class="card-premium p-3 ${t.is_active ? '' : 'opacity-60'}" style="background: #fff; border: 1px solid var(--c-line);">
+            <div class="flex items-start gap-3">
+              <div class="flex-1 min-w-0">
+                <p class="font-display font-semibold text-sm" style="color: var(--c-navy);">${escapeHtml(t.title)}</p>
+                ${t.description ? `<p class="text-xs mt-0.5" style="color: rgba(15,27,40,0.6);">${escapeHtml(t.description)}</p>` : ''}
+                <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 text-[11px]" style="color: rgba(15,27,40,0.55);">
+                  <span><i class="fas fa-rotate mr-1" style="color: var(--c-gold-deep);"></i>${escapeHtml(recurrenceToString(t.recurrence_days))}</span>
+                  ${t.suggested_time ? `<span><i class="fas fa-clock mr-1" style="color: var(--c-gold-deep);"></i>${escapeHtml(t.suggested_time)}</span>` : ''}
+                  ${t.category ? `<span><i class="fas fa-tag mr-1" style="color: var(--c-gold-deep);"></i>${escapeHtml(t.category)}</span>` : ''}
+                  ${!t.is_active ? '<span class="italic" style="color: #C84C3F;">désactivé</span>' : ''}
+                </div>
+              </div>
+              <div class="flex gap-1 shrink-0">
+                <button onclick="showTaskTemplateForm(${t.id})" class="w-7 h-7 rounded flex items-center justify-center" style="background: var(--c-cream-deep); color: var(--c-navy);" title="Modifier"><i class="fas fa-pen text-[11px]"></i></button>
+                <button onclick="deleteTaskTemplate(${t.id})" class="w-7 h-7 rounded flex items-center justify-center" style="background: rgba(200,76,63,0.10); color: #C84C3F;" title="Supprimer"><i class="fas fa-trash text-[11px]"></i></button>
+              </div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `}
+    <div class="mt-4">
+      <button type="button" onclick="closeModal()" class="w-full px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Fermer</button>
+    </div>
+  `);
+}
+
+async function showTaskTemplateForm(templateId) {
+  let tpl = { recurrence_days: 127, is_active: 1 };
+  if (templateId) {
+    const r = await api('/tasks/templates');
+    if (r) {
+      const found = (r.templates || []).find(t => t.id === templateId);
+      if (found) tpl = found;
+    }
+  }
+  showModal(templateId ? 'Modifier le modèle' : 'Nouveau modèle récurrent', `
+    <form onsubmit="event.preventDefault(); submitTaskTemplateForm(${templateId || 'null'})">
+      <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Titre <span style="color: #C84C3F;">*</span></label>
+      <input id="tt_title" type="text" required maxlength="200" value="${escapeHtml(tpl.title || '')}" autofocus class="w-full px-3 py-2.5 input-premium rounded-lg text-sm mb-3" />
+
+      <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Description</label>
+      <textarea id="tt_description" rows="2" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm mb-3">${escapeHtml(tpl.description || '')}</textarea>
+
+      <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Jours de répétition</label>
+      <div class="flex gap-1 mb-3" id="tt_days">
+        ${TASK_DAY_LABELS.map((label, i) => {
+          const checked = ((tpl.recurrence_days || 0) >> i) & 1;
+          return `<button type="button" data-day="${i}" onclick="toggleTaskTemplateDay(${i})" class="w-9 h-9 rounded-lg text-xs font-semibold transition-all" style="background: ${checked ? 'var(--c-gold)' : 'var(--c-cream-deep)'}; color: ${checked ? '#fff' : 'var(--c-navy)'}; border: 1px solid ${checked ? 'var(--c-gold-deep)' : 'var(--c-line)'};">${label}</button>`;
+        }).join('')}
+      </div>
+      <input type="hidden" id="tt_recurrence" value="${tpl.recurrence_days || 127}" />
+      <div class="flex flex-wrap gap-1.5 mb-3">
+        <button type="button" onclick="setTaskTemplateRecurrence(127)" class="text-[11px] px-2 py-1 rounded" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Tous les jours</button>
+        <button type="button" onclick="setTaskTemplateRecurrence(31)" class="text-[11px] px-2 py-1 rounded" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Lun-Ven</button>
+        <button type="button" onclick="setTaskTemplateRecurrence(96)" class="text-[11px] px-2 py-1 rounded" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Sam-Dim</button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Heure suggérée</label>
+          <input id="tt_time" type="time" value="${escapeHtml(tpl.suggested_time || '')}" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Catégorie</label>
+          <select id="tt_category" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm">
+            <option value="">— Aucune —</option>
+            ${['reception','menage','restaurant','maintenance','autre'].map(c => `<option value="${c}" ${(tpl.category||'')===c?'selected':''}>${c.charAt(0).toUpperCase()+c.slice(1)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Actif depuis (optionnel)</label>
+          <input id="tt_from" type="date" value="${escapeHtml(tpl.active_from || '')}" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Actif jusqu'au (optionnel)</label>
+          <input id="tt_to" type="date" value="${escapeHtml(tpl.active_to || '')}" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm" />
+        </div>
+      </div>
+
+      ${templateId ? `
+        <label class="flex items-center gap-2 mb-4 cursor-pointer">
+          <input id="tt_active" type="checkbox" ${tpl.is_active ? 'checked' : ''} class="w-4 h-4 rounded" style="accent-color: var(--c-gold-deep);" />
+          <span class="text-sm" style="color: var(--c-navy);">Modèle actif (génère les tâches)</span>
+        </label>
+      ` : ''}
+
+      <div class="flex gap-2">
+        <button type="button" onclick="closeModal()" class="flex-1 px-4 py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);">Annuler</button>
+        <button type="submit" class="flex-1 btn-premium-navy text-white px-4 py-2.5 rounded-lg text-sm font-semibold"><i class="fas fa-check mr-1.5"></i>${templateId ? 'Enregistrer' : 'Créer'}</button>
+      </div>
+    </form>
+  `);
+}
+
+function toggleTaskTemplateDay(dayIdx) {
+  const input = document.getElementById('tt_recurrence');
+  let bits = parseInt(input.value) || 0;
+  bits ^= (1 << dayIdx);
+  input.value = bits;
+  // re-render des boutons
+  const btns = document.querySelectorAll('#tt_days button');
+  btns.forEach((b, i) => {
+    const checked = (bits >> i) & 1;
+    b.style.background = checked ? 'var(--c-gold)' : 'var(--c-cream-deep)';
+    b.style.color = checked ? '#fff' : 'var(--c-navy)';
+    b.style.borderColor = checked ? 'var(--c-gold-deep)' : 'var(--c-line)';
+  });
+}
+
+function setTaskTemplateRecurrence(bits) {
+  document.getElementById('tt_recurrence').value = bits;
+  const btns = document.querySelectorAll('#tt_days button');
+  btns.forEach((b, i) => {
+    const checked = (bits >> i) & 1;
+    b.style.background = checked ? 'var(--c-gold)' : 'var(--c-cream-deep)';
+    b.style.color = checked ? '#fff' : 'var(--c-navy)';
+    b.style.borderColor = checked ? 'var(--c-gold-deep)' : 'var(--c-line)';
+  });
+}
+
+async function submitTaskTemplateForm(templateId) {
+  const body = {
+    title: document.getElementById('tt_title').value.trim(),
+    description: document.getElementById('tt_description').value.trim() || null,
+    recurrence_days: parseInt(document.getElementById('tt_recurrence').value) || 127,
+    suggested_time: document.getElementById('tt_time').value || null,
+    category: document.getElementById('tt_category').value || null,
+    active_from: document.getElementById('tt_from').value || null,
+    active_to: document.getElementById('tt_to').value || null
+  };
+  if (!body.title) { showToast('Titre requis', 'error'); return; }
+  if (templateId) {
+    const activeEl = document.getElementById('tt_active');
+    if (activeEl) body.is_active = activeEl.checked ? 1 : 0;
+  }
+  const url = templateId ? `/tasks/templates/${templateId}` : '/tasks/templates';
+  const method = templateId ? 'PUT' : 'POST';
+  const res = await api(url, { method, body: JSON.stringify(body) });
+  if (res) {
+    showToast(templateId ? 'Modèle modifié' : 'Modèle créé', 'success');
+    closeModal();
+    await loadTasksForDate(state.tasksDate);
+    render();
+    setTimeout(() => showTaskTemplatesModal(), 100);
+  }
+}
+
+async function deleteTaskTemplate(templateId) {
+  if (!confirm('Supprimer ce modèle récurrent ? Les tâches déjà générées resteront en place.')) return;
+  const res = await api(`/tasks/templates/${templateId}`, { method: 'DELETE' });
+  if (res) {
+    showToast('Modèle supprimé', 'success');
+    closeModal();
+    setTimeout(() => showTaskTemplatesModal(), 100);
+  }
 }
 
 // ============================================
@@ -6187,10 +6887,27 @@ async function loadRestaurantData() {
 }
 
 function renderRestaurantView() {
+  // FIX bug "chargement infini" : on déclenche le load une seule fois mais on
+  // ne marque le flag qu'au succès → en cas d'erreur, l'utilisateur peut retry.
+  // De plus, on rend immédiatement la coquille avec un état "loading" pour que
+  // la première frame apparaisse même avant la résolution de la promesse.
+  if (!state._restaurantLoaded && !state._restaurantLoading) {
+    state._restaurantLoading = true;
+    loadRestaurantData()
+      .then(() => { state._restaurantLoaded = true; })
+      .catch(() => { state._restaurantLoaded = false; })
+      .finally(() => { state._restaurantLoading = false; render(); });
+    return `<div class="text-center py-12" style="color: rgba(15,27,40,0.55);"><i class="fas fa-spinner fa-spin text-2xl mb-2" style="color: var(--c-gold);"></i><p>Chargement du restaurant...</p></div>`;
+  }
+  if (state._restaurantLoading) {
+    return `<div class="text-center py-12" style="color: rgba(15,27,40,0.55);"><i class="fas fa-spinner fa-spin text-2xl mb-2" style="color: var(--c-gold);"></i><p>Chargement du restaurant...</p></div>`;
+  }
   if (!state._restaurantLoaded) {
-    state._restaurantLoaded = true;
-    loadRestaurantData().then(() => render());
-    return `<div class="text-center py-12 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl mb-2"></i><p>Chargement...</p></div>`;
+    return `<div class="text-center py-12">
+      <i class="fas fa-triangle-exclamation text-3xl mb-3" style="color: #C84C3F;"></i>
+      <p style="color: var(--c-navy);">Erreur de chargement du restaurant.</p>
+      <button onclick="state._restaurantLoaded=false; state._restaurantLoading=false; render();" class="mt-4 px-4 py-2 rounded-lg text-sm font-semibold" style="background: var(--c-navy); color: #fff;"><i class="fas fa-rotate-right mr-1.5"></i>Réessayer</button>
+    </div>`;
   }
   const tab = state.restaurantTab || 'dashboard';
   const tabBtn = (key, icon, label) => `
@@ -6299,9 +7016,14 @@ function renderRestaurantReservations() {
   const mealLabels = { breakfast: 'Petit-déj', lunch: 'Déjeuner', dinner: 'Dîner' };
   const canEdit = userCanEditRestaurant();
   return `
-  <div class="flex justify-between items-center mb-3">
-    <p class="text-sm text-gray-500">${reservations.length} réservation(s) du ${state.restaurantDashboardFrom} au ${state.restaurantDashboardTo}</p>
-    ${canEdit ? `<button onclick="showStaffReservationModal()" class="btn-premium-navy text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Ajouter</button>` : ''}
+  <div class="flex flex-wrap justify-between items-center gap-2 mb-3">
+    <p class="text-sm" style="color: rgba(15,27,40,0.55);">${reservations.length} réservation(s) du ${state.restaurantDashboardFrom} au ${state.restaurantDashboardTo}</p>
+    ${canEdit ? `
+      <div class="flex flex-wrap gap-2">
+        <button onclick="showRestaurantImportModal()" class="px-3 py-1.5 rounded text-sm font-semibold" style="background: linear-gradient(135deg, var(--c-gold) 0%, var(--c-gold-deep) 100%); color: #fff;"><i class="fas fa-wand-magic-sparkles mr-1"></i>Importer</button>
+        <button onclick="showStaffReservationModal()" class="btn-premium-navy text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Ajouter</button>
+      </div>
+    ` : ''}
   </div>
   <div class="table-scroll-wrapper">
     <table class="min-w-full text-sm">
@@ -6862,7 +7584,7 @@ function renderClientWikot() {
         </div>
         <div>
           <p class="section-eyebrow">Concierge digital</p>
-          <h2 class="font-display font-semibold" style="color: var(--c-navy);">Front Wikot</h2>
+          <h2 class="font-display font-semibold" style="color: var(--c-navy);">Wikot</h2>
         </div>
       </div>
       <button onclick="newClientWikotConversation()" class="text-xs transition-colors" style="color: rgba(15,27,40,0.55);" onmouseover="this.style.color='var(--c-gold-deep)'" onmouseout="this.style.color='rgba(15,27,40,0.55)'"><i class="fas fa-rotate-right mr-1"></i>Nouvelle</button>
@@ -6882,7 +7604,7 @@ function renderClientWikot() {
             <button onclick="sendClientWikotMessage('Réserver le petit-déjeuner')" class="text-left px-3.5 py-2.5 rounded-lg text-xs transition-all" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line-strong);" onmouseover="this.style.borderColor='var(--c-gold)'; this.style.background='var(--c-cream-deep)';" onmouseout="this.style.borderColor='var(--c-line-strong)'; this.style.background='#fff';"><i class="fas fa-mug-hot mr-1.5" style="color: var(--c-gold);"></i>Réserver le petit-déjeuner</button>
           </div>
         </div>` : messages.map(m => renderFrontWikotMessage(m)).join('')}
-      ${state.clientWikotSending ? '<div class="flex justify-start"><div class="rounded-2xl px-4 py-2 text-sm" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.55);"><i class="fas fa-circle-notch fa-spin mr-1"></i> Front Wikot réfléchit...</div></div>' : ''}
+      ${state.clientWikotSending ? '<div class="flex justify-start"><div class="rounded-2xl px-4 py-2 text-sm" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.55);"><i class="fas fa-circle-notch fa-spin mr-1"></i> Wikot réfléchit...</div></div>' : ''}
     </div>
     <div class="p-3 flex gap-2" style="border-top: 1px solid var(--c-line); background: #fff;">
       <input id="client_wikot_input" type="text" placeholder="Posez votre question..."

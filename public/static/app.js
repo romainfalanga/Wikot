@@ -98,6 +98,181 @@ let state = {
 };
 
 // ============================================
+// VOICE RECORDER — capture audio MediaRecorder + upload R2 via /api/audio/upload
+// ============================================
+// state.voice : { active: 'staff'|'client'|null, mode: 'wikot'|'wikot-max'|'client-wikot'|null,
+//                 recording: bool, blob: Blob|null, mime: string|null, durationMs: number,
+//                 mediaRecorder: MediaRecorder|null, stream: MediaStream|null,
+//                 chunks: Blob[], startedAt: number, timerInterval: any, previewUrl: string|null }
+function initVoiceState() {
+  if (!state.voice) state.voice = { active: null, mode: null, recording: false, blob: null, mime: null, durationMs: 0, mediaRecorder: null, stream: null, chunks: [], startedAt: 0, timerInterval: null, previewUrl: null };
+  return state.voice;
+}
+
+function pickAudioMime() {
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/aac'];
+  if (typeof MediaRecorder === 'undefined') return null;
+  for (const m of candidates) {
+    try { if (MediaRecorder.isTypeSupported(m)) return m; } catch {}
+  }
+  return '';
+}
+
+async function startVoiceRecording(scope, mode) {
+  const v = initVoiceState();
+  if (v.recording) { showToast('Enregistrement déjà en cours', 'warning'); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+    showToast('Votre navigateur ne supporte pas l\'enregistrement vocal', 'error');
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (e) {
+    showToast('Accès au micro refusé', 'error');
+    return;
+  }
+  const mime = pickAudioMime();
+  let mr;
+  try {
+    mr = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+  } catch (e) {
+    stream.getTracks().forEach(t => t.stop());
+    showToast('Impossible de démarrer l\'enregistrement', 'error');
+    return;
+  }
+  v.active = scope; v.mode = mode; v.recording = true;
+  v.blob = null; v.mime = mime || mr.mimeType || 'audio/webm';
+  v.durationMs = 0; v.startedAt = Date.now(); v.chunks = [];
+  v.mediaRecorder = mr; v.stream = stream;
+  if (v.previewUrl) { try { URL.revokeObjectURL(v.previewUrl); } catch {} v.previewUrl = null; }
+
+  mr.ondataavailable = (e) => { if (e.data && e.data.size > 0) v.chunks.push(e.data); };
+  mr.onstop = () => {
+    const blob = new Blob(v.chunks, { type: v.mime });
+    v.blob = blob;
+    v.durationMs = Date.now() - v.startedAt;
+    if (v.timerInterval) { clearInterval(v.timerInterval); v.timerInterval = null; }
+    if (v.stream) { v.stream.getTracks().forEach(t => t.stop()); v.stream = null; }
+    v.recording = false;
+    if (v.previewUrl) { try { URL.revokeObjectURL(v.previewUrl); } catch {} }
+    v.previewUrl = URL.createObjectURL(blob);
+    render();
+  };
+  mr.start();
+  v.timerInterval = setInterval(() => {
+    // Force re-render du compteur dans la zone de saisie active
+    const el = document.getElementById('voice-timer-' + scope);
+    if (el) {
+      const ms = Date.now() - v.startedAt;
+      const sec = Math.floor(ms / 1000);
+      el.textContent = String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+    }
+  }, 250);
+  // Limite dure : 5 min
+  setTimeout(() => { if (v.recording) stopVoiceRecording(); }, 5 * 60 * 1000);
+  render();
+}
+
+function stopVoiceRecording() {
+  const v = initVoiceState();
+  if (!v.recording || !v.mediaRecorder) return;
+  try { v.mediaRecorder.stop(); } catch {}
+}
+
+function discardVoiceRecording() {
+  const v = initVoiceState();
+  if (v.recording) { try { v.mediaRecorder && v.mediaRecorder.stop(); } catch {} }
+  if (v.stream) { v.stream.getTracks().forEach(t => t.stop()); v.stream = null; }
+  if (v.timerInterval) { clearInterval(v.timerInterval); v.timerInterval = null; }
+  if (v.previewUrl) { try { URL.revokeObjectURL(v.previewUrl); } catch {} }
+  state.voice = { active: null, mode: null, recording: false, blob: null, mime: null, durationMs: 0, mediaRecorder: null, stream: null, chunks: [], startedAt: 0, timerInterval: null, previewUrl: null };
+  render();
+}
+
+async function uploadCurrentVoice(scope) {
+  const v = initVoiceState();
+  if (!v.blob) return null;
+  const isClient = scope === 'client';
+  const url = `${API}${isClient ? '/client/audio/upload' : '/audio/upload'}`;
+  const headers = {
+    'Content-Type': v.mime || 'audio/webm',
+    'X-Audio-Duration-Ms': String(v.durationMs || 0)
+  };
+  const token = isClient ? state.clientToken : state.token;
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  try {
+    const res = await fetch(url, { method: 'POST', headers, body: v.blob });
+    const data = await res.json();
+    if (!res.ok) { showToast(data.error || 'Échec de l\'envoi audio', 'error'); return null; }
+    return data; // { audio_key, audio_mime, audio_size_bytes, audio_duration_ms }
+  } catch (e) {
+    showToast('Erreur réseau lors de l\'envoi audio', 'error');
+    return null;
+  }
+}
+
+function formatVoiceDuration(ms) {
+  const sec = Math.max(0, Math.floor((ms || 0) / 1000));
+  return String(Math.floor(sec / 60)).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0');
+}
+
+// Rendu d'un widget bouton micro / barre d'enregistrement / preview à côté du send
+function renderVoiceWidget(scope, mode) {
+  const v = initVoiceState();
+  const mine = v.active === scope && v.mode === mode;
+  // Pas d'enregistrement actif sur cette zone : bouton micro simple
+  if (!mine) {
+    return `<button type="button" onclick="startVoiceRecording('${scope}','${mode}')" class="btn-premium w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);" title="Enregistrer un message vocal"><i class="fas fa-microphone"></i></button>`;
+  }
+  // Enregistrement en cours
+  if (v.recording) {
+    return `
+      <div class="flex items-center gap-2 px-3 py-2 rounded-xl shrink-0" style="background: rgba(200,76,63,0.10); border: 1px solid rgba(200,76,63,0.35);">
+        <span class="inline-block w-2 h-2 rounded-full" style="background: #C84C3F; animation: pulse 1s infinite;"></span>
+        <span id="voice-timer-${scope}" class="text-xs font-mono font-semibold" style="color: #C84C3F;">00:00</span>
+        <button type="button" onclick="stopVoiceRecording()" class="text-xs font-semibold px-2 py-1 rounded" style="background: #C84C3F; color: #fff;" title="Arrêter"><i class="fas fa-stop"></i></button>
+        <button type="button" onclick="discardVoiceRecording()" class="text-xs px-1.5 py-1 rounded" style="color: #C84C3F;" title="Annuler"><i class="fas fa-times"></i></button>
+      </div>`;
+  }
+  // Preview prête à envoyer
+  if (v.blob && v.previewUrl) {
+    return `
+      <div class="flex items-center gap-2 px-2 py-1.5 rounded-xl shrink-0" style="background: var(--c-cream-deep); border: 1px solid var(--c-line);">
+        <audio src="${v.previewUrl}" controls preload="metadata" style="height: 32px; max-width: 180px;"></audio>
+        <span class="text-[10px] font-mono" style="color: rgba(15,27,40,0.55);">${formatVoiceDuration(v.durationMs)}</span>
+        <button type="button" onclick="discardVoiceRecording()" class="text-xs w-6 h-6 rounded flex items-center justify-center" style="background: rgba(200,76,63,0.10); color: #C84C3F;" title="Supprimer"><i class="fas fa-trash text-[10px]"></i></button>
+      </div>`;
+  }
+  return '';
+}
+
+// Rendu d'un message vocal (lecteur audio inline) — utilisé dans renderWikotMessage et renderFrontWikotMessage
+function renderVoiceMessageBubble(msg, opts) {
+  opts = opts || {};
+  const isClient = !!opts.isClient;
+  const audioKey = msg.audio_key;
+  if (!audioKey) return '';
+  const token = isClient ? state.clientToken : state.token;
+  const path = isClient ? '/client/audio/' : '/audio/';
+  // On utilise un fetch authentifié → blob URL au moment du render via data-attr
+  const audioId = 'audio-' + (msg.id || Math.random().toString(36).slice(2));
+  const fetchUrl = `${API}${path}${encodeURI(audioKey)}`;
+  // Charge en async le blob et bind sur l'élément
+  setTimeout(() => {
+    const el = document.getElementById(audioId);
+    if (!el || el.dataset.loaded === '1') return;
+    el.dataset.loaded = '1';
+    fetch(fetchUrl, { headers: token ? { 'Authorization': `Bearer ${token}` } : {} })
+      .then(r => r.ok ? r.blob() : null)
+      .then(b => { if (b) { el.src = URL.createObjectURL(b); } })
+      .catch(() => {});
+  }, 50);
+  const dur = msg.audio_duration_ms ? formatVoiceDuration(msg.audio_duration_ms) : '';
+  return `<div class="flex items-center gap-2 mt-1.5 pt-1.5" style="border-top: 1px solid rgba(255,255,255,0.15);"><i class="fas fa-microphone text-xs" style="opacity: 0.7;"></i><audio id="${audioId}" controls preload="none" style="height: 32px; max-width: 220px;"></audio>${dur ? `<span class="text-[10px] font-mono" style="opacity: 0.7;">${dur}</span>` : ''}</div>`;
+}
+
+// ============================================
 // API HELPERS
 // ============================================
 async function api(path, options = {}) {
@@ -2471,8 +2646,18 @@ async function sendWikotMessage(mode) {
   const inputId = mode === 'max' ? 'wikot-max-input' : 'wikot-input';
   const input = document.getElementById(inputId);
   if (!input) return;
-  const content = input.value.trim();
-  if (!content || s.sending) return;
+  const content = (input ? input.value.trim() : '');
+
+  // Audio en attente (si l'utilisateur a enregistré pour cette zone)
+  const v = initVoiceState();
+  const hasVoiceForThisMode = v && v.active === 'staff' && v.mode === mode && v.blob && !v.recording;
+  if (!content && !hasVoiceForThisMode) return;
+  if (s.sending) return;
+  // Si enregistrement en cours sur cette zone, on stoppe d'abord (l'utilisateur doit valider la preview)
+  if (v && v.active === 'staff' && v.mode === mode && v.recording) {
+    showToast('Termine l\'enregistrement avant d\'envoyer', 'warning');
+    return;
+  }
 
   // Mode max : on a TOUJOURS besoin d'un workflow + d'une conversation active
   // (créée par enterBackWikotWorkflow). Si rien, on bloque.
@@ -2491,11 +2676,15 @@ async function sendWikotMessage(mode) {
     s.currentConvId = data.id;
   }
 
-  // Affichage optimiste du message utilisateur
-  s.messages.push({ id: 'temp-' + Date.now(), role: 'user', content, references: [] });
+  // Affichage optimiste du message utilisateur (avec ref audio si présent)
+  const optimisticMsg = { id: 'temp-' + Date.now(), role: 'user', content, references: [] };
+  if (hasVoiceForThisMode) {
+    optimisticMsg.audio_pending = true;
+    optimisticMsg.audio_duration_ms = v.durationMs;
+  }
+  s.messages.push(optimisticMsg);
   s.sending = true;
-  input.value = '';
-  autoResizeTextarea(input);
+  if (input) { input.value = ''; autoResizeTextarea(input); }
   render();
   scrollWikotToBottom(mode);
 
@@ -2503,6 +2692,24 @@ async function sendWikotMessage(mode) {
   const body = { content };
   if (mode === 'max' && state.backWikotForm) {
     body.form_context = collectBackWikotFormContext();
+  }
+
+  // Upload audio si présent
+  if (hasVoiceForThisMode) {
+    const up = await uploadCurrentVoice('staff');
+    if (!up) {
+      // Échec upload : on retire l'optimiste et on rend la main
+      s.messages.pop();
+      s.sending = false;
+      render();
+      return;
+    }
+    body.audio_key = up.audio_key;
+    body.audio_mime = up.audio_mime;
+    body.audio_duration_ms = up.audio_duration_ms;
+    body.audio_size_bytes = up.audio_size_bytes;
+    // L'audio est maintenant uploadé côté serveur → on peut nettoyer le state local
+    discardVoiceRecording();
   }
 
   const result = await api(`/wikot/conversations/${s.currentConvId}/message`, {
@@ -2651,10 +2858,15 @@ function formatWikotContent(text) {
 function renderWikotMessage(msg, mode) {
   mode = mode || activeWikotMode();
   if (msg.role === 'user') {
+    const hasAudio = !!msg.audio_key || !!msg.audio_pending;
+    const txt = msg.content && msg.content.trim() ? escapeHtml(msg.content) : (hasAudio ? '<span class="italic" style="opacity: 0.7;"><i class="fas fa-microphone mr-1.5"></i>Message vocal</span>' : '');
+    const audioBlock = msg.audio_key ? renderVoiceMessageBubble(msg, { isClient: false })
+      : (msg.audio_pending ? `<div class="flex items-center gap-2 mt-1.5 pt-1.5 text-xs italic" style="border-top: 1px solid rgba(255,255,255,0.15); opacity: 0.7;"><i class="fas fa-circle-notch fa-spin"></i>Envoi de l'audio (${formatVoiceDuration(msg.audio_duration_ms || 0)})...</div>` : '');
     return `
       <div class="flex justify-end mb-4">
         <div class="max-w-[85%] sm:max-w-[75%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap" style="background: var(--c-navy); color: #fff; box-shadow: 0 1px 2px rgba(10,22,40,0.08);">
-          ${escapeHtml(msg.content)}
+          ${txt}
+          ${audioBlock}
         </div>
       </div>
     `;
@@ -3668,6 +3880,7 @@ function renderWikotView(mode) {
               onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('${mode}');}"
               ${isSending ? 'disabled' : ''}
               class="input-premium form-input-mobile flex-1 rounded-xl px-3.5 py-2.5 outline-none resize-none max-h-32 text-sm"></textarea>
+            ${renderVoiceWidget('staff', mode)}
             <button onclick="sendWikotMessage('${mode}')" ${isSending ? 'disabled' : ''} class="btn-premium w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);" title="Envoyer">
               <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
             </button>
@@ -4110,6 +4323,7 @@ function renderBackWikotWorkshop() {
                 onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('max');}"
                 ${isSending ? 'disabled' : ''}
                 class="form-input-mobile flex-1 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-orange-400 resize-none max-h-32 text-sm"></textarea>
+              ${renderVoiceWidget('staff', 'max')}
               <button onclick="sendWikotMessage('max')" ${isSending ? 'disabled' : ''}
                 class="w-10 h-10 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 text-white flex items-center justify-center shrink-0 transition-colors" title="Envoyer">
                 <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
@@ -7606,10 +7820,11 @@ function renderClientWikot() {
         </div>` : messages.map(m => renderFrontWikotMessage(m)).join('')}
       ${state.clientWikotSending ? '<div class="flex justify-start"><div class="rounded-2xl px-4 py-2 text-sm" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.55);"><i class="fas fa-circle-notch fa-spin mr-1"></i> Wikot réfléchit...</div></div>' : ''}
     </div>
-    <div class="p-3 flex gap-2" style="border-top: 1px solid var(--c-line); background: #fff;">
+    <div class="p-3 flex gap-2 items-center" style="border-top: 1px solid var(--c-line); background: #fff;">
       <input id="client_wikot_input" type="text" placeholder="Posez votre question..."
         onkeydown="if(event.key==='Enter'){sendClientWikotMessage(this.value);this.value='';}"
         class="flex-1 input-premium px-4 py-2 rounded-full text-sm form-input-mobile">
+      ${renderVoiceWidget('client', 'client-wikot')}
       <button onclick="const i=document.getElementById('client_wikot_input'); sendClientWikotMessage(i.value); i.value='';"
         class="btn-premium w-10 h-10 rounded-full flex items-center justify-center" style="background: var(--c-navy); color: var(--c-gold);"><i class="fas fa-paper-plane"></i></button>
     </div>
@@ -7619,9 +7834,13 @@ function renderClientWikot() {
 // Rendu d'un message Front Wikot (user simple OU assistant avec carte structurée)
 function renderFrontWikotMessage(m) {
   if (m.role === 'user') {
+    const hasAudio = !!m.audio_key || !!m.audio_pending;
+    const txt = m.content && m.content.trim() ? escapeHtml(m.content) : (hasAudio ? '<span class="italic" style="opacity: 0.75;"><i class="fas fa-microphone mr-1.5"></i>Message vocal</span>' : '');
+    const audioBlock = m.audio_key ? renderVoiceMessageBubble(m, { isClient: true })
+      : (m.audio_pending ? `<div class="flex items-center gap-2 mt-1.5 pt-1.5 text-xs italic" style="border-top: 1px solid rgba(255,255,255,0.15); opacity: 0.75;"><i class="fas fa-circle-notch fa-spin"></i>Envoi (${formatVoiceDuration(m.audio_duration_ms || 0)})...</div>` : '');
     return `
       <div class="flex justify-end">
-        <div class="max-w-[80%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap" style="background: var(--c-navy); color: var(--c-gold);">${escapeHtml(m.content || '')}</div>
+        <div class="max-w-[80%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap" style="background: var(--c-navy); color: var(--c-gold);">${txt}${audioBlock}</div>
       </div>`;
   }
   // Assistant : on lit references_json pour afficher la carte
@@ -7697,24 +7916,58 @@ function openClientReservationFromWikot(mealType) {
 
 async function sendClientWikotMessage(text) {
   text = (text || '').trim();
-  if (!text) return;
+  const v = initVoiceState();
+  const hasVoice = v && v.active === 'client' && v.mode === 'client-wikot' && v.blob && !v.recording;
+  if (!text && !hasVoice) return;
+  if (v && v.active === 'client' && v.mode === 'client-wikot' && v.recording) {
+    showToast('Termine l\'enregistrement avant d\'envoyer', 'warning');
+    return;
+  }
   if (!state.clientWikotCurrentConvId) {
     const created = await clientApi('/client/wikot/conversations', { method: 'POST' });
     if (!created) return;
     state.clientWikotCurrentConvId = created.id;
   }
   // Ajout immédiat du message user pour feedback instantané
-  state.clientWikotMessages.push({ id: 'tmp_' + Date.now(), role: 'user', content: text });
+  const optimistic = { id: 'tmp_' + Date.now(), role: 'user', content: text };
+  if (hasVoice) { optimistic.audio_pending = true; optimistic.audio_duration_ms = v.durationMs; }
+  state.clientWikotMessages.push(optimistic);
   state.clientWikotSending = true;
   render();
   setTimeout(() => { const el = document.getElementById('client-wikot-messages'); if (el) el.scrollTop = el.scrollHeight; }, 50);
 
+  const body = { content: text };
+  if (hasVoice) {
+    const up = await uploadCurrentVoice('client');
+    if (!up) {
+      state.clientWikotMessages.pop();
+      state.clientWikotSending = false;
+      render();
+      return;
+    }
+    body.audio_key = up.audio_key;
+    body.audio_mime = up.audio_mime;
+    body.audio_duration_ms = up.audio_duration_ms;
+    body.audio_size_bytes = up.audio_size_bytes;
+    discardVoiceRecording();
+  }
+
   const data = await clientApi(`/client/wikot/conversations/${state.clientWikotCurrentConvId}/message`, {
-    method: 'POST', body: JSON.stringify({ content: text })
+    method: 'POST', body: JSON.stringify(body)
   });
   state.clientWikotSending = false;
   if (data && data.assistant_message) {
-    // Remplacer le tmp + ajouter la réponse
+    // Met à jour l'optimiste avec l'audio_key réel pour relire le vocal
+    if (hasVoice && data.user_message_id) {
+      const last = state.clientWikotMessages[state.clientWikotMessages.length - 1];
+      if (last && last.role === 'user') {
+        last.id = data.user_message_id;
+        last.audio_key = body.audio_key;
+        last.audio_mime = body.audio_mime;
+        last.audio_duration_ms = body.audio_duration_ms;
+        delete last.audio_pending;
+      }
+    }
     state.clientWikotMessages.push(data.assistant_message);
   }
   render();

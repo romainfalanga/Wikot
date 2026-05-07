@@ -2512,14 +2512,30 @@ app.delete('/api/wikot/conversations/:id', authMiddleware, async (c) => {
 app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const user = c.get('user')
   const convId = parseInt(c.req.param('id'))
-  const body = await c.req.json()
+  const body = await c.req.json() as any
   const content = body.content
+  // Audio optionnel : le frontend a uploadé l'audio puis nous passe la clé
+  const audioKey: string | null = body.audio_key || null
+  const audioMime: string | null = body.audio_mime || null
+  const audioDurationMs: number = parseInt(body.audio_duration_ms || 0, 10) || 0
+  const audioSizeBytes: number = parseInt(body.audio_size_bytes || 0, 10) || 0
   // Le frontend envoie l'état actuel du formulaire (Back Wikot uniquement) pour que
   // l'IA voie ce que voit l'utilisateur en ce moment et puisse écrire dedans.
   const formContext = body.form_context || null
 
-  if (!content || !content.trim()) return c.json({ error: 'Message vide' }, 400)
+  // Au moins du texte OU un audio (un message vocal seul est valide)
+  const hasText = !!(content && String(content).trim())
+  const hasAudio = !!audioKey
+  if (!hasText && !hasAudio) return c.json({ error: 'Message vide' }, 400)
   if (!user.hotel_id) return c.json({ error: 'Aucun hôtel' }, 400)
+
+  // Vérifier que l'audio (si fourni) appartient bien à cet hôtel
+  if (audioKey) {
+    const parts = audioKey.split('/')
+    if (parts.length < 3 || parts[1] !== String(user.hotel_id)) {
+      return c.json({ error: 'Audio non autorisé' }, 403)
+    }
+  }
 
   const apiKey = c.env.OPENROUTER_API_KEY
   if (!apiKey) return c.json({ error: 'Wikot indisponible : clé API non configurée' }, 503)
@@ -2528,14 +2544,22 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const conv = await c.env.DB.prepare('SELECT * FROM wikot_conversations WHERE id = ? AND user_id = ?').bind(convId, user.id).first() as any
   if (!conv) return c.json({ error: 'Conversation introuvable' }, 404)
 
-  // Sauvegarder le message utilisateur
+  // Sauvegarder le message utilisateur (avec éventuelle référence audio)
   const userMsgRes = await c.env.DB.prepare(`
-    INSERT INTO wikot_messages (conversation_id, role, content) VALUES (?, 'user', ?)
-  `).bind(convId, content).run()
+    INSERT INTO wikot_messages (conversation_id, role, content, audio_key, audio_mime, audio_duration_ms, audio_size_bytes)
+    VALUES (?, 'user', ?, ?, ?, ?, ?)
+  `).bind(
+    convId,
+    hasText ? content : '',
+    audioKey,
+    audioMime,
+    audioDurationMs || null,
+    audioSizeBytes || null
+  ).run()
 
   // Récupérer l'historique des messages (limité aux 30 derniers pour économiser les tokens)
   const history = await c.env.DB.prepare(`
-    SELECT role, content, tool_calls, tool_call_id
+    SELECT role, content, tool_calls, tool_call_id, audio_key, audio_mime
     FROM wikot_messages WHERE conversation_id = ?
     ORDER BY created_at, id
   `).bind(convId).all()
@@ -2560,10 +2584,30 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const tools = buildWikotTools(mode, canEditProc, canEditInf, workflowMode)
 
   // Construire les messages OpenAI-compatible
+  // Pour le DERNIER message utilisateur uniquement, si audio présent, on inline en multimodal.
+  // (On évite d'inliner toute la conversation pour éviter de payer le coût audio à chaque tour.)
+  const historyArr = history.results as any[]
   const oaiMessages: any[] = [{ role: 'system', content: systemPrompt }]
-  for (const m of history.results as any[]) {
+  for (let i = 0; i < historyArr.length; i++) {
+    const m = historyArr[i]
+    const isLastUser = (i === historyArr.length - 1) && m.role === 'user' && m.audio_key
     if (m.role === 'user') {
-      oaiMessages.push({ role: 'user', content: m.content })
+      if (isLastUser && c.env.AUDIO_BUCKET) {
+        // Construit un message multimodal avec parts texte + audio
+        const audio = await r2AudioToDataUri(c.env.AUDIO_BUCKET, m.audio_key)
+        const parts: any[] = []
+        const txt = (m.content && m.content.trim()) ? m.content : 'Voici un message vocal. Réponds à son contenu.'
+        parts.push({ type: 'text', text: txt })
+        if (audio) {
+          // Format compatible OpenRouter / Gemini multimodal : data URI dans audio_url
+          parts.push({ type: 'audio_url', audio_url: { url: audio.dataUri } })
+        }
+        oaiMessages.push({ role: 'user', content: parts })
+      } else {
+        // Si message ancien avec audio mais pas inliné, on l'indique en texte pour le contexte
+        const prefix = m.audio_key ? '[message vocal] ' : ''
+        oaiMessages.push({ role: 'user', content: prefix + (m.content || '') })
+      }
     } else if (m.role === 'assistant') {
       const msg: any = { role: 'assistant', content: m.content || '' }
       if (m.tool_calls) msg.tool_calls = JSON.parse(m.tool_calls)
@@ -2914,7 +2958,10 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
 
   // Mettre à jour updated_at de la conversation + auto-titre si c'est le 1er échange
   if ((history.results as any[]).filter(m => m.role === 'user').length === 0) {
-    const autoTitle = content.length > 60 ? content.substring(0, 57) + '...' : content
+    const safeContent = (content || '').toString()
+    const autoTitle = safeContent.length > 0
+      ? (safeContent.length > 60 ? safeContent.substring(0, 57) + '...' : safeContent)
+      : (audioKey ? '🎙️ Message vocal' : 'Nouvelle conversation')
     await c.env.DB.prepare('UPDATE wikot_conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(autoTitle, convId).run()
   } else {
     await c.env.DB.prepare('UPDATE wikot_conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(convId).run()
@@ -4599,19 +4646,42 @@ const FRONT_WIKOT_TOOLS = [
 app.post('/api/client/wikot/conversations/:id/message', clientAuthMiddleware, async (c) => {
   const client = c.get('client')
   const convId = c.req.param('id')
-  const body = await c.req.json() as { content: string }
+  const body = await c.req.json() as any
   const userMessage = String(body.content || '').trim()
-  if (!userMessage) return c.json({ error: 'Message vide' }, 400)
+  const audioKey: string | null = body.audio_key || null
+  const audioMime: string | null = body.audio_mime || null
+  const audioDurationMs: number = parseInt(body.audio_duration_ms || 0, 10) || 0
+  const audioSizeBytes: number = parseInt(body.audio_size_bytes || 0, 10) || 0
+
+  const hasText = !!userMessage
+  const hasAudio = !!audioKey
+  if (!hasText && !hasAudio) return c.json({ error: 'Message vide' }, 400)
+
+  // Vérifier que l'audio appartient bien à cet hôtel
+  if (audioKey) {
+    const parts = audioKey.split('/')
+    if (parts.length < 3 || parts[1] !== String(client.hotel_id)) {
+      return c.json({ error: 'Audio non autorisé' }, 403)
+    }
+  }
 
   const conv = await c.env.DB.prepare(`
     SELECT id FROM wikot_conversations WHERE id = ? AND client_account_id = ? AND mode = 'concierge'
   `).bind(convId, client.id).first()
   if (!conv) return c.json({ error: 'Conversation non trouvée' }, 404)
 
-  // Stocker le message utilisateur
+  // Stocker le message utilisateur (avec éventuelle référence audio)
   const userInsert = await c.env.DB.prepare(`
-    INSERT INTO wikot_messages (conversation_id, role, content) VALUES (?, 'user', ?)
-  `).bind(convId, userMessage).run()
+    INSERT INTO wikot_messages (conversation_id, role, content, audio_key, audio_mime, audio_duration_ms, audio_size_bytes)
+    VALUES (?, 'user', ?, ?, ?, ?, ?)
+  `).bind(
+    convId,
+    hasText ? userMessage : '',
+    audioKey,
+    audioMime,
+    audioDurationMs || null,
+    audioSizeBytes || null
+  ).run()
 
   // Construire le catalogue : toutes les hotel_info de l'hôtel (id + cat + titre + contenu)
   const categories = await c.env.DB.prepare(`
@@ -4634,7 +4704,7 @@ app.post('/api/client/wikot/conversations/:id/message', clientAuthMiddleware, as
 
   // Historique récent (8 derniers messages user/assistant)
   const history = await c.env.DB.prepare(`
-    SELECT role, content FROM wikot_messages
+    SELECT role, content, audio_key, audio_mime FROM wikot_messages
     WHERE conversation_id = ? AND role IN ('user', 'assistant')
     ORDER BY created_at DESC LIMIT 8
   `).bind(convId).all()
@@ -4667,10 +4737,23 @@ ${knowledgeBase || '(Aucune information publiée par l\'hôtel.)'}
 
   if (apiKey && itemsList.length > 0) {
     try {
-      const messages = [
-        { role: 'system', content: systemPrompt },
-        ...historyMessages.map((m: any) => ({ role: m.role, content: m.content }))
-      ]
+      // Construction des messages : on inline l'audio uniquement sur le dernier message user
+      const messages: any[] = [{ role: 'system', content: systemPrompt }]
+      for (let i = 0; i < historyMessages.length; i++) {
+        const m: any = historyMessages[i]
+        const isLastUser = (i === historyMessages.length - 1) && m.role === 'user' && m.audio_key
+        if (isLastUser && c.env.AUDIO_BUCKET) {
+          const audio = await r2AudioToDataUri(c.env.AUDIO_BUCKET, m.audio_key)
+          const parts: any[] = []
+          const txt = (m.content && m.content.trim()) ? m.content : 'Voici un message vocal du client. Réponds à son contenu.'
+          parts.push({ type: 'text', text: txt })
+          if (audio) parts.push({ type: 'audio_url', audio_url: { url: audio.dataUri } })
+          messages.push({ role: 'user', content: parts })
+        } else {
+          const prefix = (m.role === 'user' && m.audio_key) ? '[message vocal] ' : ''
+          messages.push({ role: m.role, content: prefix + (m.content || '') })
+        }
+      }
       const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -4786,6 +4869,168 @@ ${knowledgeBase || '(Aucune information publiée par l\'hôtel.)'}
     }
   })
 })
+
+// ============================================
+// AUDIO — Upload et lecture des messages vocaux (R2 wikot-audio)
+// ============================================
+
+// Limites raisonnables pour un message vocal Wikot
+const AUDIO_MAX_BYTES = 8 * 1024 * 1024 // 8 MB → ~5 min en webm/opus
+const AUDIO_ALLOWED_MIME = new Set([
+  'audio/webm', 'audio/webm;codecs=opus',
+  'audio/ogg', 'audio/ogg;codecs=opus',
+  'audio/mp4', 'audio/mpeg', 'audio/mp3',
+  'audio/wav', 'audio/x-wav', 'audio/aac'
+])
+
+function genAudioKey(scope: string, hotelId: number, ownerId: number | string): string {
+  const ts = Date.now()
+  const rnd = Math.random().toString(36).slice(2, 10)
+  return `${scope}/${hotelId}/${ownerId}/${ts}-${rnd}.audio`
+}
+
+function normalizeAudioMime(raw: string | null): string {
+  if (!raw) return 'audio/webm'
+  const m = raw.toLowerCase().split(';')[0].trim()
+  return m || 'audio/webm'
+}
+
+// Upload audio (staff) — retourne audio_key à passer ensuite avec le message
+app.post('/api/audio/upload', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  if (!c.env.AUDIO_BUCKET) return c.json({ error: 'Stockage audio indisponible' }, 503)
+
+  const contentType = normalizeAudioMime(c.req.header('Content-Type'))
+  if (!AUDIO_ALLOWED_MIME.has(contentType)) {
+    return c.json({ error: `Format audio non supporté (${contentType})` }, 415)
+  }
+
+  const buf = await c.req.arrayBuffer()
+  if (!buf || buf.byteLength === 0) return c.json({ error: 'Audio vide' }, 400)
+  if (buf.byteLength > AUDIO_MAX_BYTES) {
+    return c.json({ error: `Audio trop volumineux (${Math.round(buf.byteLength/1024)} KB, max ${Math.round(AUDIO_MAX_BYTES/1024)} KB)` }, 413)
+  }
+
+  const durationMs = parseInt(c.req.header('X-Audio-Duration-Ms') || '0', 10) || 0
+  const key = genAudioKey('staff', user.hotel_id, user.id)
+
+  await c.env.AUDIO_BUCKET.put(key, buf, {
+    httpMetadata: { contentType },
+    customMetadata: {
+      hotel_id: String(user.hotel_id),
+      user_id: String(user.id),
+      duration_ms: String(durationMs),
+      origin: 'staff'
+    }
+  })
+
+  return c.json({
+    audio_key: key,
+    audio_mime: contentType,
+    audio_size_bytes: buf.byteLength,
+    audio_duration_ms: durationMs
+  })
+})
+
+// Upload audio (client en chambre)
+app.post('/api/client/audio/upload', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  if (!c.env.AUDIO_BUCKET) return c.json({ error: 'Stockage audio indisponible' }, 503)
+
+  const contentType = normalizeAudioMime(c.req.header('Content-Type'))
+  if (!AUDIO_ALLOWED_MIME.has(contentType)) {
+    return c.json({ error: `Format audio non supporté (${contentType})` }, 415)
+  }
+
+  const buf = await c.req.arrayBuffer()
+  if (!buf || buf.byteLength === 0) return c.json({ error: 'Audio vide' }, 400)
+  if (buf.byteLength > AUDIO_MAX_BYTES) {
+    return c.json({ error: `Audio trop volumineux (max ${Math.round(AUDIO_MAX_BYTES/1024)} KB)` }, 413)
+  }
+
+  const durationMs = parseInt(c.req.header('X-Audio-Duration-Ms') || '0', 10) || 0
+  const key = genAudioKey('client', client.hotel_id, client.id)
+
+  await c.env.AUDIO_BUCKET.put(key, buf, {
+    httpMetadata: { contentType },
+    customMetadata: {
+      hotel_id: String(client.hotel_id),
+      client_id: String(client.id),
+      duration_ms: String(durationMs),
+      origin: 'client'
+    }
+  })
+
+  return c.json({
+    audio_key: key,
+    audio_mime: contentType,
+    audio_size_bytes: buf.byteLength,
+    audio_duration_ms: durationMs
+  })
+})
+
+// Lecture audio (staff authentifié) — restreint à son hôtel
+app.get('/api/audio/:key{.+}', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!c.env.AUDIO_BUCKET) return c.json({ error: 'Stockage audio indisponible' }, 503)
+  const key = c.req.param('key')
+  if (!key) return c.json({ error: 'Clé manquante' }, 400)
+
+  // Sécurité : la clé doit contenir le hotel_id de l'utilisateur (pattern scope/hotelId/...)
+  const parts = key.split('/')
+  if (parts.length < 3 || String(user.hotel_id) !== parts[1]) {
+    return c.json({ error: 'Accès refusé' }, 403)
+  }
+
+  const obj = await c.env.AUDIO_BUCKET.get(key)
+  if (!obj) return c.json({ error: 'Audio introuvable' }, 404)
+
+  const headers = new Headers()
+  headers.set('Content-Type', obj.httpMetadata?.contentType || 'audio/webm')
+  headers.set('Cache-Control', 'private, max-age=3600')
+  headers.set('Content-Length', String(obj.size))
+  return new Response(obj.body, { headers })
+})
+
+// Lecture audio (client en chambre)
+app.get('/api/client/audio/:key{.+}', clientAuthMiddleware, async (c) => {
+  const client = c.get('client')
+  if (!c.env.AUDIO_BUCKET) return c.json({ error: 'Stockage audio indisponible' }, 503)
+  const key = c.req.param('key')
+  if (!key) return c.json({ error: 'Clé manquante' }, 400)
+
+  const parts = key.split('/')
+  if (parts.length < 3 || String(client.hotel_id) !== parts[1]) {
+    return c.json({ error: 'Accès refusé' }, 403)
+  }
+
+  const obj = await c.env.AUDIO_BUCKET.get(key)
+  if (!obj) return c.json({ error: 'Audio introuvable' }, 404)
+
+  const headers = new Headers()
+  headers.set('Content-Type', obj.httpMetadata?.contentType || 'audio/webm')
+  headers.set('Cache-Control', 'private, max-age=3600')
+  headers.set('Content-Length', String(obj.size))
+  return new Response(obj.body, { headers })
+})
+
+// Helper : convertit un objet R2 audio en data-URI base64 (pour l'envoyer au modèle multimodal)
+async function r2AudioToDataUri(bucket: R2Bucket, key: string): Promise<{ dataUri: string; mime: string } | null> {
+  const obj = await bucket.get(key)
+  if (!obj) return null
+  const mime = obj.httpMetadata?.contentType || 'audio/webm'
+  const buf = await obj.arrayBuffer()
+  // Encodage base64 — Workers supporte btoa avec un binary string
+  let binary = ''
+  const bytes = new Uint8Array(buf)
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)) as any)
+  }
+  const b64 = btoa(binary)
+  return { dataUri: `data:${mime};base64,${b64}`, mime }
+}
 
 // ============================================
 // MAIN HTML PAGE

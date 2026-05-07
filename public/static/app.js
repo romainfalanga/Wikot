@@ -119,11 +119,22 @@ async function api(path, options = {}) {
 // TOAST NOTIFICATIONS
 // ============================================
 function showToast(message, type = 'info') {
-  const colors = { info: 'bg-blue-500', success: 'bg-green-500', error: 'bg-red-500', warning: 'bg-yellow-500' };
+  // Toasts premium : fond ivoire, liseré gauche coloré selon le type
+  const accents = {
+    info:    { bar: '#0A1628', icon: '#0A1628', label: 'Information' },
+    success: { bar: '#5C8A6E', icon: '#5C8A6E', label: 'Succès' },
+    error:   { bar: '#C84C3F', icon: '#C84C3F', label: 'Erreur' },
+    warning: { bar: '#C9A961', icon: '#A68845', label: 'Attention' }
+  };
   const icons = { info: 'fa-info-circle', success: 'fa-check-circle', error: 'fa-exclamation-circle', warning: 'fa-exclamation-triangle' };
+  const a = accents[type] || accents.info;
   const toast = document.createElement('div');
-  toast.className = `fixed top-4 right-4 z-[9999] ${colors[type]} text-white px-5 py-3 rounded-lg shadow-xl flex items-center gap-3 fade-in max-w-md`;
-  toast.innerHTML = `<i class="fas ${icons[type]}"></i><span class="text-sm font-medium">${escapeHtml(message)}</span>`;
+  toast.className = 'fixed top-4 right-4 z-[9999] fade-in max-w-md flex items-center gap-3 pl-4 pr-5 py-3.5 rounded-lg';
+  toast.style.cssText = `background: #fff; border: 1px solid rgba(15,27,40,0.08); border-left: 3px solid ${a.bar}; box-shadow: 0 4px 8px rgba(10,22,40,0.06), 0 24px 48px rgba(10,22,40,0.10); color: #0A1628; font-family: 'Inter', sans-serif;`;
+  toast.innerHTML = `
+    <i class="fas ${icons[type]}" style="color: ${a.icon}; font-size: 16px;"></i>
+    <span class="text-sm font-medium">${escapeHtml(message)}</span>
+  `;
   document.body.appendChild(toast);
   setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
 }
@@ -811,75 +822,75 @@ function renderMainLayout() {
   <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden" onclick="closeSidebar()"></div>
 
   <div class="flex app-shell overflow-hidden">
-    <!-- Sidebar -->
-    <aside id="main-sidebar" class="fixed lg:relative z-40 lg:z-auto -translate-x-full lg:translate-x-0 transition-transform duration-300 w-72 lg:w-64 bg-navy-900 text-white flex flex-col shrink-0 h-full">
-      <div class="p-5 border-b border-navy-700">
+    <!-- Sidebar premium -->
+    <aside id="main-sidebar" class="sidebar-premium fixed lg:relative z-40 lg:z-auto -translate-x-full lg:translate-x-0 transition-transform duration-300 w-72 lg:w-64 flex flex-col shrink-0 h-full">
+      <div class="px-6 py-6" style="border-bottom: 1px solid rgba(201,169,97,0.12);">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
-            <div class="w-10 h-10 bg-brand-400 rounded-xl flex items-center justify-center shadow">
-              <i class="fas fa-concierge-bell text-white"></i>
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: var(--c-gold);">
+              <i class="fas fa-concierge-bell text-sm" style="color: var(--c-navy);"></i>
             </div>
             <div>
-              <h1 class="text-lg font-bold tracking-tight">Wik<span class="text-brand-400">ot</span></h1>
-              <p class="text-[10px] text-navy-400 uppercase tracking-wider">Procédures Hôtelières</p>
+              <h1 class="font-display text-xl font-semibold tracking-tight" style="color: #fff;">Wikot</h1>
+              <p class="text-[10px] uppercase tracking-[0.2em]" style="color: var(--c-gold);">L'excellence hôtelière</p>
             </div>
           </div>
-          <button onclick="closeSidebar()" class="lg:hidden text-navy-400 hover:text-white p-1">
+          <button onclick="closeSidebar()" class="lg:hidden p-1" style="color: rgba(255,255,255,0.5);">
             <i class="fas fa-times"></i>
           </button>
         </div>
       </div>
-      
+
       <nav class="flex-1 py-4 overflow-y-auto">
         ${menuItems.map(item => `
-          <button onclick="navigate('${item.id}'); closeSidebar()" 
-            class="sidebar-item ${state.currentView === item.id ? 'active' : ''} w-full text-left px-5 py-3 flex items-center gap-3 text-sm text-navy-200 hover:text-white">
-            <i class="fas ${item.icon} w-5 text-center text-xs ${state.currentView === item.id ? 'text-brand-400' : ''}"></i>
-            <span>${item.label}</span>
-            <span ${item.id === 'conversations' ? 'data-badge-conversations' : ''} class="ml-auto bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ${item.badge ? '' : 'hidden'}">${item.badge ? (item.badge > 99 ? '99+' : item.badge) : ''}</span>
+          <button onclick="navigate('${item.id}'); closeSidebar()"
+            class="sidebar-item-premium ${state.currentView === item.id ? 'active' : ''} w-full text-left px-6 py-2.5 flex items-center gap-3 text-sm">
+            <i class="fas ${item.icon} w-5 text-center text-sm sidebar-icon"></i>
+            <span class="sidebar-label">${item.label}</span>
+            <span ${item.id === 'conversations' ? 'data-badge-conversations' : ''} class="ml-auto text-[10px] font-bold px-1.5 py-0.5 rounded-full ${item.badge ? '' : 'hidden'}" style="background: var(--c-gold); color: var(--c-navy);">${item.badge ? (item.badge > 99 ? '99+' : item.badge) : ''}</span>
           </button>
         `).join('')}
       </nav>
 
-      <div class="p-4 border-t border-navy-700">
+      <div class="px-5 py-4" style="border-top: 1px solid rgba(201,169,97,0.12);">
         <div class="flex items-center gap-3 mb-3">
-          <div class="w-9 h-9 bg-navy-600 rounded-full flex items-center justify-center text-sm font-semibold shrink-0">
+          <div class="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold shrink-0" style="background: var(--c-gold); color: var(--c-navy);">
             ${state.user.name.charAt(0)}
           </div>
           <div class="flex-1 min-w-0">
-            <p class="text-sm font-medium truncate">${state.user.name}</p>
-            <span class="text-[10px] px-1.5 py-0.5 rounded ${roleColors[state.user.role]}">${roleLabels[state.user.role]}</span>
+            <p class="text-sm font-medium truncate" style="color: #fff;">${state.user.name}</p>
+            <span class="text-[10px] uppercase tracking-wider" style="color: var(--c-gold);">${roleLabels[state.user.role]}</span>
           </div>
         </div>
-        <button onclick="showChangePasswordModal()" class="w-full text-left text-xs text-navy-400 hover:text-brand-400 transition-colors flex items-center gap-2 px-1 mb-2">
+        <button onclick="showChangePasswordModal()" class="w-full text-left text-xs transition-colors flex items-center gap-2 px-1 mb-2" style="color: rgba(255,255,255,0.5);" onmouseover="this.style.color='var(--c-gold)'" onmouseout="this.style.color='rgba(255,255,255,0.5)'">
           <i class="fas fa-key"></i> Changer de mot de passe
         </button>
-        <button onclick="logout()" class="w-full text-left text-xs text-navy-400 hover:text-red-400 transition-colors flex items-center gap-2 px-1">
+        <button onclick="logout()" class="w-full text-left text-xs transition-colors flex items-center gap-2 px-1" style="color: rgba(255,255,255,0.5);" onmouseover="this.style.color='#E27D6E'" onmouseout="this.style.color='rgba(255,255,255,0.5)'">
           <i class="fas fa-sign-out-alt"></i> Déconnexion
         </button>
       </div>
     </aside>
 
-    <!-- Main Content -->
-    <main class="flex-1 overflow-y-auto bg-gray-50 flex flex-col">
-      <!-- Header mobile avec burger + titre vue active + badges -->
-      <div class="lg:hidden sticky top-0 z-20 bg-white border-b border-gray-200 px-3 sm:px-4 h-14 flex items-center gap-3 shadow-sm shrink-0">
-        <button onclick="openSidebar()" class="w-9 h-9 flex items-center justify-center rounded-lg bg-navy-50 hover:bg-navy-100 text-navy-600 transition-colors shrink-0">
+    <!-- Main Content premium -->
+    <main class="flex-1 overflow-y-auto flex flex-col" style="background: var(--c-cream);">
+      <!-- Header mobile premium avec burger + titre vue active + badges -->
+      <div class="lg:hidden sticky top-0 z-20 px-3 sm:px-4 h-14 flex items-center gap-3 shrink-0" style="background: #fff; border-bottom: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04);">
+        <button onclick="openSidebar()" class="w-9 h-9 flex items-center justify-center rounded-lg transition-colors shrink-0" style="background: var(--c-cream-deep); color: var(--c-navy);">
           <i class="fas fa-bars"></i>
         </button>
         <div class="flex items-center gap-2 min-w-0 flex-1">
-          <div class="w-7 h-7 bg-brand-400 rounded-lg flex items-center justify-center shrink-0">
-            <i class="fas fa-concierge-bell text-white text-xs"></i>
+          <div class="w-7 h-7 rounded-lg flex items-center justify-center shrink-0" style="background: var(--c-gold);">
+            <i class="fas fa-concierge-bell text-xs" style="color: var(--c-navy);"></i>
           </div>
-          <span class="font-bold text-navy-800 truncate">${currentTitle}</span>
+          <span class="font-display font-semibold truncate" style="color: var(--c-navy);">${currentTitle}</span>
         </div>
         <div class="ml-auto flex items-center gap-2 shrink-0">
-          <button onclick="navigate('conversations')" class="relative w-9 h-9 flex items-center justify-center rounded-lg bg-navy-50 text-navy-600 ${state.unreadChatTotal > 0 ? '' : 'hidden'}" title="Messages non lus" data-mobile-chat-btn>
+          <button onclick="navigate('conversations')" class="relative w-9 h-9 flex items-center justify-center rounded-lg ${state.unreadChatTotal > 0 ? '' : 'hidden'}" title="Messages non lus" data-mobile-chat-btn style="background: var(--c-cream-deep); color: var(--c-navy);">
             <i class="fas fa-comments"></i>
-            <span data-badge-conversations class="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[16px] text-center">${state.unreadChatTotal > 0 ? (state.unreadChatTotal > 99 ? '99+' : state.unreadChatTotal) : ''}</span>
+            <span data-badge-conversations class="absolute -top-1 -right-1 text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[16px] text-center" style="background: var(--c-gold); color: var(--c-navy);">${state.unreadChatTotal > 0 ? (state.unreadChatTotal > 99 ? '99+' : state.unreadChatTotal) : ''}</span>
           </button>
 
-          <div class="w-8 h-8 bg-navy-600 rounded-full flex items-center justify-center text-white text-sm font-semibold">${state.user.name.charAt(0)}</div>
+          <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold" style="background: var(--c-navy); color: var(--c-gold);">${state.user.name.charAt(0)}</div>
         </div>
       </div>
 
@@ -889,13 +900,13 @@ function renderMainLayout() {
     </main>
   </div>
 
-  <!-- Bottom navigation (mobile uniquement) -->
-  <nav class="mobile-bottomnav lg:hidden fixed bottom-0 left-0 right-0 z-20 bg-navy-900 border-t border-navy-700 flex">
+  <!-- Bottom navigation premium (mobile uniquement) -->
+  <nav class="mobile-bottomnav lg:hidden fixed bottom-0 left-0 right-0 z-20 flex" style="background: var(--c-navy); border-top: 1px solid rgba(201,169,97,0.15);">
     ${bottomNavItems.slice(0, 5).map(item => `
-      <button onclick="navigate('${item.id}')" class="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 relative ${state.currentView === item.id ? 'text-brand-400' : 'text-navy-400'} hover:text-white transition-colors">
+      <button onclick="navigate('${item.id}')" class="flex-1 flex flex-col items-center justify-center py-2 gap-0.5 relative transition-colors" style="color: ${state.currentView === item.id ? 'var(--c-gold)' : 'rgba(255,255,255,0.5)'};">
         <i class="fas ${item.icon} text-base"></i>
         <span class="text-[10px] font-medium leading-none mt-0.5">${item.label.split(' ')[0]}</span>
-        <span ${item.id === 'conversations' ? 'data-badge-conversations' : ''} class="absolute top-1 right-1/4 bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none ${item.badge ? '' : 'hidden'}">${item.badge ? (item.badge > 99 ? '99+' : item.badge) : ''}</span>
+        <span ${item.id === 'conversations' ? 'data-badge-conversations' : ''} class="absolute top-1 right-1/4 text-[9px] font-bold px-1 py-0.5 rounded-full min-w-[14px] text-center leading-none ${item.badge ? '' : 'hidden'}" style="background: var(--c-gold); color: var(--c-navy);">${item.badge ? (item.badge > 99 ? '99+' : item.badge) : ''}</span>
       </button>
     `).join('')}
   </nav>
@@ -1011,39 +1022,43 @@ function renderDashboard() {
   if (isSuperAdmin) {
     return `
     <div class="fade-in">
-      <div class="mb-6 sm:mb-8">
-        <h2 class="text-xl sm:text-2xl font-bold text-navy-900">Tableau de bord <span class="text-brand-400">Super Admin</span></h2>
-        <p class="text-navy-500 mt-1 text-sm">Gestion de la plateforme — hôtels &amp; administrateurs</p>
+      <div class="mb-7 sm:mb-9">
+        <p class="section-eyebrow mb-2">Administration</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Tableau de bord</h2>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">Gestion de la plateforme — hôtels &amp; administrateurs</p>
       </div>
-      <div class="grid grid-cols-2 gap-3 sm:gap-5 mb-6 sm:mb-8">
-        ${statCard('fa-hotel', 'Hôtels actifs', s.hotels || 0, 'bg-blue-500')}
-        ${statCard('fa-users', 'Utilisateurs total', s.users || 0, 'bg-green-500')}
+      <div class="grid grid-cols-2 gap-3 sm:gap-5 mb-7">
+        ${statCard('fa-hotel', 'Hôtels actifs', s.hotels || 0)}
+        ${statCard('fa-users', 'Utilisateurs total', s.users || 0)}
       </div>
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
-        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
-          <h3 class="text-base sm:text-lg font-semibold text-navy-800"><i class="fas fa-hotel mr-2 text-blue-500"></i>Hôtels enregistrés</h3>
-          <button onclick="navigate('hotels')" class="self-start sm:self-auto text-sm bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm flex items-center gap-1.5">
-            <i class="fas fa-plus"></i>Nouvel hôtel
+      <div class="card-premium p-5 sm:p-6">
+        <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-5">
+          <div>
+            <p class="section-eyebrow mb-1.5">Établissements</p>
+            <h3 class="section-title-premium text-lg sm:text-xl">Hôtels enregistrés</h3>
+          </div>
+          <button onclick="navigate('hotels')" class="btn-premium self-start sm:self-auto text-sm px-5 py-2.5 rounded-lg font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;">
+            <i class="fas fa-plus text-xs"></i>Nouvel hôtel
           </button>
         </div>
         ${state.hotels.length === 0 ? `
-          <div class="text-center py-10">
-            <i class="fas fa-hotel text-4xl text-navy-200 mb-3"></i>
-            <p class="text-navy-400 font-medium">Aucun hôtel enregistré</p>
-            <p class="text-navy-300 text-sm mt-1">Commencez par créer votre premier hôtel</p>
+          <div class="empty-state-premium">
+            <div class="empty-icon"><i class="fas fa-hotel"></i></div>
+            <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucun hôtel enregistré</p>
+            <p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Commencez par créer votre premier hôtel.</p>
           </div>
         ` : state.hotels.map(h => `
-          <div class="flex items-center justify-between py-3 sm:py-3.5 border-b border-gray-50 last:border-0 gap-3">
+          <div class="flex items-center justify-between py-3.5 gap-3" style="border-bottom: 1px solid var(--c-line);">
             <div class="flex items-center gap-3 min-w-0">
-              <div class="w-9 h-9 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
-                <i class="fas fa-hotel text-blue-400 text-sm"></i>
+              <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style="background: rgba(201,169,97,0.12);">
+                <i class="fas fa-hotel text-sm" style="color: var(--c-gold-deep);"></i>
               </div>
               <div class="min-w-0">
-                <p class="font-medium text-navy-800 truncate">${h.name}</p>
-                <p class="text-xs text-navy-400 truncate"><i class="fas fa-map-marker-alt mr-1"></i>${h.address || 'Adresse non renseignée'}</p>
+                <p class="font-display font-semibold truncate" style="color: var(--c-navy);">${h.name}</p>
+                <p class="text-xs truncate mt-0.5" style="color: rgba(15,27,40,0.5);"><i class="fas fa-map-marker-alt mr-1" style="color: var(--c-gold);"></i>${h.address || 'Adresse non renseignée'}</p>
               </div>
             </div>
-            <button onclick="navigate('users')" class="shrink-0 text-xs bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-1.5 rounded-lg transition-colors">
+            <button onclick="navigate('users')" class="shrink-0 text-xs px-3 py-1.5 rounded-lg transition-all" style="background: var(--c-cream-deep); color: var(--c-navy);" onmouseover="this.style.background='var(--c-gold)'" onmouseout="this.style.background='var(--c-cream-deep)'">
               <i class="fas fa-users mr-1"></i><span class="hidden sm:inline">Gérer les </span>admins
             </button>
           </div>
@@ -1052,32 +1067,33 @@ function renderDashboard() {
     </div>`;
   }
 
-  // Admin / Employee dashboard
+  // Admin / Employee dashboard premium
   return `
   <div class="fade-in">
-    <div class="mb-6 sm:mb-8">
-      <h2 class="text-xl sm:text-2xl font-bold text-navy-900">Bonjour, <span class="text-brand-400">${state.user.name}</span></h2>
-      <p class="text-navy-500 mt-1 text-sm">${state.user.role === 'admin' ? 'Gérez les procédures de votre hôtel' : 'Consultez les procédures à suivre'}</p>
+    <div class="mb-7 sm:mb-9">
+      <p class="section-eyebrow mb-2">Bienvenue</p>
+      <h2 class="section-title-premium text-2xl sm:text-3xl">Bonjour, ${escapeHtml(state.user.name)}.</h2>
+      <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">${state.user.role === 'admin' ? 'Gérez les procédures de votre hôtel.' : 'Consultez les procédures à suivre.'}</p>
     </div>
 
-    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-5 mb-6 sm:mb-8">
-      ${statCard('fa-sitemap', 'Procédures actives', s.active_procedures || 0, 'bg-green-500')}
-      ${statCard('fa-file-pen', 'Brouillons', s.draft_procedures || 0, 'bg-yellow-500')}
-      ${statCard('fa-users', 'Membres de l\'équipe', s.total_users || 0, 'bg-blue-500')}
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-3 sm:gap-5 mb-7 sm:mb-9">
+      ${statCard('fa-sitemap', 'Procédures actives', s.active_procedures || 0)}
+      ${statCard('fa-file-pen', 'Brouillons', s.draft_procedures || 0)}
+      ${statCard('fa-users', 'Membres de l\'équipe', s.total_users || 0)}
     </div>
 
-    <!-- Quick access to categories -->
-    <div class="mb-6 sm:mb-8">
-      <h3 class="text-base sm:text-lg font-semibold text-navy-800 mb-3 sm:mb-4"><i class="fas fa-th-large mr-2 text-brand-400"></i>Accès rapide par catégorie</h3>
-      <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2 sm:gap-3">
+    <div class="mb-7">
+      <p class="section-eyebrow mb-2">Catégories</p>
+      <h3 class="section-title-premium text-lg sm:text-xl mb-4">Accès rapide</h3>
+      <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2.5 sm:gap-3">
         ${state.categories.map(cat => `
-          <button onclick="state.filterCategory='${cat.id}'; navigate('procedures')" 
-            class="bg-white rounded-xl p-3 sm:p-4 border border-gray-100 shadow-sm hover:shadow-md transition-all text-center group active:scale-95">
-            <div class="w-9 h-9 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center mx-auto mb-1.5 sm:mb-2" style="background:${cat.color}15">
-              <i class="fas ${cat.icon} text-base sm:text-lg" style="color:${cat.color}"></i>
+          <button onclick="state.filterCategory='${cat.id}'; navigate('procedures')"
+            class="card-premium p-3 sm:p-4 text-center group active:scale-95">
+            <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl flex items-center justify-center mx-auto mb-2" style="background: rgba(201,169,97,0.12);">
+              <i class="fas ${cat.icon} text-base sm:text-lg" style="color: var(--c-gold-deep);"></i>
             </div>
-            <p class="text-[10px] sm:text-xs font-medium text-navy-700 leading-tight">${cat.name}</p>
-            <p class="text-[9px] sm:text-[10px] text-navy-400">${state.procedures.filter(p => p.category_id == cat.id).length} proc.</p>
+            <p class="text-[10px] sm:text-xs font-display font-semibold leading-tight" style="color: var(--c-navy);">${escapeHtml(cat.name)}</p>
+            <p class="text-[10px] mt-0.5" style="color: rgba(15,27,40,0.4);">${state.procedures.filter(p => p.category_id == cat.id).length} proc.</p>
           </button>
         `).join('')}
       </div>
@@ -1086,16 +1102,16 @@ function renderDashboard() {
   </div>`;
 }
 
-function statCard(icon, label, value, color) {
+function statCard(icon, label, value) {
   return `
-  <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+  <div class="card-premium p-5">
     <div class="flex items-center justify-between mb-3">
-      <div class="w-10 h-10 ${color} bg-opacity-10 rounded-xl flex items-center justify-center">
-        <i class="fas ${icon} ${color.replace('bg-', 'text-')}"></i>
+      <div class="w-11 h-11 rounded-xl flex items-center justify-center" style="background: rgba(201,169,97,0.12);">
+        <i class="fas ${icon} text-base" style="color: var(--c-gold-deep);"></i>
       </div>
-      <span class="text-2xl font-bold text-navy-900">${value}</span>
+      <span class="font-display text-3xl font-semibold" style="color: var(--c-navy);">${value}</span>
     </div>
-    <p class="text-xs text-navy-500 font-medium">${label}</p>
+    <p class="text-[11px] uppercase tracking-wider font-semibold" style="color: rgba(15,27,40,0.55);">${label}</p>
   </div>`;
 }
 
@@ -1124,50 +1140,51 @@ function renderProceduresList() {
 
   return `
   <div class="fade-in">
-    <!-- Header responsive -->
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+    <!-- Header premium -->
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-7">
       <div>
-        <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-sitemap mr-2 text-brand-400"></i>Procédures</h2>
-        <p class="text-navy-500 text-sm mt-1">${filtered.length} procédure(s)</p>
+        <p class="section-eyebrow mb-2">Savoir-faire</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Procédures</h2>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">${filtered.length} procédure${filtered.length > 1 ? 's' : ''} référencée${filtered.length > 1 ? 's' : ''}</p>
       </div>
       ${canEdit ? `
-      <button onclick="showProcedureForm()" class="self-start sm:self-auto bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-1.5">
-        <i class="fas fa-plus"></i>Nouvelle procédure
+      <button onclick="showProcedureForm()" class="btn-premium self-start sm:self-auto px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;">
+        <i class="fas fa-plus text-xs"></i>Nouvelle procédure
       </button>` : ''}
     </div>
 
-    <!-- Filters -->
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-3 sm:p-4 mb-6">
+    <!-- Filters premium -->
+    <div class="card-premium p-3 sm:p-4 mb-6">
       <div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
-        <select onchange="state.filterCategory=this.value; render()" class="flex-1 text-sm border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
+        <select onchange="state.filterCategory=this.value; render()" class="input-premium flex-1 text-sm rounded-lg px-3 py-2.5 outline-none">
           <option value="">Toutes les catégories</option>
           ${state.categories.map(c => `<option value="${c.id}" ${state.filterCategory == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
         </select>
         ${state.filterCategory ? `
-        <button onclick="state.filterCategory=''; render()" class="text-xs text-red-500 hover:text-red-700 flex items-center justify-center gap-1 px-3 py-2 border border-red-200 rounded-lg">
+        <button onclick="state.filterCategory=''; render()" class="text-xs flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-lg transition-colors" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line-strong);">
           <i class="fas fa-times"></i>Réinitialiser
         </button>` : ''}
       </div>
     </div>
 
-    <!-- Tree View -->
-    <div class="space-y-4">
+    <!-- Tree View premium -->
+    <div class="space-y-5">
       ${Object.keys(grouped).length === 0 ? `
-        <div class="bg-white rounded-xl p-10 sm:p-12 text-center border border-gray-100">
-          <i class="fas fa-sitemap text-4xl text-navy-200 mb-4"></i>
-          <p class="text-navy-400 font-medium">Aucune procédure trouvée</p>
-          ${canEdit ? '<p class="text-sm text-navy-300 mt-1">Créez votre première procédure</p>' : ''}
+        <div class="card-premium empty-state-premium">
+          <div class="empty-icon"><i class="fas fa-sitemap"></i></div>
+          <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucune procédure trouvée</p>
+          ${canEdit ? `<p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Créez votre première procédure pour commencer.</p>` : ''}
         </div>
       ` : Object.entries(grouped).map(([catName, catData]) => `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <div class="px-4 sm:px-5 py-3 border-b border-gray-100 flex items-center gap-3" style="background:${catData.color}08">
-            <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background:${catData.color}15">
-              <i class="fas ${catData.icon} text-sm" style="color:${catData.color}"></i>
+        <div class="card-premium">
+          <div class="px-5 py-4 flex items-center gap-3" style="border-bottom: 1px solid var(--c-line); background: linear-gradient(180deg, #fff 0%, var(--c-cream) 100%); position: relative;">
+            <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(201,169,97,0.12);">
+              <i class="fas ${catData.icon} text-sm" style="color: var(--c-gold-deep);"></i>
             </div>
-            <h3 class="font-semibold text-navy-800 truncate">${catName}</h3>
-            <span class="text-xs bg-navy-100 text-navy-500 px-2 py-0.5 rounded-full ml-auto shrink-0">${catData.procedures.length}</span>
+            <h3 class="font-display font-semibold truncate" style="color: var(--c-navy);">${catName}</h3>
+            <span class="pill-gold ml-auto shrink-0">${catData.procedures.length}</span>
           </div>
-          <div class="divide-y divide-gray-50">
+          <div>
             ${catData.procedures.map(proc => renderProcedureCard(proc, canEdit)).join('')}
           </div>
         </div>
@@ -1180,26 +1197,26 @@ function renderProcedureCard(proc, canEdit) {
   const trigger = proc.trigger_event || '';
 
   return `
-  <div class="px-4 sm:px-5 py-3 sm:py-4 hover:bg-gray-50 transition-colors cursor-pointer" onclick="viewProcedure(${proc.id})">
+  <div class="card-row-premium px-4 sm:px-5 py-3.5 sm:py-4 cursor-pointer" onclick="viewProcedure(${proc.id})">
     <div class="flex items-start gap-3">
       <div class="flex-1 min-w-0">
         <div class="flex flex-wrap items-center gap-1.5 mb-1">
-          <h4 class="font-semibold text-navy-800 text-sm sm:text-base truncate max-w-full">${escapeHtml(proc.title)}</h4>
+          <h4 class="font-display font-semibold text-sm sm:text-base truncate max-w-full" style="color: var(--c-navy);">${escapeHtml(proc.title)}</h4>
         </div>
-        ${trigger ? `<p class="text-xs sm:text-sm text-navy-600 mb-1 line-clamp-2"><i class="fas fa-bolt text-brand-400 mr-1 text-[10px]"></i>${escapeHtml(trigger)}</p>` : ''}
-        <div class="flex flex-wrap items-center gap-2 sm:gap-4 text-[11px] text-navy-400">
-          <span><i class="fas fa-list-ol mr-1"></i>${proc.step_count || 0} étape${(proc.step_count || 0) > 1 ? 's' : ''}</span>
-          ${proc.condition_count > 0 ? `<span class="hidden sm:inline"><i class="fas fa-code-branch mr-1"></i>${proc.condition_count} cas</span>` : ''}
-          <span class="hidden sm:inline">v${proc.version || 1}</span>
+        ${trigger ? `<p class="text-xs sm:text-sm mb-1.5 line-clamp-2" style="color: rgba(15,27,40,0.65);"><i class="fas fa-bolt mr-1 text-[10px]" style="color: var(--c-gold);"></i>${escapeHtml(trigger)}</p>` : ''}
+        <div class="flex flex-wrap items-center gap-2 sm:gap-4 text-[11px]" style="color: rgba(15,27,40,0.45);">
+          <span><i class="fas fa-list-ol mr-1" style="color: var(--c-gold);"></i>${proc.step_count || 0} étape${(proc.step_count || 0) > 1 ? 's' : ''}</span>
+          ${proc.condition_count > 0 ? `<span class="hidden sm:inline"><i class="fas fa-code-branch mr-1" style="color: var(--c-gold);"></i>${proc.condition_count} cas</span>` : ''}
+          <span class="hidden sm:inline uppercase tracking-wider">v${proc.version || 1}</span>
         </div>
       </div>
       <div class="flex items-center gap-1 shrink-0">
         ${canEdit ? `
-          <button onclick="event.stopPropagation(); showProcedureForm(${proc.id})" class="w-8 h-8 rounded-lg bg-navy-50 hover:bg-navy-100 flex items-center justify-center text-navy-400 hover:text-navy-600 transition-colors" title="Modifier">
+          <button onclick="event.stopPropagation(); showProcedureForm(${proc.id})" class="w-8 h-8 rounded-lg flex items-center justify-center transition-colors" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);" onmouseover="this.style.background='var(--c-gold)'; this.style.color='var(--c-navy)';" onmouseout="this.style.background='var(--c-cream-deep)'; this.style.color='rgba(15,27,40,0.5)';" title="Modifier">
             <i class="fas fa-pen text-xs"></i>
           </button>
         ` : ''}
-        <i class="fas fa-chevron-right text-navy-300 text-xs ml-1"></i>
+        <i class="fas fa-chevron-right text-xs ml-1" style="color: rgba(15,27,40,0.25);"></i>
       </div>
     </div>
   </div>`;
@@ -1742,8 +1759,8 @@ function renderHotelInfoView() {
     return `
     <div class="fade-in flex items-center justify-center py-20">
       <div class="text-center">
-        <i class="fas fa-circle-notch fa-spin text-3xl text-brand-400 mb-3"></i>
-        <p class="text-navy-500 text-sm">Chargement des informations...</p>
+        <i class="fas fa-circle-notch fa-spin text-2xl mb-3" style="color: var(--c-gold);"></i>
+        <p class="text-sm" style="color: rgba(15,27,40,0.5);">Chargement des informations…</p>
       </div>
     </div>`;
   }
@@ -1758,39 +1775,36 @@ function renderHotelInfoView() {
     ? items.filter(it => (it.title || '').toLowerCase().includes(q) || (it.content || '').toLowerCase().includes(q))
     : items;
 
-  // Si recherche active : on affiche une liste à plat des résultats
-  // Sinon : groupé par catégorie en accordéon
   return `
   <div class="fade-in">
-    <!-- Header -->
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+    <!-- Header premium -->
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6">
       <div class="min-w-0">
-        <h2 class="text-xl sm:text-2xl font-bold text-navy-900">
-          <i class="fas fa-circle-info mr-2 text-brand-400"></i>Informations
-        </h2>
-        <p class="text-navy-500 text-sm mt-1">Tout ce qu'il faut savoir sur l'hôtel, à portée de main.</p>
+        <p class="section-eyebrow mb-2">L'hôtel en détail</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Informations</h2>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">Tout ce qu'il faut savoir sur l'hôtel, à portée de main.</p>
       </div>
       ${canEditInfo ? `
         <div class="flex flex-wrap gap-2 shrink-0">
-          <button onclick="showHotelInfoCategoryModal()" class="bg-white border border-navy-200 hover:bg-navy-50 text-navy-700 px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2">
+          <button onclick="showHotelInfoCategoryModal()" class="px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-all" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line-strong);" onmouseover="this.style.borderColor='var(--c-gold)'" onmouseout="this.style.borderColor='var(--c-line-strong)'">
             <i class="fas fa-folder-plus"></i><span class="hidden sm:inline">Catégorie</span>
           </button>
-          <button onclick="showHotelInfoItemModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shadow">
-            <i class="fas fa-plus"></i><span>Nouvelle info</span>
+          <button onclick="showHotelInfoItemModal()" class="btn-premium px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;">
+            <i class="fas fa-plus text-xs"></i><span>Nouvelle info</span>
           </button>
         </div>
       ` : ''}
     </div>
 
-    <!-- Barre de recherche sticky -->
-    <div class="sticky top-0 z-10 bg-gray-50 -mx-4 md:-mx-6 lg:-mx-8 px-4 md:px-6 lg:px-8 py-3 mb-4 border-b border-gray-200">
+    <!-- Barre de recherche premium sticky -->
+    <div class="sticky top-0 z-10 -mx-4 md:-mx-6 lg:-mx-8 px-4 md:px-6 lg:px-8 py-3 mb-5" style="background: var(--c-cream); border-bottom: 1px solid var(--c-line);">
       <div class="relative max-w-2xl">
-        <i class="fas fa-magnifying-glass absolute left-3 top-1/2 -translate-y-1/2 text-navy-400 text-sm"></i>
+        <i class="fas fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-sm" style="color: var(--c-gold);"></i>
         <input id="hotel-info-search" type="text" value="${escapeHtml(state.hotelInfoSearchQuery || '')}"
           oninput="state.hotelInfoSearchQuery = this.value; renderHotelInfoBody()"
           placeholder="Rechercher une info (parking, petit-déjeuner, jacuzzi…)"
-          class="form-input-mobile w-full pl-10 pr-10 py-2.5 border border-navy-200 rounded-xl outline-none focus:ring-2 focus:ring-brand-400 bg-white shadow-sm">
-        ${q ? `<button onclick="state.hotelInfoSearchQuery=''; document.getElementById('hotel-info-search').value=''; renderHotelInfoBody()" class="absolute right-3 top-1/2 -translate-y-1/2 text-navy-400 hover:text-navy-700"><i class="fas fa-xmark"></i></button>` : ''}
+          class="input-premium form-input-mobile w-full pl-10 pr-10 py-3 rounded-xl outline-none">
+        ${q ? `<button onclick="state.hotelInfoSearchQuery=''; document.getElementById('hotel-info-search').value=''; renderHotelInfoBody()" class="absolute right-3 top-1/2 -translate-y-1/2" style="color: rgba(15,27,40,0.4);"><i class="fas fa-xmark"></i></button>` : ''}
       </div>
     </div>
 
@@ -1823,19 +1837,19 @@ function renderHotelInfoBody() {
 function renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo) {
   if (filteredItems.length === 0 && q) {
     return `
-    <div class="bg-white rounded-xl border border-gray-200 p-8 text-center">
-      <i class="fas fa-magnifying-glass text-4xl text-navy-200 mb-3"></i>
-      <p class="text-navy-600 font-semibold">Aucun résultat pour « ${escapeHtml(q)} »</p>
-      <p class="text-navy-400 text-sm mt-1">Essayez avec un autre terme.</p>
+    <div class="card-premium empty-state-premium">
+      <div class="empty-icon"><i class="fas fa-magnifying-glass"></i></div>
+      <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucun résultat pour « ${escapeHtml(q)} »</p>
+      <p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Essayez avec un autre terme.</p>
     </div>`;
   }
 
   if (cats.length === 0 && filteredItems.length === 0) {
     return `
-    <div class="bg-white rounded-xl border border-gray-200 p-8 text-center">
-      <i class="fas fa-circle-info text-4xl text-navy-200 mb-3"></i>
-      <p class="text-navy-600 font-semibold">Aucune information renseignée pour le moment.</p>
-      ${canEditInfo ? '<p class="text-navy-400 text-sm mt-1">Cliquez sur « Nouvelle info » pour commencer.</p>' : ''}
+    <div class="card-premium empty-state-premium">
+      <div class="empty-icon"><i class="fas fa-circle-info"></i></div>
+      <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucune information renseignée</p>
+      ${canEditInfo ? `<p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Cliquez sur « Nouvelle info » pour commencer.</p>` : ''}
     </div>`;
   }
 
@@ -1861,51 +1875,48 @@ function renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo) {
   const orphanItems = itemsByCat[0] || [];
 
   return `
-  <div class="space-y-3">
+  <div class="space-y-4">
     ${cats.map(cat => {
       const catItems = itemsByCat[cat.id] || [];
       const isOpen = state.hotelInfoActiveCategory === cat.id;
       return `
-      <div id="info-cat-${cat.id}" class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <!-- Header de la catégorie : zone clickable à gauche, actions à droite -->
-        <div class="flex items-stretch">
-          <!-- Zone clickable : icône + nom + nb infos -->
+      <div id="info-cat-${cat.id}" class="card-premium">
+        <!-- Header de la catégorie premium -->
+        <div class="flex items-stretch" style="background: linear-gradient(180deg, #fff 0%, var(--c-cream) 100%); border-bottom: ${isOpen ? '1px solid var(--c-line)' : 'none'};">
           <button type="button" onclick="toggleHotelInfoCategory(${cat.id})"
-            class="flex-1 min-w-0 flex items-center gap-3 px-4 sm:px-5 py-4 hover:bg-navy-50 transition-colors text-left">
-            <div class="w-10 h-10 rounded-lg flex items-center justify-center text-white shrink-0" style="background:${cat.color || '#3B82F6'}">
-              <i class="fas ${cat.icon || 'fa-circle-info'}"></i>
+            class="flex-1 min-w-0 flex items-center gap-3 px-5 py-4 transition-colors text-left">
+            <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(201,169,97,0.12);">
+              <i class="fas ${cat.icon || 'fa-circle-info'}" style="color: var(--c-gold-deep);"></i>
             </div>
             <div class="flex-1 min-w-0">
-              <h3 class="font-semibold text-navy-800 text-sm sm:text-base truncate">${escapeHtml(cat.name)}</h3>
-              <p class="text-xs text-navy-500">${catItems.length} info${catItems.length > 1 ? 's' : ''}</p>
+              <h3 class="font-display font-semibold text-sm sm:text-base truncate" style="color: var(--c-navy);">${escapeHtml(cat.name)}</h3>
+              <p class="text-[11px] uppercase tracking-wider mt-0.5" style="color: rgba(15,27,40,0.45);">${catItems.length} info${catItems.length > 1 ? 's' : ''}</p>
             </div>
           </button>
-          <!-- Zone d'actions à droite : édition / suppression / chevron -->
           <div class="flex items-center gap-1 pr-3 sm:pr-4 shrink-0">
             ${canEditInfo ? `
               <button type="button" onclick="showHotelInfoCategoryModal(${cat.id})" title="Renommer la catégorie"
-                class="w-9 h-9 rounded-lg hover:bg-navy-100 text-navy-400 hover:text-navy-700 flex items-center justify-center transition-colors">
+                class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="color: rgba(15,27,40,0.4);" onmouseover="this.style.background='var(--c-cream-deep)'; this.style.color='var(--c-navy)';" onmouseout="this.style.background='transparent'; this.style.color='rgba(15,27,40,0.4)';">
                 <i class="fas fa-pen text-sm"></i>
               </button>
               <button type="button" onclick="deleteHotelInfoCategory(${cat.id})" title="Supprimer"
-                class="w-9 h-9 rounded-lg hover:bg-red-50 text-navy-400 hover:text-red-500 flex items-center justify-center transition-colors">
+                class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="color: rgba(15,27,40,0.4);" onmouseover="this.style.background='rgba(226,125,110,0.12)'; this.style.color='#C84C3F';" onmouseout="this.style.background='transparent'; this.style.color='rgba(15,27,40,0.4)';">
                 <i class="fas fa-trash text-sm"></i>
               </button>
-              <div class="w-px h-6 bg-gray-200 mx-1"></div>
+              <div class="w-px h-6 mx-1" style="background: var(--c-line-strong);"></div>
             ` : ''}
             <button type="button" onclick="toggleHotelInfoCategory(${cat.id})" title="Ouvrir / fermer"
-              class="w-9 h-9 rounded-lg hover:bg-navy-100 text-navy-500 hover:text-navy-800 flex items-center justify-center transition-colors">
+              class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="color: var(--c-gold-deep);" onmouseover="this.style.background='rgba(201,169,97,0.12)'" onmouseout="this.style.background='transparent'">
               <i id="info-cat-chevron-${cat.id}" class="fas fa-chevron-${isOpen ? 'up' : 'down'} text-sm transition-transform"></i>
             </button>
           </div>
         </div>
-        <!-- Contenu (toujours rendu, juste caché quand fermé pour éviter le scroll-jump) -->
-        <div id="info-cat-content-${cat.id}" class="${isOpen ? '' : 'hidden'} border-t border-gray-100 p-3 sm:p-4 space-y-2 bg-gray-50">
+        <div id="info-cat-content-${cat.id}" class="${isOpen ? '' : 'hidden'} p-3 sm:p-4 space-y-2" style="background: var(--c-cream);">
           ${catItems.length === 0 ? `
-            <p class="text-sm text-navy-400 italic px-2 py-3">Aucune info dans cette catégorie.</p>
+            <p class="text-sm italic px-2 py-3" style="color: rgba(15,27,40,0.4);">Aucune info dans cette catégorie.</p>
           ` : catItems.map(it => renderHotelInfoItemCard(it, cat, canEditInfo, false)).join('')}
           ${canEditInfo ? `
-            <button onclick="showHotelInfoItemModal(null, ${cat.id})" class="w-full mt-2 px-3 py-2 border-2 border-dashed border-navy-200 hover:border-brand-400 hover:bg-brand-50 text-navy-500 hover:text-brand-600 rounded-lg text-sm font-medium transition-colors">
+            <button onclick="showHotelInfoItemModal(null, ${cat.id})" class="w-full mt-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all" style="border: 1.5px dashed var(--c-line-strong); color: rgba(15,27,40,0.5); background: transparent;" onmouseover="this.style.borderColor='var(--c-gold)'; this.style.color='var(--c-gold-deep)'; this.style.background='rgba(201,169,97,0.05)';" onmouseout="this.style.borderColor='var(--c-line-strong)'; this.style.color='rgba(15,27,40,0.5)'; this.style.background='transparent';">
               <i class="fas fa-plus mr-1"></i>Ajouter une info dans « ${escapeHtml(cat.name)} »
             </button>
           ` : ''}
@@ -1914,11 +1925,11 @@ function renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo) {
     }).join('')}
 
     ${orphanItems.length > 0 ? `
-      <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
-        <div class="px-4 sm:px-5 py-3 border-b border-gray-100 bg-navy-50">
-          <h3 class="text-sm font-semibold text-navy-700"><i class="fas fa-folder-open mr-2 text-navy-400"></i>Sans catégorie</h3>
+      <div class="card-premium">
+        <div class="px-5 py-3" style="border-bottom: 1px solid var(--c-line); background: var(--c-cream-deep);">
+          <h3 class="text-sm font-display font-semibold" style="color: var(--c-navy);"><i class="fas fa-folder-open mr-2" style="color: var(--c-gold);"></i>Sans catégorie</h3>
         </div>
-        <div class="p-3 sm:p-4 space-y-2">
+        <div class="p-3 sm:p-4 space-y-2" style="background: var(--c-cream);">
           ${orphanItems.map(it => renderHotelInfoItemCard(it, null, canEditInfo, false)).join('')}
         </div>
       </div>
@@ -1928,27 +1939,27 @@ function renderHotelInfoBodyHTML(cats, filteredItems, q, canEditInfo) {
 
 function renderHotelInfoItemCard(item, category, canEditInfo, showCategoryBadge) {
   return `
-  <div id="info-item-${item.id}" class="bg-white rounded-lg border border-gray-200 hover:border-brand-300 transition-colors">
-    <div class="px-4 py-3 flex items-start gap-3">
+  <div id="info-item-${item.id}" class="rounded-lg transition-all" style="background: #fff; border: 1px solid var(--c-line);" onmouseover="this.style.borderColor='rgba(201,169,97,0.35)'" onmouseout="this.style.borderColor='var(--c-line)'">
+    <div class="px-4 py-3.5 flex items-start gap-3">
       <div class="flex-1 min-w-0">
-        <div class="flex items-center gap-2 flex-wrap mb-1">
-          <h4 class="font-semibold text-navy-800 text-sm sm:text-base">${escapeHtml(item.title)}</h4>
+        <div class="flex items-center gap-2 flex-wrap mb-1.5">
+          <h4 class="font-display font-semibold text-sm sm:text-base" style="color: var(--c-navy);">${escapeHtml(item.title)}</h4>
           ${showCategoryBadge && category ? `
-            <span class="text-[10px] px-2 py-0.5 rounded-full font-semibold" style="background:${category.color || '#3B82F6'}20; color:${category.color || '#3B82F6'}">
-              <i class="fas ${category.icon || 'fa-circle-info'} mr-1"></i>${escapeHtml(category.name)}
+            <span class="pill-gold">
+              <i class="fas ${category.icon || 'fa-circle-info'}"></i>${escapeHtml(category.name)}
             </span>
           ` : ''}
         </div>
-        ${item.content ? `<div class="text-sm text-navy-600 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(item.content)}</div>` : ''}
+        ${item.content ? `<div class="text-sm whitespace-pre-wrap break-words leading-relaxed" style="color: rgba(15,27,40,0.72);">${formatHotelInfoContent(item.content)}</div>` : ''}
       </div>
       ${canEditInfo ? `
         <div class="flex items-center gap-1 shrink-0">
           <button onclick="showHotelInfoItemModal(${item.id})" title="Modifier"
-            class="w-8 h-8 rounded-lg hover:bg-navy-50 text-navy-400 hover:text-navy-700 flex items-center justify-center">
+            class="w-8 h-8 rounded-lg flex items-center justify-center transition-all" style="color: rgba(15,27,40,0.4);" onmouseover="this.style.background='var(--c-cream-deep)'; this.style.color='var(--c-navy)';" onmouseout="this.style.background='transparent'; this.style.color='rgba(15,27,40,0.4)';">
             <i class="fas fa-pen text-xs"></i>
           </button>
           <button onclick="deleteHotelInfoItem(${item.id})" title="Supprimer"
-            class="w-8 h-8 rounded-lg hover:bg-red-50 text-navy-400 hover:text-red-500 flex items-center justify-center">
+            class="w-8 h-8 rounded-lg flex items-center justify-center transition-all" style="color: rgba(15,27,40,0.4);" onmouseover="this.style.background='rgba(226,125,110,0.12)'; this.style.color='#C84C3F';" onmouseout="this.style.background='transparent'; this.style.color='rgba(15,27,40,0.4)';">
             <i class="fas fa-trash text-xs"></i>
           </button>
         </div>
@@ -4790,15 +4801,15 @@ function formatChatTime(iso) {
 function showModal(title, content) {
   const container = document.getElementById('modal-container');
   container.innerHTML = `
-  <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center sm:p-4 modal-overlay" onclick="if(event.target===this)closeModal()">
-    <div class="bg-white shadow-2xl w-full max-w-2xl modal-panel fade-in">
-      <div class="flex items-center justify-between p-4 sm:p-5 border-b border-gray-100 sticky top-0 bg-white z-10 modal-header">
-        <h3 class="text-base sm:text-lg font-semibold text-navy-800 truncate pr-3">${escapeHtml(title)}</h3>
-        <button onclick="closeModal()" class="w-9 h-9 rounded-lg bg-navy-50 hover:bg-navy-100 flex items-center justify-center text-navy-500 transition-colors shrink-0">
+  <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4 modal-overlay" style="background: rgba(10,22,40,0.55); backdrop-filter: blur(2px);" onclick="if(event.target===this)closeModal()">
+    <div class="modal-premium w-full max-w-2xl modal-panel fade-in">
+      <div class="modal-header-premium flex items-center justify-between sticky top-0 z-10">
+        <h3 class="font-display font-semibold text-base sm:text-lg truncate pr-3" style="color: var(--c-navy);">${escapeHtml(title)}</h3>
+        <button onclick="closeModal()" class="w-9 h-9 rounded-lg flex items-center justify-center transition-all shrink-0" style="background: var(--c-cream-deep); color: var(--c-navy);" onmouseover="this.style.background='var(--c-gold)';" onmouseout="this.style.background='var(--c-cream-deep)';">
           <i class="fas fa-times"></i>
         </button>
       </div>
-      <div class="p-4 sm:p-5 modal-body">
+      <div class="p-5 sm:p-7 modal-body" style="background: #fff;">
         ${content}
       </div>
     </div>
@@ -6674,37 +6685,48 @@ async function cancelStaffReservation(id) {
 function renderClientApp() {
   const c = state.client || {};
   const view = state.clientView || 'wikot';
+  const tabClass = (active) => active
+    ? 'flex-1 py-3.5 text-sm font-semibold transition-all'
+    : 'flex-1 py-3.5 text-sm font-medium transition-all';
+  const tabStyle = (active) => active
+    ? 'color: var(--c-navy); box-shadow: inset 0 -2px 0 var(--c-gold);'
+    : 'color: rgba(15,27,40,0.45);';
   return `
-  <div class="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 flex flex-col">
-    <!-- Header -->
-    <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-sm">
-      <div class="flex items-center gap-2">
-        <div class="w-9 h-9 bg-brand-400 rounded-lg flex items-center justify-center shadow"><i class="fas fa-concierge-bell text-white text-sm"></i></div>
+  <div class="min-h-screen flex flex-col" style="background: var(--c-cream);">
+    <!-- Header premium -->
+    <header class="px-4 sm:px-6 py-4 flex items-center justify-between" style="background: #fff; border-bottom: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04);">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: var(--c-gold);">
+          <i class="fas fa-concierge-bell text-sm" style="color: var(--c-navy);"></i>
+        </div>
         <div>
-          <div class="font-bold text-navy-800 text-sm">Wik<span class="text-brand-400">ot</span></div>
-          <div class="text-[11px] text-gray-500">${escapeHtml(c.hotel_name || '')}</div>
+          <div class="font-display font-semibold text-base" style="color: var(--c-navy);">Wikot</div>
+          <div class="text-[10px] uppercase tracking-[0.18em]" style="color: var(--c-gold-deep);">${escapeHtml(c.hotel_name || '')}</div>
         </div>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-3">
         <div class="text-right hidden sm:block">
-          <div class="text-xs text-gray-500">Bienvenue</div>
-          <div class="font-semibold text-sm text-navy-800">${escapeHtml(c.guest_name || '')} · Ch. ${escapeHtml(c.room_number || '')}</div>
+          <div class="text-[10px] uppercase tracking-wider" style="color: rgba(15,27,40,0.45);">Bienvenue</div>
+          <div class="font-display font-semibold text-sm" style="color: var(--c-navy);">${escapeHtml(c.guest_name || '')} · Ch. ${escapeHtml(c.room_number || '')}</div>
         </div>
-        <button onclick="clientLogout()" class="text-xs text-gray-500 hover:text-red-500 px-2 py-1.5"><i class="fas fa-sign-out-alt"></i> <span class="hidden sm:inline">Déconnexion</span></button>
+        <button onclick="clientLogout()" class="text-xs px-3 py-1.5 rounded-lg transition-all" style="color: rgba(15,27,40,0.5); border: 1px solid var(--c-line-strong);" onmouseover="this.style.color='#C84C3F'; this.style.borderColor='rgba(226,125,110,0.4)';" onmouseout="this.style.color='rgba(15,27,40,0.5)'; this.style.borderColor='var(--c-line-strong)';">
+          <i class="fas fa-sign-out-alt"></i> <span class="hidden sm:inline">Déconnexion</span>
+        </button>
       </div>
     </header>
 
-    <!-- Tabs : Front Wikot (par défaut) · Restaurant · Infos -->
-    <nav class="bg-white border-b border-gray-100 flex">
-      <button onclick="state.clientView='wikot'; render(); ensureClientWikotLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'wikot' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-comments mr-1"></i> Front Wikot</button>
-      <button onclick="state.clientView='restaurant'; render(); ensureClientRestaurantLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'restaurant' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-utensils mr-1"></i> Restaurant</button>
-      <button onclick="state.clientView='info'; render(); ensureClientInfoLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'info' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-circle-info mr-1"></i> Infos</button>
+    <!-- Tabs premium -->
+    <nav class="flex" style="background: #fff; border-bottom: 1px solid var(--c-line);">
+      <button onclick="state.clientView='wikot'; render(); ensureClientWikotLoaded()" class="${tabClass(view==='wikot')}" style="${tabStyle(view==='wikot')}"><i class="fas fa-comments mr-1.5"></i> Wikot</button>
+      <button onclick="state.clientView='restaurant'; render(); ensureClientRestaurantLoaded()" class="${tabClass(view==='restaurant')}" style="${tabStyle(view==='restaurant')}"><i class="fas fa-utensils mr-1.5"></i> Restaurant</button>
+      <button onclick="state.clientView='info'; render(); ensureClientInfoLoaded()" class="${tabClass(view==='info')}" style="${tabStyle(view==='info')}"><i class="fas fa-circle-info mr-1.5"></i> Infos</button>
     </nav>
 
     <!-- Content -->
-    <main class="flex-1 overflow-y-auto p-4 max-w-3xl mx-auto w-full">
+    <main class="flex-1 overflow-y-auto p-4 sm:p-6 max-w-3xl mx-auto w-full">
       ${view === 'restaurant' ? renderClientRestaurant()
         : view === 'info' ? renderClientInfo()
+        : view === 'home' ? renderClientHome()
         : renderClientWikot()}
     </main>
   </div>`;
@@ -6713,27 +6735,55 @@ function renderClientApp() {
 function renderClientHome() {
   const c = state.client || {};
   return `
-  <div class="space-y-4">
-    <div class="bg-white rounded-2xl shadow-sm p-6">
-      <h2 class="text-xl font-bold text-navy-800">Bonjour ${escapeHtml(c.guest_name || '')} 👋</h2>
-      <p class="text-sm text-gray-600 mt-1">Bienvenue dans votre chambre <strong>${escapeHtml(c.room_number || '')}</strong> à l'${escapeHtml(c.hotel_name || '')}.</p>
-      <p class="text-xs text-gray-400 mt-2"><i class="fas fa-clock mr-1"></i>Votre session reste active jusqu'à 12h00 du jour de votre départ.</p>
+  <div class="space-y-5 fade-in">
+    <!-- Carte de bienvenue façon palace -->
+    <div class="card-premium p-7 sm:p-8 relative overflow-hidden">
+      <!-- Liseré or en haut -->
+      <div class="absolute top-0 left-0 right-0 h-px" style="background: linear-gradient(to right, transparent, var(--c-gold), transparent);"></div>
+      <p class="section-eyebrow mb-2.5">L'${escapeHtml(c.hotel_name || 'hôtel')}</p>
+      <h2 class="font-display text-2xl sm:text-3xl font-medium leading-tight" style="color: var(--c-navy);">
+        Bienvenue, <span style="color: var(--c-gold-deep);">${escapeHtml(c.guest_name || '')}</span>
+      </h2>
+      <p class="text-sm mt-3" style="color: rgba(15,27,40,0.65);">
+        Vous séjournez en chambre <strong style="color: var(--c-navy);">${escapeHtml(c.room_number || '')}</strong>. Notre équipe et notre majordome digital sont à votre disposition.
+      </p>
+      <div class="mt-5 inline-flex items-center gap-2 text-[11px] uppercase tracking-wider" style="color: rgba(15,27,40,0.45);">
+        <i class="fas fa-clock" style="color: var(--c-gold);"></i>
+        Session active jusqu'au départ (12h00)
+      </div>
     </div>
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-      <button onclick="state.clientView='wikot'; render(); ensureClientWikotLoaded()" class="bg-white hover:bg-amber-50 border-2 border-amber-200 rounded-xl p-5 text-left transition-colors">
-        <div class="w-12 h-12 bg-amber-100 rounded-lg flex items-center justify-center mb-2"><i class="fas fa-comments text-amber-600 text-xl"></i></div>
-        <div class="font-bold text-navy-800">Discuter avec Wikot</div>
-        <div class="text-xs text-gray-500 mt-1">Posez vos questions sur l'hôtel.</div>
+
+    <!-- Actions principales -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+      <button onclick="state.clientView='wikot'; render(); ensureClientWikotLoaded()" class="card-premium p-6 text-left group">
+        <div class="w-12 h-12 rounded-xl flex items-center justify-center mb-3" style="background: rgba(201,169,97,0.12);">
+          <i class="fas fa-comments text-lg" style="color: var(--c-gold-deep);"></i>
+        </div>
+        <div class="font-display font-semibold text-base" style="color: var(--c-navy);">Discuter avec Wikot</div>
+        <div class="text-xs mt-1.5" style="color: rgba(15,27,40,0.55);">Posez vos questions sur l'hôtel.</div>
+        <div class="mt-4 text-[11px] uppercase tracking-wider font-semibold inline-flex items-center gap-1.5" style="color: var(--c-gold-deep);">
+          Démarrer <i class="fas fa-arrow-right text-[10px]"></i>
+        </div>
       </button>
-      <button onclick="state.clientView='restaurant'; render(); ensureClientRestaurantLoaded()" class="bg-white hover:bg-rose-50 border-2 border-rose-200 rounded-xl p-5 text-left transition-colors">
-        <div class="w-12 h-12 bg-rose-100 rounded-lg flex items-center justify-center mb-2"><i class="fas fa-utensils text-rose-600 text-xl"></i></div>
-        <div class="font-bold text-navy-800">Restaurant</div>
-        <div class="text-xs text-gray-500 mt-1">Réservez petit-déj, déjeuner, dîner.</div>
+      <button onclick="state.clientView='restaurant'; render(); ensureClientRestaurantLoaded()" class="card-premium p-6 text-left group">
+        <div class="w-12 h-12 rounded-xl flex items-center justify-center mb-3" style="background: rgba(201,169,97,0.12);">
+          <i class="fas fa-utensils text-lg" style="color: var(--c-gold-deep);"></i>
+        </div>
+        <div class="font-display font-semibold text-base" style="color: var(--c-navy);">Restaurant</div>
+        <div class="text-xs mt-1.5" style="color: rgba(15,27,40,0.55);">Réservez petit-déj, déjeuner, dîner.</div>
+        <div class="mt-4 text-[11px] uppercase tracking-wider font-semibold inline-flex items-center gap-1.5" style="color: var(--c-gold-deep);">
+          Réserver <i class="fas fa-arrow-right text-[10px]"></i>
+        </div>
       </button>
-      <button onclick="state.clientView='info'; render(); ensureClientInfoLoaded()" class="bg-white hover:bg-blue-50 border-2 border-blue-200 rounded-xl p-5 text-left transition-colors">
-        <div class="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-2"><i class="fas fa-circle-info text-blue-600 text-xl"></i></div>
-        <div class="font-bold text-navy-800">Infos pratiques</div>
-        <div class="text-xs text-gray-500 mt-1">Horaires, services, équipements.</div>
+      <button onclick="state.clientView='info'; render(); ensureClientInfoLoaded()" class="card-premium p-6 text-left group">
+        <div class="w-12 h-12 rounded-xl flex items-center justify-center mb-3" style="background: rgba(201,169,97,0.12);">
+          <i class="fas fa-circle-info text-lg" style="color: var(--c-gold-deep);"></i>
+        </div>
+        <div class="font-display font-semibold text-base" style="color: var(--c-navy);">Infos pratiques</div>
+        <div class="text-xs mt-1.5" style="color: rgba(15,27,40,0.55);">Horaires, services, équipements.</div>
+        <div class="mt-4 text-[11px] uppercase tracking-wider font-semibold inline-flex items-center gap-1.5" style="color: var(--c-gold-deep);">
+          Découvrir <i class="fas fa-arrow-right text-[10px]"></i>
+        </div>
       </button>
     </div>
   </div>`;

@@ -234,6 +234,10 @@ async function loadData() {
 
   // Chat — charger groupes, salons et compteur global non-lus
   await loadChatData();
+
+  // Badge sidebar "À faire" : compteur des tâches en attente pour moi
+  // (silencieux : si l'endpoint échoue, on ignore — la sidebar reste fonctionnelle)
+  if (typeof refreshTaskBadge === 'function') refreshTaskBadge();
 }
 
 // ============================================

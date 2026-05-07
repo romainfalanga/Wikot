@@ -175,7 +175,7 @@ function renderMainLayout() {
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       { id: 'occupancy', icon: 'fa-id-card', label: 'Code Wikot' },
       { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' },
-      { id: 'tasks', icon: 'fa-list-check', label: 'À faire' },
+      { id: 'tasks', icon: 'fa-list-check', label: 'À faire', badge: state.myTasksPendingCount },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
@@ -195,7 +195,7 @@ function renderMainLayout() {
         { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' }
       ] : []),
       // À faire : visible pour TOUS les employés (les permissions limitent juste les actions)
-      { id: 'tasks', icon: 'fa-list-check', label: 'À faire' },
+      { id: 'tasks', icon: 'fa-list-check', label: 'À faire', badge: state.myTasksPendingCount },
     ];
   }
 

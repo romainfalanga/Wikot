@@ -1248,55 +1248,56 @@ function renderProcedureDetail() {
 
   return `
   <div class="fade-in">
-    <!-- Header -->
+    <!-- Header premium -->
     <div class="mb-5 sm:mb-6">
-      <button onclick="state.selectedProcedure=null; navigate('procedures')" class="text-sm text-navy-400 hover:text-navy-600 mb-3 inline-flex items-center gap-1.5 transition-colors">
+      <button onclick="state.selectedProcedure=null; navigate('procedures')" class="text-sm mb-4 inline-flex items-center gap-1.5 transition-colors" style="color: rgba(15,27,40,0.5);" onmouseover="this.style.color='var(--c-navy)'" onmouseout="this.style.color='rgba(15,27,40,0.5)'">
         <i class="fas fa-arrow-left"></i>Retour aux procédures
       </button>
       
-      <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
+      <div class="card-premium p-5 sm:p-7">
         <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
           <div class="flex-1 min-w-0">
-            <h2 class="text-lg sm:text-xl font-bold text-navy-900 leading-tight">${escapeHtml(proc.title)}</h2>
-            ${procDescription ? `<p class="text-navy-600 text-sm sm:text-base mt-2 leading-relaxed whitespace-pre-wrap">${formatHotelInfoContent(procDescription)}</p>` : ''}
-            <div class="flex flex-wrap items-center gap-2 mt-3 text-xs text-navy-400">
-              <span class="bg-navy-50 px-2 py-1 rounded">${proc.category_name || 'Sans catégorie'}</span>
-              <span>v${proc.version}</span>
+            <p class="section-eyebrow mb-2">Procédure</p>
+            <h2 class="font-display text-xl sm:text-2xl font-semibold leading-tight" style="color: var(--c-navy);">${escapeHtml(proc.title)}</h2>
+            ${procDescription ? `<p class="text-sm sm:text-base mt-3 leading-relaxed whitespace-pre-wrap" style="color: rgba(15,27,40,0.7);">${formatHotelInfoContent(procDescription)}</p>` : ''}
+            <div class="flex flex-wrap items-center gap-2 mt-4 text-xs">
+              <span class="pill-gold">${proc.category_name || 'Sans catégorie'}</span>
+              <span class="text-[11px] uppercase tracking-wider" style="color: rgba(15,27,40,0.4);">v${proc.version}</span>
             </div>
           </div>
           ${canEdit ? `
           <div class="flex gap-2 sm:shrink-0">
-            <button onclick="showProcedureForm(${proc.id})" class="bg-navy-50 hover:bg-navy-100 text-navy-600 px-3 py-2 rounded-lg text-sm transition-colors flex items-center gap-1.5">
-              <i class="fas fa-pen"></i>Modifier
+            <button onclick="showProcedureForm(${proc.id})" class="px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-1.5" style="background: var(--c-cream-deep); color: var(--c-navy);" onmouseover="this.style.background='var(--c-gold)'" onmouseout="this.style.background='var(--c-cream-deep)'">
+              <i class="fas fa-pen text-xs"></i>Modifier
             </button>
           </div>` : ''}
         </div>
       </div>
     </div>
 
-    <!-- Déclencheur -->
+    <!-- Déclencheur premium -->
     ${procTrigger ? `
-    <div class="bg-gradient-to-r from-brand-50 to-yellow-50 rounded-xl border border-brand-200 p-4 sm:p-5 mb-6">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-brand-400 rounded-xl flex items-center justify-center shadow shrink-0">
-          <i class="fas fa-bolt text-white"></i>
+    <div class="card-premium p-5 mb-6" style="background: linear-gradient(135deg, var(--c-cream-deep) 0%, rgba(201,169,97,0.08) 100%); border-left: 3px solid var(--c-gold);">
+      <div class="flex items-center gap-4">
+        <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy);">
+          <i class="fas fa-bolt" style="color: var(--c-gold);"></i>
         </div>
         <div class="min-w-0">
-          <p class="text-xs font-semibold text-brand-600 uppercase tracking-wide">Déclencheur — Qu'est-ce qu'il se passe ?</p>
-          <p class="text-base sm:text-lg font-semibold text-navy-800 mt-0.5">${escapeHtml(procTrigger)}</p>
+          <p class="section-eyebrow">Déclencheur — Qu'est-ce qu'il se passe ?</p>
+          <p class="font-display text-base sm:text-lg font-semibold mt-0.5" style="color: var(--c-navy);">${escapeHtml(procTrigger)}</p>
         </div>
       </div>
     </div>
     ` : ''}
 
-    <!-- Steps - What to do -->
+    <!-- Steps premium -->
     <div class="mb-8">
-      <div class="flex items-center gap-2 mb-4">
-        <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
-          <i class="fas fa-list-check text-white text-sm"></i>
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background: var(--c-navy);">
+          <i class="fas fa-list-check text-sm" style="color: var(--c-gold);"></i>
         </div>
-        <h3 class="text-lg font-semibold text-navy-800">Étapes</h3>
-        <span class="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full">${steps.length} étape${steps.length > 1 ? 's' : ''}</span>
+        <h3 class="font-display text-lg font-semibold" style="color: var(--c-navy);">Étapes</h3>
+        <span class="pill-gold">${steps.length} étape${steps.length > 1 ? 's' : ''}</span>
       </div>
 
       <div class="space-y-0">
@@ -1304,15 +1305,15 @@ function renderProcedureDetail() {
       </div>
     </div>
 
-    <!-- Conditions / Sub-cases -->
+    <!-- Conditions premium -->
     ${conditions.length > 0 ? `
     <div class="mb-8">
-      <div class="flex items-center gap-2 mb-4">
-        <div class="w-8 h-8 bg-purple-500 rounded-lg flex items-center justify-center">
-          <i class="fas fa-code-branch text-white text-sm"></i>
+      <div class="flex items-center gap-3 mb-5">
+        <div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background: var(--c-navy);">
+          <i class="fas fa-code-branch text-sm" style="color: var(--c-gold);"></i>
         </div>
-        <h3 class="text-lg font-semibold text-navy-800">Cas spécifiques — Et si en plus...</h3>
-        <span class="text-xs bg-purple-100 text-purple-600 px-2 py-0.5 rounded-full">${conditions.length} cas</span>
+        <h3 class="font-display text-lg font-semibold" style="color: var(--c-navy);">Cas spécifiques — Et si en plus...</h3>
+        <span class="pill-gold">${conditions.length} cas</span>
       </div>
 
       <div class="space-y-4">
@@ -1326,8 +1327,6 @@ function renderProcedureDetail() {
 
 function renderStep(step, index, total) {
   const isLinked = !!step.linked_procedure_id;
-  // Style spécifique pour les sous-procédures (couleur violette)
-  const bubbleColor = isLinked ? 'bg-purple-500' : 'bg-blue-500';
   // Contenu : on prend content, sinon fallback description (rare, pour anciennes données)
   const stepContent = step.content || step.description || '';
 
@@ -1335,32 +1334,31 @@ function renderStep(step, index, total) {
   <div class="step-connector ${index === total - 1 ? 'last-step' : ''}">
     <div class="flex gap-4 pb-6">
       <div class="flex flex-col items-center">
-        <div class="w-10 h-10 ${bubbleColor} rounded-xl flex items-center justify-center text-white shadow-sm shrink-0 z-10">
-          <span class="text-sm font-bold">${step.step_number}</span>
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 z-10" style="background: var(--c-navy); border: 1.5px solid var(--c-gold);">
+          <span class="text-sm font-bold" style="color: var(--c-gold);">${step.step_number}</span>
         </div>
       </div>
-      <div class="flex-1 bg-white rounded-xl border border-gray-100 shadow-sm p-4 hover:shadow-md transition-shadow">
+      <div class="flex-1 card-premium p-4 transition-shadow">
         ${isLinked ? `
-          <!-- Sous-procédure : carte cliquable qui ouvre la procédure liée -->
           <button type="button" onclick="openLinkedProcedure(${step.linked_procedure_id})" class="w-full text-left">
             <div class="flex items-center gap-2 mb-1">
-              <i class="fas fa-diagram-project text-xs text-purple-500"></i>
-              <span class="text-[10px] uppercase tracking-wider font-semibold text-purple-500">Sous-procédure</span>
-              ${step.is_optional ? '<span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Optionnel</span>' : ''}
+              <i class="fas fa-diagram-project text-xs" style="color: var(--c-gold-deep);"></i>
+              <span class="section-eyebrow">Sous-procédure</span>
+              ${step.is_optional ? '<span class="text-[10px] px-1.5 py-0.5 rounded" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">Optionnel</span>' : ''}
             </div>
-            <h4 class="font-semibold text-navy-800 flex items-center gap-2">
+            <h4 class="font-display font-semibold flex items-center gap-2" style="color: var(--c-navy);">
               ${escapeHtml(step.title)}
-              <i class="fas fa-arrow-right text-xs text-purple-400"></i>
+              <i class="fas fa-arrow-right text-xs" style="color: var(--c-gold);"></i>
             </h4>
-            ${step.linked_procedure_title ? `<p class="text-sm text-purple-600 mt-1"><i class="fas fa-link mr-1 text-xs"></i>${escapeHtml(step.linked_procedure_title)}</p>` : '<p class="text-sm text-red-400 mt-1 italic">Procédure liée introuvable</p>'}
+            ${step.linked_procedure_title ? `<p class="text-sm mt-1" style="color: var(--c-gold-deep);"><i class="fas fa-link mr-1 text-xs"></i>${escapeHtml(step.linked_procedure_title)}</p>` : '<p class="text-sm mt-1 italic" style="color: #C84C3F;">Procédure liée introuvable</p>'}
           </button>
         ` : `
           <div class="flex items-center gap-2 mb-1.5">
-            ${step.is_optional ? '<span class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">Optionnel</span>' : ''}
-            ${step.duration_minutes ? `<span class="text-[10px] text-navy-400"><i class="fas fa-clock mr-0.5"></i>${step.duration_minutes} min</span>` : ''}
+            ${step.is_optional ? '<span class="text-[10px] px-1.5 py-0.5 rounded" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">Optionnel</span>' : ''}
+            ${step.duration_minutes ? `<span class="text-[10px]" style="color: rgba(15,27,40,0.45);"><i class="fas fa-clock mr-0.5"></i>${step.duration_minutes} min</span>` : ''}
           </div>
-          <h4 class="font-semibold text-navy-800">${escapeHtml(step.title)}</h4>
-          ${stepContent ? `<div class="text-sm text-navy-600 mt-2 leading-relaxed whitespace-pre-wrap">${formatHotelInfoContent(stepContent)}</div>` : ''}
+          <h4 class="font-display font-semibold" style="color: var(--c-navy);">${escapeHtml(step.title)}</h4>
+          ${stepContent ? `<div class="text-sm mt-2 leading-relaxed whitespace-pre-wrap" style="color: rgba(15,27,40,0.7);">${formatHotelInfoContent(stepContent)}</div>` : ''}
         `}
       </div>
     </div>
@@ -1380,19 +1378,19 @@ async function openLinkedProcedure(procId) {
 
 function renderCondition(cond) {
   return `
-  <div class="bg-purple-50 rounded-xl border border-purple-100 overflow-hidden">
-    <div class="px-5 py-3 bg-purple-100 border-b border-purple-200 flex items-center gap-3">
-      <div class="w-8 h-8 bg-purple-500 rounded-lg flex items-center justify-center">
-        <i class="fas fa-code-branch text-white text-sm"></i>
+  <div class="card-premium overflow-hidden" style="border-left: 3px solid var(--c-gold);">
+    <div class="px-5 py-4 flex items-center gap-3" style="background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
+      <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style="background: var(--c-navy);">
+        <i class="fas fa-code-branch text-sm" style="color: var(--c-gold);"></i>
       </div>
-      <div>
-        <p class="text-xs font-semibold text-purple-600 uppercase tracking-wide">Si en plus...</p>
-        <p class="font-semibold text-purple-900">${escapeHtml(cond.condition_text)}</p>
+      <div class="min-w-0">
+        <p class="section-eyebrow">Si en plus...</p>
+        <p class="font-display font-semibold" style="color: var(--c-navy);">${escapeHtml(cond.condition_text)}</p>
       </div>
     </div>
-    ${cond.description ? `<p class="px-5 pt-3 text-sm text-purple-700">${escapeHtml(cond.description)}</p>` : ''}
+    ${cond.description ? `<p class="px-5 pt-3 text-sm" style="color: rgba(15,27,40,0.65);">${escapeHtml(cond.description)}</p>` : ''}
     <div class="p-5">
-      ${(cond.steps || []).length === 0 ? '<p class="text-sm text-purple-400">Aucune étape spécifique</p>' :
+      ${(cond.steps || []).length === 0 ? '<p class="text-sm italic" style="color: rgba(15,27,40,0.4);">Aucune étape spécifique</p>' :
         `<div class="space-y-0">
           ${cond.steps.map((step, i) => renderStep(step, i, cond.steps.length)).join('')}
         </div>`}
@@ -1408,67 +1406,69 @@ function renderSuggestionsView() {
 
   return `
   <div class="fade-in">
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6">
       <div>
-        <h2 class="text-2xl font-bold text-navy-900"><i class="fas fa-lightbulb mr-2 text-brand-400"></i>Suggestions</h2>
-        <p class="text-navy-500 text-sm mt-1">${isAdmin ? 'Gérez les suggestions de l\'équipe' : 'Vos suggestions d\'amélioration'}</p>
+        <p class="section-eyebrow mb-2">Boîte à idées</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Suggestions</h2>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.55);">${isAdmin ? 'Gérez les suggestions de l\'équipe' : 'Vos suggestions d\'amélioration'}</p>
       </div>
-      <button onclick="showSuggestionForm()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
-        <i class="fas fa-plus mr-1.5"></i>Nouvelle suggestion
+      <button onclick="showSuggestionForm()" class="btn-premium px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 self-start sm:self-auto" style="background: var(--c-navy); color: #fff;">
+        <i class="fas fa-plus text-xs"></i>Nouvelle suggestion
       </button>
     </div>
 
     <div class="space-y-3">
       ${state.suggestions.length === 0 ? `
-        <div class="bg-white rounded-xl p-12 text-center border border-gray-100">
-          <i class="fas fa-lightbulb text-4xl text-navy-200 mb-4"></i>
-          <p class="text-navy-400 font-medium">Aucune suggestion</p>
+        <div class="card-premium empty-state-premium">
+          <div class="empty-icon"><i class="fas fa-lightbulb"></i></div>
+          <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucune suggestion</p>
+          <p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Lancez la conversation en ajoutant la première idée.</p>
         </div>
       ` : state.suggestions.map(s => {
         const typeConfig = {
-          new_procedure: { label: 'Nouvelle procédure', icon: 'fa-plus-circle', color: 'text-blue-500 bg-blue-50' },
-          improvement: { label: 'Amélioration', icon: 'fa-wand-magic-sparkles', color: 'text-purple-500 bg-purple-50' },
-          issue: { label: 'Problème', icon: 'fa-bug', color: 'text-red-500 bg-red-50' }
+          new_procedure: { label: 'Nouvelle procédure', icon: 'fa-plus-circle' },
+          improvement: { label: 'Amélioration', icon: 'fa-wand-magic-sparkles' },
+          issue: { label: 'Problème', icon: 'fa-bug' }
         };
         const statusConfig = {
-          pending: { label: 'En attente', class: 'bg-yellow-100 text-yellow-700' },
-          reviewed: { label: 'En cours de revue', class: 'bg-blue-100 text-blue-700' },
-          approved: { label: 'Approuvée', class: 'bg-green-100 text-green-700' },
-          rejected: { label: 'Rejetée', class: 'bg-red-100 text-red-700' },
-          implemented: { label: 'Implémentée', class: 'bg-purple-100 text-purple-700' }
+          pending: { label: 'En attente', bg: 'rgba(201,169,97,0.15)', color: 'var(--c-gold-deep)' },
+          reviewed: { label: 'En cours de revue', bg: 'rgba(15,27,40,0.06)', color: 'var(--c-navy)' },
+          approved: { label: 'Approuvée', bg: 'rgba(201,169,97,0.20)', color: 'var(--c-gold-deep)' },
+          rejected: { label: 'Rejetée', bg: 'rgba(226,125,110,0.12)', color: '#C84C3F' },
+          implemented: { label: 'Implémentée', bg: 'var(--c-navy)', color: 'var(--c-gold)' }
         };
         const tc = typeConfig[s.type] || typeConfig.improvement;
         const sc = statusConfig[s.status] || statusConfig.pending;
 
         return `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
-          <div class="flex items-start gap-3">
-            <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${tc.color}">
-              <i class="fas ${tc.icon}"></i>
+        <div class="card-premium p-5">
+          <div class="flex items-start gap-4">
+            <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy);">
+              <i class="fas ${tc.icon}" style="color: var(--c-gold);"></i>
             </div>
-            <div class="flex-1">
-              <div class="flex items-center gap-2 mb-1">
-                <h4 class="font-semibold text-navy-800">${s.title}</h4>
-                <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium ${sc.class}">${sc.label}</span>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <h4 class="font-display font-semibold" style="color: var(--c-navy);">${s.title}</h4>
+                <span class="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full font-semibold" style="background: ${sc.bg}; color: ${sc.color};">${sc.label}</span>
               </div>
-              <p class="text-sm text-navy-500">${s.description}</p>
-              <div class="flex items-center gap-3 mt-2 text-[11px] text-navy-400">
-                <span><i class="fas fa-user mr-1"></i>${s.user_name}</span>
-                <span><i class="fas fa-clock mr-1"></i>${formatDate(s.created_at)}</span>
-                ${s.procedure_title ? `<span><i class="fas fa-sitemap mr-1"></i>${s.procedure_title}</span>` : ''}
+              <p class="text-sm" style="color: rgba(15,27,40,0.65);">${s.description}</p>
+              <div class="flex items-center gap-3 mt-2 text-[11px]" style="color: rgba(15,27,40,0.45);">
+                <span><i class="fas fa-user mr-1" style="color: var(--c-gold);"></i>${s.user_name}</span>
+                <span><i class="fas fa-clock mr-1" style="color: var(--c-gold);"></i>${formatDate(s.created_at)}</span>
+                ${s.procedure_title ? `<span><i class="fas fa-sitemap mr-1" style="color: var(--c-gold);"></i>${s.procedure_title}</span>` : ''}
               </div>
               ${s.admin_response ? `
-              <div class="mt-3 bg-navy-50 rounded-lg p-3">
-                <p class="text-xs font-semibold text-navy-500 mb-1"><i class="fas fa-reply mr-1"></i>Réponse de ${s.reviewed_by_name || 'l\'admin'}</p>
-                <p class="text-sm text-navy-700">${s.admin_response}</p>
+              <div class="mt-3 rounded-lg p-3" style="background: var(--c-cream-deep); border-left: 3px solid var(--c-gold);">
+                <p class="section-eyebrow mb-1"><i class="fas fa-reply mr-1"></i>Réponse de ${s.reviewed_by_name || 'l\'admin'}</p>
+                <p class="text-sm" style="color: var(--c-navy);">${s.admin_response}</p>
               </div>` : ''}
             </div>
             ${isAdmin && s.status === 'pending' ? `
             <div class="flex gap-1.5 shrink-0">
-              <button onclick="reviewSuggestion(${s.id}, 'approved')" class="w-8 h-8 rounded-lg bg-green-50 hover:bg-green-100 flex items-center justify-center text-green-500 transition-colors" title="Approuver">
+              <button onclick="reviewSuggestion(${s.id}, 'approved')" class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: rgba(201,169,97,0.12); color: var(--c-gold-deep);" onmouseover="this.style.background='var(--c-gold)';this.style.color='var(--c-navy)';" onmouseout="this.style.background='rgba(201,169,97,0.12)';this.style.color='var(--c-gold-deep)';" title="Approuver">
                 <i class="fas fa-check text-xs"></i>
               </button>
-              <button onclick="reviewSuggestion(${s.id}, 'rejected')" class="w-8 h-8 rounded-lg bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-500 transition-colors" title="Rejeter">
+              <button onclick="reviewSuggestion(${s.id}, 'rejected')" class="w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: rgba(226,125,110,0.10); color: #C84C3F;" onmouseover="this.style.background='rgba(226,125,110,0.20)'" onmouseout="this.style.background='rgba(226,125,110,0.10)'" title="Rejeter">
                 <i class="fas fa-times text-xs"></i>
               </button>
             </div>` : ''}
@@ -1574,86 +1574,99 @@ function renderUsersView() {
   const roleLabels = { super_admin: 'Super Admin', admin: 'Admin', employee: 'Employé' };
   const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', employee: 'bg-green-100 text-green-700' };
 
+  // Pills premium pour le rôle (au lieu des couleurs criardes)
+  const rolePill = (role) => {
+    const cfg = {
+      super_admin: 'background: rgba(10,22,40,0.08); color: var(--c-navy);',
+      admin:       'background: rgba(201,169,97,0.14); color: var(--c-gold-deep);',
+      employee:    'background: var(--c-cream-deep); color: rgba(15,27,40,0.65);'
+    };
+    return `<span class="text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded-full" style="${cfg[role] || cfg.employee}">${roleLabels[role]}</span>`;
+  };
+
   return `
   <div class="fade-in">
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+    <!-- Header premium -->
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-7">
       <div>
-        <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-users mr-2 text-brand-400"></i>Utilisateurs</h2>
-        <p class="text-navy-500 text-sm mt-1">${filteredUsers.length} compte(s)${filterHotelId ? ' — filtré' : ''}</p>
+        <p class="section-eyebrow mb-2">Équipe</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Utilisateurs</h2>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">${filteredUsers.length} compte${filteredUsers.length > 1 ? 's' : ''}${filterHotelId ? ' — filtré' : ''}</p>
       </div>
-      <button onclick="showUserForm()" class="self-start sm:self-auto bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-1.5">
-        <i class="fas fa-user-plus"></i>Ajouter
+      <button onclick="showUserForm()" class="btn-premium self-start sm:self-auto px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;">
+        <i class="fas fa-user-plus text-xs"></i>Ajouter
       </button>
     </div>
 
     ${isSuperAdmin ? `
-    <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4 mb-4 flex items-center gap-4 flex-wrap">
-      <div class="flex items-center gap-2">
-        <i class="fas fa-filter text-navy-400 text-sm"></i>
-        <span class="text-sm font-medium text-navy-600">Filtrer par hôtel :</span>
+    <div class="card-premium p-4 mb-5 flex items-center gap-3 flex-wrap">
+      <div class="flex items-center gap-2 shrink-0">
+        <i class="fas fa-filter text-sm" style="color: var(--c-gold);"></i>
+        <span class="text-xs uppercase tracking-wider font-semibold" style="color: var(--c-navy);">Filtrer par hôtel</span>
       </div>
       <div class="flex gap-2 flex-wrap">
-        <button onclick="state.usersFilterHotel=''; render()" 
-          class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${!filterHotelId ? 'bg-navy-800 text-white' : 'bg-navy-50 text-navy-500 hover:bg-navy-100'}">
+        <button onclick="state.usersFilterHotel=''; render()"
+          class="text-xs px-3 py-1.5 rounded-lg font-medium transition-all" style="${!filterHotelId ? 'background: var(--c-navy); color: #fff;' : 'background: var(--c-cream-deep); color: var(--c-navy);'}">
           Tous
         </button>
-        ${state.hotels.map(h => `
-          <button onclick="state.usersFilterHotel='${h.id}'; render()" 
-            class="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ${filterHotelId === String(h.id) ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}">
-            <i class="fas fa-hotel mr-1"></i>${h.name}
+        ${state.hotels.map(h => {
+          const isActive = filterHotelId === String(h.id);
+          return `
+          <button onclick="state.usersFilterHotel='${h.id}'; render()"
+            class="text-xs px-3 py-1.5 rounded-lg font-medium transition-all" style="${isActive ? 'background: var(--c-gold); color: var(--c-navy);' : 'background: rgba(201,169,97,0.10); color: var(--c-gold-deep); border: 1px solid rgba(201,169,97,0.20);'}">
+            <i class="fas fa-hotel mr-1"></i>${escapeHtml(h.name)}
           </button>
-        `).join('')}
+        `;}).join('')}
       </div>
     </div>` : ''}
 
-    <!-- Desktop table (md+) -->
-    <div class="hidden md:block bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+    <!-- Desktop table premium (md+) -->
+    <div class="hidden md:block card-premium overflow-hidden">
      <div class="table-scroll-wrapper">
       <table class="w-full min-w-[640px]">
         <thead>
-          <tr class="bg-navy-50 text-xs text-navy-500 uppercase tracking-wider">
-            <th class="text-left py-3 px-5">Utilisateur</th>
-            ${isSuperAdmin ? '<th class="text-left py-3 px-5">Hôtel</th>' : ''}
-            <th class="text-left py-3 px-5">Rôle</th>
-            <th class="text-left py-3 px-5">Dernière connexion</th>
-            <th class="text-left py-3 px-5">Statut</th>
-            ${isAdmin ? '<th class="text-left py-3 px-5">Permissions employé</th>' : ''}
-            <th class="text-left py-3 px-5">Actions</th>
+          <tr class="text-[10px] uppercase tracking-wider" style="background: var(--c-cream-deep); color: var(--c-gold-deep);">
+            <th class="text-left py-3 px-5 font-semibold">Utilisateur</th>
+            ${isSuperAdmin ? '<th class="text-left py-3 px-5 font-semibold">Hôtel</th>' : ''}
+            <th class="text-left py-3 px-5 font-semibold">Rôle</th>
+            <th class="text-left py-3 px-5 font-semibold">Dernière connexion</th>
+            <th class="text-left py-3 px-5 font-semibold">Statut</th>
+            ${isAdmin ? '<th class="text-left py-3 px-5 font-semibold">Permissions employé</th>' : ''}
+            <th class="text-left py-3 px-5 font-semibold">Actions</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-gray-50">
+        <tbody>
           ${filteredUsers.length === 0 ? `
-            <tr><td colspan="6" class="py-10 text-center text-navy-400 text-sm">Aucun utilisateur</td></tr>
+            <tr><td colspan="6" class="py-10 text-center text-sm" style="color: rgba(15,27,40,0.45);">Aucun utilisateur</td></tr>
           ` : filteredUsers.map(u => {
-            const hasEditRight = u.can_edit_procedures === 1;
             const isEmployee = u.role === 'employee';
             const isSelf = u.id === state.user.id;
             return `
-            <tr class="hover:bg-gray-50">
-              <td class="py-3 px-5">
+            <tr style="border-top: 1px solid var(--c-line);" onmouseover="this.style.background='var(--c-cream)';" onmouseout="this.style.background='transparent';">
+              <td class="py-3.5 px-5">
                 <div class="flex items-center gap-3">
-                  <div class="w-8 h-8 bg-navy-100 rounded-full flex items-center justify-center text-sm font-semibold text-navy-600">${u.name.charAt(0)}</div>
+                  <div class="w-9 h-9 rounded-full flex items-center justify-center text-sm font-semibold" style="background: var(--c-navy); color: var(--c-gold);">${escapeHtml(u.name.charAt(0))}</div>
                   <div>
-                    <p class="text-sm font-medium text-navy-800">${u.name}${isSelf ? ' <span class="text-[10px] bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded ml-1">vous</span>' : ''}</p>
-                    <p class="text-xs text-navy-400">${u.email}</p>
+                    <p class="text-sm font-display font-semibold" style="color: var(--c-navy);">${escapeHtml(u.name)}${isSelf ? ' <span class="text-[10px] px-1.5 py-0.5 rounded ml-1" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">vous</span>' : ''}</p>
+                    <p class="text-xs" style="color: rgba(15,27,40,0.5);">${escapeHtml(u.email)}</p>
                   </div>
                 </div>
               </td>
-              ${isSuperAdmin ? `<td class="py-3 px-5 text-sm text-navy-600">${u.hotel_name || '<span class="text-navy-300 italic">—</span>'}</td>` : ''}
-              <td class="py-3 px-5"><span class="text-[10px] px-2 py-0.5 rounded-full font-medium ${roleColors[u.role]}">${roleLabels[u.role]}</span></td>
-              <td class="py-3 px-5 text-xs text-navy-400">${u.last_login ? formatDate(u.last_login) : 'Jamais'}</td>
-              <td class="py-3 px-5">
-                <span class="w-2 h-2 rounded-full inline-block ${u.is_active ? 'bg-green-500' : 'bg-red-500'}"></span>
-                <span class="text-xs text-navy-400 ml-1">${u.is_active ? 'Actif' : 'Inactif'}</span>
+              ${isSuperAdmin ? `<td class="py-3.5 px-5 text-sm" style="color: rgba(15,27,40,0.65);">${u.hotel_name ? escapeHtml(u.hotel_name) : '<span style="color: rgba(15,27,40,0.3);" class="italic">—</span>'}</td>` : ''}
+              <td class="py-3.5 px-5">${rolePill(u.role)}</td>
+              <td class="py-3.5 px-5 text-xs" style="color: rgba(15,27,40,0.5);">${u.last_login ? formatDate(u.last_login) : 'Jamais'}</td>
+              <td class="py-3.5 px-5">
+                <span class="w-2 h-2 rounded-full inline-block" style="background: ${u.is_active ? '#5C8A6E' : '#C84C3F'};"></span>
+                <span class="text-xs ml-1.5" style="color: rgba(15,27,40,0.55);">${u.is_active ? 'Actif' : 'Inactif'}</span>
               </td>
               ${isAdmin ? `
-              <td class="py-3 px-5">
-                ${isEmployee ? permissionCheckboxes(u) : `<span class="text-xs text-navy-300 italic">${u.role === 'admin' ? 'Droits admin (complets)' : '—'}</span>`}
+              <td class="py-3.5 px-5">
+                ${isEmployee ? permissionCheckboxes(u) : `<span class="text-xs italic" style="color: rgba(15,27,40,0.35);">${u.role === 'admin' ? 'Droits admin (complets)' : '—'}</span>`}
               </td>` : ''}
-              <td class="py-3 px-5">
-                ${isSelf ? '<span class="text-xs text-navy-300 italic">—</span>' : `
-                  <button onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')" 
-                    class="w-8 h-8 rounded-lg bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-400 hover:text-red-600 transition-colors" 
+              <td class="py-3.5 px-5">
+                ${isSelf ? '<span class="text-xs italic" style="color: rgba(15,27,40,0.3);">—</span>' : `
+                  <button onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')"
+                    class="w-8 h-8 rounded-lg flex items-center justify-center transition-all" style="color: rgba(15,27,40,0.4);" onmouseover="this.style.background='rgba(226,125,110,0.12)'; this.style.color='#C84C3F';" onmouseout="this.style.background='transparent'; this.style.color='rgba(15,27,40,0.4)';"
                     title="Supprimer ${u.name.replace(/'/g, "\\'")}">
                     <i class="fas fa-trash text-xs"></i>
                   </button>
@@ -1666,44 +1679,44 @@ function renderUsersView() {
      </div>
     </div>
 
-    <!-- Mobile cards (< md) -->
+    <!-- Mobile cards premium (< md) -->
     <div class="md:hidden space-y-3">
       ${filteredUsers.length === 0 ? `
-        <div class="bg-white rounded-xl p-8 text-center border border-gray-100">
-          <p class="text-navy-400 text-sm">Aucun utilisateur</p>
+        <div class="card-premium empty-state-premium">
+          <div class="empty-icon"><i class="fas fa-users"></i></div>
+          <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucun utilisateur</p>
         </div>
       ` : filteredUsers.map(u => {
-        const hasEditRight = u.can_edit_procedures === 1;
         const isEmployee = u.role === 'employee';
         const isSelf = u.id === state.user.id;
         return `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+        <div class="card-premium p-4">
           <div class="flex items-start justify-between gap-3">
             <div class="flex items-center gap-3 min-w-0">
-              <div class="w-10 h-10 bg-navy-100 rounded-full flex items-center justify-center text-sm font-bold text-navy-600 shrink-0">${u.name.charAt(0)}</div>
+              <div class="w-11 h-11 rounded-full flex items-center justify-center text-sm font-bold shrink-0" style="background: var(--c-navy); color: var(--c-gold);">${escapeHtml(u.name.charAt(0))}</div>
               <div class="min-w-0">
-                <p class="text-sm font-semibold text-navy-800 truncate">${u.name}${isSelf ? ' <span class="text-[10px] bg-gray-100 text-gray-400 px-1 py-0.5 rounded">vous</span>' : ''}</p>
-                <p class="text-xs text-navy-400 truncate">${u.email}</p>
-                ${isSuperAdmin && u.hotel_name ? `<p class="text-xs text-blue-500 mt-0.5"><i class="fas fa-hotel mr-1"></i>${u.hotel_name}</p>` : ''}
+                <p class="text-sm font-display font-semibold truncate" style="color: var(--c-navy);">${escapeHtml(u.name)}${isSelf ? ' <span class="text-[10px] px-1 py-0.5 rounded" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">vous</span>' : ''}</p>
+                <p class="text-xs truncate" style="color: rgba(15,27,40,0.5);">${escapeHtml(u.email)}</p>
+                ${isSuperAdmin && u.hotel_name ? `<p class="text-xs mt-0.5" style="color: var(--c-gold-deep);"><i class="fas fa-hotel mr-1"></i>${escapeHtml(u.hotel_name)}</p>` : ''}
               </div>
             </div>
             ${isSelf ? '' : `
-            <button onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')" 
-              class="w-8 h-8 rounded-lg bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-400 shrink-0">
+            <button onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')"
+              class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(226,125,110,0.10); color: #C84C3F;">
               <i class="fas fa-trash text-xs"></i>
             </button>`}
           </div>
-          <div class="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-gray-50">
-            <span class="text-[10px] px-2 py-0.5 rounded-full font-medium ${roleColors[u.role]}">${roleLabels[u.role]}</span>
-            <span class="flex items-center gap-1 text-xs text-navy-400">
-              <span class="w-1.5 h-1.5 rounded-full ${u.is_active ? 'bg-green-500' : 'bg-red-500'}"></span>
+          <div class="flex flex-wrap items-center gap-2 mt-3 pt-3" style="border-top: 1px solid var(--c-line);">
+            ${rolePill(u.role)}
+            <span class="flex items-center gap-1.5 text-xs" style="color: rgba(15,27,40,0.55);">
+              <span class="w-1.5 h-1.5 rounded-full" style="background: ${u.is_active ? '#5C8A6E' : '#C84C3F'};"></span>
               ${u.is_active ? 'Actif' : 'Inactif'}
             </span>
-            <span class="text-[10px] text-navy-400"><i class="fas fa-clock mr-0.5"></i>${u.last_login ? formatDate(u.last_login) : 'Jamais connecté'}</span>
+            <span class="text-[10px]" style="color: rgba(15,27,40,0.45);"><i class="fas fa-clock mr-0.5" style="color: var(--c-gold);"></i>${u.last_login ? formatDate(u.last_login) : 'Jamais connecté'}</span>
           </div>
           ${isAdmin && isEmployee ? `
-          <div class="mt-3 pt-3 border-t border-gray-50">
-            <p class="text-[10px] uppercase tracking-wider text-navy-400 font-semibold mb-2">Permissions</p>
+          <div class="mt-3 pt-3" style="border-top: 1px solid var(--c-line);">
+            <p class="text-[10px] uppercase tracking-wider font-semibold mb-2" style="color: var(--c-gold-deep);">Permissions</p>
             ${permissionCheckboxes(u, true)}
           </div>` : ''}
         </div>`;
@@ -1711,20 +1724,20 @@ function renderUsersView() {
     </div>
 
     ${isAdmin ? `
-    <div class="mt-4 bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-start gap-3">
-      <i class="fas fa-circle-info text-blue-400 mt-0.5"></i>
-      <div class="text-xs text-blue-700 space-y-1">
-        <p class="font-semibold mb-1">Permissions des employés</p>
-        <p>Tu peux activer / désactiver indépendamment <strong>six droits</strong> pour chaque employé :</p>
+    <div class="mt-5 card-premium p-5 flex items-start gap-3" style="background: linear-gradient(180deg, #fff 0%, var(--c-cream) 100%); border-left: 3px solid var(--c-gold);">
+      <i class="fas fa-circle-info text-base mt-0.5" style="color: var(--c-gold);"></i>
+      <div class="text-xs space-y-1.5" style="color: rgba(15,27,40,0.7);">
+        <p class="section-eyebrow">Permissions des employés</p>
+        <p>Vous pouvez activer / désactiver indépendamment <strong style="color: var(--c-navy);">six droits</strong> pour chaque employé :</p>
         <ul class="list-disc pl-5 space-y-0.5">
-          <li><strong>Procédures</strong> — créer, modifier et supprimer les procédures.</li>
-          <li><strong>Informations</strong> — créer et modifier les informations de l'hôtel.</li>
-          <li><strong>Salons / chat</strong> — créer, modifier et organiser les conversations.</li>
-          <li><strong>Chambres &amp; présents</strong> — gérer les chambres et saisir les clients du jour.</li>
-          <li><strong>Restaurant</strong> — planning hebdo, exceptions, réservations, dashboard.</li>
-          <li><strong>Paramètres hôtel</strong> — modifier l'identité, contact, séjour, wifi.</li>
+          <li><strong style="color: var(--c-navy);">Procédures</strong> — créer, modifier et supprimer les procédures.</li>
+          <li><strong style="color: var(--c-navy);">Informations</strong> — créer et modifier les informations de l'hôtel.</li>
+          <li><strong style="color: var(--c-navy);">Salons / chat</strong> — créer, modifier et organiser les conversations.</li>
+          <li><strong style="color: var(--c-navy);">Chambres &amp; présents</strong> — gérer les chambres et saisir les clients du jour.</li>
+          <li><strong style="color: var(--c-navy);">Restaurant</strong> — planning hebdo, exceptions, réservations, dashboard.</li>
+          <li><strong style="color: var(--c-navy);">Paramètres hôtel</strong> — modifier l'identité, contact, séjour, wifi.</li>
         </ul>
-        <p class="mt-1">Les <strong>admins</strong> ont toujours accès complet à tout, sans cases à cocher.</p>
+        <p class="mt-1">Les <strong style="color: var(--c-navy);">admins</strong> ont toujours accès complet à tout, sans cases à cocher.</p>
       </div>
     </div>` : ''}
   </div>`;
@@ -2005,17 +2018,17 @@ function showHotelInfoCategoryModal(catId = null) {
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom de la catégorie *</label>
         <input id="info-cat-name" type="text" required maxlength="60" value="${cat ? escapeHtml(cat.name) : ''}"
           placeholder="Ex: Restauration, Loisirs..."
-          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
+          class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Couleur</label>
         <input id="info-cat-color" type="color" value="${cat ? cat.color || '#3B82F6' : '#3B82F6'}"
-          class="w-full h-11 border border-navy-200 rounded-lg cursor-pointer">
+          class="w-full h-11 input-premium rounded-lg cursor-pointer">
         <p class="text-xs text-navy-400 mt-1">Couleur d'identification de la catégorie.</p>
       </div>
       <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
-        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
-        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 rounded-lg text-sm font-medium transition-all" style="background: var(--c-cream-deep); color: var(--c-navy);">Annuler</button>
+        <button type="submit" class="btn-premium px-4 py-3 sm:py-2 rounded-lg text-sm font-semibold" style="background: var(--c-navy); color: #fff;">${isEdit ? 'Enregistrer' : 'Créer'}</button>
       </div>
     </form>
   `);
@@ -2064,11 +2077,11 @@ function showHotelInfoItemModal(itemId = null, presetCategoryId = null) {
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Titre *</label>
         <input id="info-item-title" type="text" required maxlength="120" value="${item ? escapeHtml(item.title) : ''}"
           placeholder="Ex: Parking, Petit-déjeuner..."
-          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
+          class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Catégorie</label>
-        <select id="info-item-cat" class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400 bg-white">
+        <select id="info-item-cat" class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg outline-none focus:ring-2 focus:ring-brand-400 bg-white">
           <option value="">Sans catégorie</option>
           ${cats.map(c => `<option value="${c.id}" ${c.id === currentCatId ? 'selected' : ''}>${escapeHtml(c.name)}</option>`).join('')}
         </select>
@@ -2076,12 +2089,12 @@ function showHotelInfoItemModal(itemId = null, presetCategoryId = null) {
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Contenu</label>
         <textarea id="info-item-content" rows="8" oninput="autoResizeTextarea(this)" placeholder="Toutes les infos utiles : horaires, tarifs, conditions, etc.&#10;&#10;Astuces : utilisez **gras** pour mettre en valeur, • pour des puces."
-          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-400">${item ? escapeHtml(item.content || '') : ''}</textarea>
+          class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg outline-none focus:ring-2 focus:ring-brand-400">${item ? escapeHtml(item.content || '') : ''}</textarea>
         <p class="text-xs text-navy-400 mt-1">Vous pouvez utiliser **gras** et des puces (• ou -)</p>
       </div>
-      <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2 sticky bottom-0 bg-white -mx-4 sm:-mx-5 px-4 sm:px-5 -mb-4 sm:-mb-5 pb-4 sm:pb-5 border-t border-gray-100">
-        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
-        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+      <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2 sticky bottom-0 -mx-4 sm:-mx-5 px-4 sm:px-5 -mb-4 sm:-mb-5 pb-4 sm:pb-5" style="background: #fff; border-top: 1px solid var(--c-line);">
+        <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 rounded-lg text-sm font-medium transition-all" style="background: var(--c-cream-deep); color: var(--c-navy);">Annuler</button>
+        <button type="submit" class="btn-premium px-4 py-3 sm:py-2 rounded-lg text-sm font-semibold" style="background: var(--c-navy); color: #fff;">${isEdit ? 'Enregistrer' : 'Créer'}</button>
       </div>
     </form>
   `);
@@ -2127,45 +2140,48 @@ async function deleteHotelInfoItem(itemId) {
 function renderHotelsView() {
   return `
   <div class="fade-in">
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
+    <!-- Header premium -->
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-7">
       <div>
-        <h2 class="text-xl sm:text-2xl font-bold text-navy-900"><i class="fas fa-hotel mr-2 text-brand-400"></i>Hôtels</h2>
-        <p class="text-navy-500 text-sm mt-1">${state.hotels.length} hôtel(s)</p>
+        <p class="section-eyebrow mb-2">Établissements</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Hôtels</h2>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">${state.hotels.length} hôtel${state.hotels.length > 1 ? 's' : ''} dans le portefeuille</p>
       </div>
-      <button onclick="showHotelForm()" class="self-start sm:self-auto bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm flex items-center gap-1.5">
-        <i class="fas fa-plus"></i>Nouvel hôtel
+      <button onclick="showHotelForm()" class="btn-premium self-start sm:self-auto px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;">
+        <i class="fas fa-plus text-xs"></i>Nouvel hôtel
       </button>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       ${state.hotels.length === 0 ? `
-        <div class="md:col-span-2 xl:col-span-3 bg-white rounded-xl p-12 text-center border border-gray-100">
-          <i class="fas fa-hotel text-4xl text-navy-200 mb-4"></i>
-          <p class="text-navy-400 font-medium">Aucun hôtel enregistré</p>
+        <div class="md:col-span-2 xl:col-span-3 card-premium empty-state-premium">
+          <div class="empty-icon"><i class="fas fa-hotel"></i></div>
+          <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucun hôtel enregistré</p>
+          <p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Cliquez sur « Nouvel hôtel » pour commencer.</p>
         </div>
       ` : state.hotels.map(h => `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow">
+        <div class="card-premium p-5">
           <div class="flex items-start gap-4">
-            <div class="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center shrink-0">
-              <i class="fas fa-hotel text-blue-500 text-xl"></i>
+            <div class="w-12 h-12 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy);">
+              <i class="fas fa-hotel text-lg" style="color: var(--c-gold);"></i>
             </div>
             <div class="flex-1 min-w-0">
-              <h3 class="font-semibold text-navy-800 text-lg truncate">${h.name}</h3>
-              ${h.address ? `<p class="text-sm text-navy-400 mt-0.5"><i class="fas fa-map-marker-alt mr-1"></i>${h.address}</p>` : '<p class="text-sm text-navy-300 italic mt-0.5">Adresse non renseignée</p>'}
-              <p class="text-xs text-navy-300 mt-2"><i class="fas fa-calendar mr-1"></i>Créé le ${formatDate(h.created_at)}</p>
+              <h3 class="font-display font-semibold text-lg truncate" style="color: var(--c-navy);">${escapeHtml(h.name)}</h3>
+              ${h.address ? `<p class="text-sm mt-1" style="color: rgba(15,27,40,0.6);"><i class="fas fa-map-marker-alt mr-1" style="color: var(--c-gold);"></i>${escapeHtml(h.address)}</p>` : `<p class="text-sm italic mt-1" style="color: rgba(15,27,40,0.35);">Adresse non renseignée</p>`}
+              <p class="text-[11px] uppercase tracking-wider mt-2.5" style="color: rgba(15,27,40,0.4);"><i class="fas fa-calendar mr-1" style="color: var(--c-gold);"></i>Créé le ${formatDate(h.created_at)}</p>
             </div>
           </div>
-          <div class="flex items-center gap-2 mt-4 pt-4 border-t border-gray-50">
-            <button onclick="showHotelEditForm(${h.id}, '${h.name.replace(/'/g, "\\'")}', '${(h.address || '').replace(/'/g, "\\'")}')" 
-              class="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-navy-50 hover:bg-navy-100 text-navy-600 transition-colors">
+          <div class="flex items-center gap-2 mt-4 pt-4" style="border-top: 1px solid var(--c-line);">
+            <button onclick="showHotelEditForm(${h.id}, '${h.name.replace(/'/g, "\\'")}', '${(h.address || '').replace(/'/g, "\\'")}')"
+              class="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg transition-all" style="background: var(--c-cream-deep); color: var(--c-navy);" onmouseover="this.style.background='var(--c-gold)'" onmouseout="this.style.background='var(--c-cream-deep)'">
               <i class="fas fa-pen"></i>Modifier
             </button>
             <button onclick="showHotelUsers(${h.id})"
-              class="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-600 transition-colors">
-              <i class="fas fa-users"></i>Voir les admins
+              class="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium px-3 py-2 rounded-lg transition-all" style="background: rgba(201,169,97,0.10); color: var(--c-gold-deep); border: 1px solid rgba(201,169,97,0.20);" onmouseover="this.style.background='rgba(201,169,97,0.20)'" onmouseout="this.style.background='rgba(201,169,97,0.10)'">
+              <i class="fas fa-users"></i>Admins
             </button>
-            <button onclick="deleteHotel(${h.id}, '${h.name.replace(/'/g, "\\'")}')" 
-              class="w-9 h-9 flex items-center justify-center rounded-lg bg-red-50 hover:bg-red-100 text-red-400 hover:text-red-600 transition-colors" 
+            <button onclick="deleteHotel(${h.id}, '${h.name.replace(/'/g, "\\'")}')"
+              class="w-9 h-9 flex items-center justify-center rounded-lg transition-all" style="background: rgba(226,125,110,0.10); color: #C84C3F;" onmouseover="this.style.background='rgba(226,125,110,0.20)'" onmouseout="this.style.background='rgba(226,125,110,0.10)'"
               title="Supprimer cet hôtel">
               <i class="fas fa-trash text-xs"></i>
             </button>
@@ -2193,16 +2209,16 @@ function showHotelEditForm(id, name, address) {
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Nom de l'hôtel *</label>
         <input id="hotel-edit-name" type="text" required value="${name}"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Adresse</label>
         <input id="hotel-edit-address" type="text" value="${address}" placeholder="Adresse complète"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
-      <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
-        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
-        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
+      <div class="flex justify-end gap-3 pt-4" style="border-top: 1px solid var(--c-line);">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm transition-colors" style="color: rgba(15,27,40,0.55);">Annuler</button>
+        <button type="submit" class="btn-premium px-6 py-2 rounded-lg text-sm font-semibold transition-colors" style="background: var(--c-navy); color: #fff;">
           <i class="fas fa-save mr-1.5"></i>Enregistrer
         </button>
       </div>
@@ -2237,34 +2253,41 @@ function showHotelUsers(hotelId) {
 function renderTemplatesView() {
   return `
   <div class="fade-in">
-    <div class="flex items-center justify-between mb-6">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-7">
       <div>
-        <h2 class="text-2xl font-bold text-navy-900"><i class="fas fa-copy mr-2 text-brand-400"></i>Templates</h2>
-        <p class="text-navy-500 text-sm mt-1">Modèles de procédures pour les hôtels</p>
+        <p class="section-eyebrow mb-2">Bibliothèque</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Templates</h2>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.55);">Modèles de procédures réutilisables pour vos hôtels</p>
       </div>
-      <button onclick="showTemplateForm()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm">
-        <i class="fas fa-plus mr-1.5"></i>Nouveau template
+      <button onclick="showTemplateForm()" class="btn-premium px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 self-start sm:self-auto" style="background: var(--c-navy); color: #fff;">
+        <i class="fas fa-plus text-xs"></i>Nouveau template
       </button>
     </div>
 
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      ${state.templates.map(t => {
+      ${state.templates.length === 0 ? `
+        <div class="md:col-span-2 lg:col-span-3 card-premium empty-state-premium">
+          <div class="empty-icon"><i class="fas fa-copy"></i></div>
+          <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucun template</p>
+          <p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Créez un modèle pour gagner du temps sur les procédures récurrentes.</p>
+        </div>
+      ` : state.templates.map(t => {
         const steps = JSON.parse(t.steps_json || '[]');
         return `
-        <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 hover:shadow-md transition-shadow">
+        <div class="card-premium p-5">
           <div class="flex items-start gap-3 mb-3">
-            <div class="w-10 h-10 bg-purple-50 rounded-xl flex items-center justify-center">
-              <i class="fas fa-copy text-purple-500"></i>
+            <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy);">
+              <i class="fas fa-copy" style="color: var(--c-gold);"></i>
             </div>
-            <div class="flex-1">
-              <h4 class="font-semibold text-navy-800">${t.name}</h4>
-              ${t.category_name ? `<span class="text-[10px] bg-navy-50 text-navy-500 px-1.5 py-0.5 rounded">${t.category_name}</span>` : ''}
+            <div class="flex-1 min-w-0">
+              <h4 class="font-display font-semibold" style="color: var(--c-navy);">${escapeHtml(t.name)}</h4>
+              ${t.category_name ? `<span class="pill-gold mt-1.5">${escapeHtml(t.category_name)}</span>` : ''}
             </div>
           </div>
-          ${t.description ? `<p class="text-sm text-navy-500 mb-3 whitespace-pre-wrap">${escapeHtml(t.description)}</p>` : (t.trigger_event ? `<p class="text-sm text-navy-500 mb-3 whitespace-pre-wrap">${escapeHtml(t.trigger_event)}</p>` : '')}
-          <div class="flex items-center justify-between">
-            <span class="text-xs text-navy-400"><i class="fas fa-list mr-1"></i>${steps.length} étapes</span>
-            <button onclick="deleteTemplate(${t.id})" class="text-xs text-red-400 hover:text-red-600 transition-colors">
+          ${t.description ? `<p class="text-sm mb-3 whitespace-pre-wrap" style="color: rgba(15,27,40,0.65);">${escapeHtml(t.description)}</p>` : (t.trigger_event ? `<p class="text-sm mb-3 whitespace-pre-wrap" style="color: rgba(15,27,40,0.65);">${escapeHtml(t.trigger_event)}</p>` : '')}
+          <div class="flex items-center justify-between pt-3" style="border-top: 1px solid var(--c-line);">
+            <span class="text-[11px] uppercase tracking-wider" style="color: rgba(15,27,40,0.45);"><i class="fas fa-list mr-1" style="color: var(--c-gold);"></i>${steps.length} étapes</span>
+            <button onclick="deleteTemplate(${t.id})" class="text-xs transition-colors" style="color: #C84C3F;">
               <i class="fas fa-trash mr-1"></i>Supprimer
             </button>
           </div>
@@ -2607,11 +2630,10 @@ function formatWikotContent(text) {
 
 function renderWikotMessage(msg, mode) {
   mode = mode || activeWikotMode();
-  const userBubbleColor = mode === 'max' ? 'bg-orange-500' : 'bg-brand-500';
   if (msg.role === 'user') {
     return `
       <div class="flex justify-end mb-4">
-        <div class="max-w-[85%] sm:max-w-[75%] ${userBubbleColor} text-white rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap">
+        <div class="max-w-[85%] sm:max-w-[75%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap" style="background: var(--c-navy); color: #fff; box-shadow: 0 1px 2px rgba(10,22,40,0.08);">
           ${escapeHtml(msg.content)}
         </div>
       </div>
@@ -2624,14 +2646,12 @@ function renderWikotMessage(msg, mode) {
   const actionsForMsg = actionsArr.filter(a => a.message_id === msg.id);
   const cfg = WIKOT_MODE_CONFIG[mode] || WIKOT_MODE_CONFIG.standard;
 
-  // ============================================
-  // MODE STANDARD (Wikot) — UNE SEULE carte, zéro texte libre
-  // ============================================
+  // MODE STANDARD (Wikot) — UNE SEULE carte
   if (mode === 'standard') {
     return `
       <div class="flex justify-start mb-4">
         <div class="flex gap-2 max-w-[95%] sm:max-w-[85%] w-full">
-          <div class="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white text-xs">
+          <div class="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-xs" style="background: var(--c-navy); color: var(--c-gold);">
             <i class="fas ${cfg.icon}"></i>
           </div>
           <div class="flex-1 min-w-0">
@@ -2642,22 +2662,20 @@ function renderWikotMessage(msg, mode) {
     `;
   }
 
-  // ============================================
-  // MODE MAX (Back Wikot) — bulle texte + références sourcing + actions
-  // ============================================
+  // MODE MAX (Back Wikot) — bulle texte + références + actions
   return `
     <div class="flex justify-start mb-4">
       <div class="flex gap-2 max-w-[90%] sm:max-w-[80%]">
-        <div class="w-8 h-8 shrink-0 rounded-full bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white text-xs">
+        <div class="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-xs" style="background: var(--c-navy); color: var(--c-gold);">
           <i class="fas ${cfg.icon}"></i>
         </div>
         <div class="flex-1 min-w-0">
-          <div class="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm leading-relaxed shadow-sm">
-            <div class="text-navy-800">${formatWikotContent(msg.content || '')}</div>
+          <div class="rounded-2xl rounded-tl-sm px-4 py-3 text-sm leading-relaxed" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04);">
+            <div style="color: var(--c-navy);">${formatWikotContent(msg.content || '')}</div>
             ${refs.length > 0 ? `
-              <div class="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
+              <div class="flex flex-wrap gap-2 mt-3 pt-3" style="border-top: 1px solid var(--c-line);">
                 ${refs.map(r => `
-                  <button onclick='viewWikotReference(${JSON.stringify(r)})' class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-brand-50 hover:bg-brand-100 text-brand-700 rounded-lg border border-brand-200 transition-colors">
+                  <button onclick='viewWikotReference(${JSON.stringify(r)})' class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg transition-all" style="background: rgba(201,169,97,0.10); color: var(--c-gold-deep); border: 1px solid rgba(201,169,97,0.25);" onmouseover="this.style.background='rgba(201,169,97,0.18)'" onmouseout="this.style.background='rgba(201,169,97,0.10)'">
                     <i class="fas ${r.type === 'procedure' ? 'fa-sitemap' : 'fa-circle-info'}"></i>
                     ${r.type === 'procedure' ? 'Voir la procédure' : "Voir l'information"} : ${escapeHtml(r.title)}
                   </button>
@@ -3522,18 +3540,19 @@ function renderWikotView(mode) {
   const isSending = s.sending;
 
   const quickButtonsHtml = cfg.quickButtons.map(btn => `
-    <button onclick="quickWikot('${btn.q.replace(/'/g, "\\'")}', '${mode}')" class="text-xs text-left bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50 rounded-lg px-3 py-2 transition-colors">
-      <i class="fas fa-question-circle text-gray-400 mr-1"></i>${escapeHtml(btn.label)}
+    <button onclick="quickWikot('${btn.q.replace(/'/g, "\\'")}', '${mode}')" class="text-xs text-left rounded-lg px-3.5 py-2.5 transition-all" style="background: #fff; border: 1px solid var(--c-line-strong); color: var(--c-navy);" onmouseover="this.style.borderColor='var(--c-gold)'; this.style.background='var(--c-cream-deep)';" onmouseout="this.style.borderColor='var(--c-line-strong)'; this.style.background='#fff';">
+      <i class="fas fa-question-circle mr-1.5" style="color: var(--c-gold);"></i>${escapeHtml(btn.label)}
     </button>
   `).join('');
 
   const emptyState = `
     <div class="flex flex-col items-center justify-center h-full p-6 text-center">
-      <div class="w-20 h-20 rounded-full bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white text-3xl mb-4 shadow-lg">
+      <div class="w-16 h-16 rounded-full flex items-center justify-center text-2xl mb-4" style="background: var(--c-navy); color: var(--c-gold); box-shadow: 0 4px 12px rgba(10,22,40,0.15);">
         <i class="fas ${cfg.icon}"></i>
       </div>
-      <h3 class="text-xl font-bold text-navy-800 mb-2">${cfg.emptyTitle}</h3>
-      <p class="text-sm text-navy-500 max-w-md mb-6">${cfg.emptyText}</p>
+      <p class="section-eyebrow mb-2">Majordome digital</p>
+      <h3 class="font-display text-2xl font-semibold mb-2" style="color: var(--c-navy);">${cfg.emptyTitle}</h3>
+      <p class="text-sm max-w-md mb-6" style="color: rgba(15,27,40,0.55);">${cfg.emptyText}</p>
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-md w-full">
         ${quickButtonsHtml}
       </div>
@@ -3542,75 +3561,77 @@ function renderWikotView(mode) {
 
   return `
   <div class="fade-in flex flex-col" style="height: calc(100vh - 8rem); max-height: calc(100vh - 8rem);">
-    <!-- Header Wikot/Back Wikot -->
-    <div class="flex items-center justify-between mb-3 sm:mb-4 shrink-0">
+    <!-- Header Wikot/Back Wikot premium -->
+    <div class="flex items-center justify-between mb-4 shrink-0">
       <div class="flex items-center gap-3 min-w-0">
-        <button onclick="toggleWikotSidebar('${mode}')" class="lg:hidden w-9 h-9 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 flex items-center justify-center text-navy-600 transition-colors" title="Mes conversations">
+        <button onclick="toggleWikotSidebar('${mode}')" class="lg:hidden w-9 h-9 rounded-lg flex items-center justify-center transition-all" style="background: #fff; border: 1px solid var(--c-line-strong); color: var(--c-navy);" title="Mes conversations">
           <i class="fas fa-list"></i>
         </button>
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white shadow-sm shrink-0">
+        <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);">
           <i class="fas ${cfg.icon}"></i>
         </div>
         <div class="min-w-0">
-          <h1 class="text-lg sm:text-xl font-bold text-navy-900 truncate">${cfg.title}</h1>
-          <p class="text-xs text-navy-500 truncate">${currentConv ? escapeHtml(currentConv.title) : cfg.subtitle}</p>
+          <h1 class="font-display text-xl sm:text-2xl font-semibold truncate" style="color: var(--c-navy);">${cfg.title}</h1>
+          <p class="text-xs truncate uppercase tracking-wider" style="color: var(--c-gold-deep);">${currentConv ? escapeHtml(currentConv.title) : cfg.subtitle}</p>
         </div>
       </div>
-      <button onclick="newWikotConversation('${mode}')" class="${cfg.newButton} text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-1.5 shrink-0">
-        <i class="fas fa-plus"></i><span class="hidden sm:inline">Nouvelle</span>
+      <button onclick="newWikotConversation('${mode}')" class="btn-premium px-4 py-2.5 rounded-lg text-sm font-semibold inline-flex items-center gap-2 shrink-0" style="background: var(--c-navy); color: #fff;">
+        <i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">Nouvelle</span>
       </button>
     </div>
 
     <!-- Layout chat avec sidebar conversations -->
     <div class="flex-1 flex gap-4 min-h-0 overflow-hidden">
-      <!-- Sidebar des conversations -->
-      <div class="${sidebarVisible ? 'fixed inset-0 z-30 bg-black/40 lg:bg-transparent lg:relative lg:inset-auto lg:z-auto' : 'hidden'} lg:block">
-        <div class="${sidebarVisible ? 'absolute left-0 top-0 bottom-0 w-72 lg:relative lg:w-64' : 'lg:w-64'} bg-white border-r lg:border border-gray-200 lg:rounded-xl flex flex-col h-full">
-          <div class="px-3 py-3 border-b border-gray-100 flex items-center justify-between">
-            <span class="text-sm font-semibold text-navy-700">Mes conversations</span>
-            <button onclick="toggleWikotSidebar('${mode}')" class="lg:hidden w-7 h-7 rounded hover:bg-gray-100 flex items-center justify-center text-navy-500" title="Fermer">
+      <!-- Sidebar conversations premium -->
+      <div class="${sidebarVisible ? 'fixed inset-0 z-30 lg:bg-transparent lg:relative lg:inset-auto lg:z-auto' : 'hidden'} lg:block" style="${sidebarVisible ? 'background: rgba(10,22,40,0.45);' : ''}">
+        <div class="${sidebarVisible ? 'absolute left-0 top-0 bottom-0 w-72 lg:relative lg:w-64' : 'lg:w-64'} flex flex-col h-full lg:rounded-xl overflow-hidden" style="background: #fff; border: 1px solid var(--c-line);">
+          <div class="px-4 py-3 flex items-center justify-between" style="border-bottom: 1px solid var(--c-line); background: linear-gradient(180deg, #fff 0%, var(--c-cream) 100%);">
+            <span class="text-xs uppercase tracking-wider font-semibold" style="color: var(--c-gold-deep);">Mes conversations</span>
+            <button onclick="toggleWikotSidebar('${mode}')" class="lg:hidden w-7 h-7 rounded flex items-center justify-center" style="color: rgba(15,27,40,0.5);" title="Fermer">
               <i class="fas fa-xmark"></i>
             </button>
           </div>
           <div class="flex-1 overflow-y-auto">
             ${convs.length === 0 ? `
-              <div class="p-4 text-center text-xs text-navy-400">
-                Aucune conversation.<br>Clique sur « Nouvelle » pour démarrer.
+              <div class="p-5 text-center text-xs" style="color: rgba(15,27,40,0.45);">
+                Aucune conversation.<br>Cliquez sur « Nouvelle » pour démarrer.
               </div>
-            ` : convs.map(c => `
-              <div onclick="loadWikotConversation(${c.id}, '${mode}'); ${mode === 'max' ? 'state.wikotMaxSidebarOpen' : 'state.wikotSidebarOpen'}=false;" class="px-3 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer ${s.currentConvId === c.id ? cfg.selectedConv : ''}">
+            ` : convs.map(c => {
+              const isActive = s.currentConvId === c.id;
+              return `
+              <div onclick="loadWikotConversation(${c.id}, '${mode}'); ${mode === 'max' ? 'state.wikotMaxSidebarOpen' : 'state.wikotSidebarOpen'}=false;" class="px-4 py-3 cursor-pointer transition-all" style="border-bottom: 1px solid var(--c-line); ${isActive ? 'background: rgba(201,169,97,0.10); border-left: 2px solid var(--c-gold);' : ''}" onmouseover="if(!${isActive}) this.style.background='var(--c-cream)';" onmouseout="if(!${isActive}) this.style.background='transparent';">
                 <div class="flex items-start justify-between gap-2">
                   <div class="flex-1 min-w-0">
-                    <div class="text-sm text-navy-800 truncate">${escapeHtml(c.title)}</div>
-                    <div class="text-[10px] text-navy-400 mt-0.5">${new Date(c.updated_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
+                    <div class="text-sm font-medium truncate" style="color: var(--c-navy);">${escapeHtml(c.title)}</div>
+                    <div class="text-[10px] mt-0.5 uppercase tracking-wider" style="color: rgba(15,27,40,0.4);">${new Date(c.updated_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</div>
                   </div>
-                  <button onclick="deleteWikotConversation(${c.id}, event, '${mode}')" class="w-6 h-6 rounded hover:bg-red-50 text-gray-300 hover:text-red-500 flex items-center justify-center shrink-0 transition-colors" title="Archiver">
+                  <button onclick="deleteWikotConversation(${c.id}, event, '${mode}')" class="w-6 h-6 rounded flex items-center justify-center shrink-0 transition-all" style="color: rgba(15,27,40,0.3);" onmouseover="this.style.background='rgba(226,125,110,0.12)'; this.style.color='#C84C3F';" onmouseout="this.style.background='transparent'; this.style.color='rgba(15,27,40,0.3)';" title="Archiver">
                     <i class="fas fa-trash text-[10px]"></i>
                   </button>
                 </div>
               </div>
-            `).join('')}
+            `;}).join('')}
           </div>
         </div>
       </div>
 
-      <!-- Zone chat principale -->
-      <div class="flex-1 flex flex-col bg-gradient-to-b from-gray-50 to-white border border-gray-200 rounded-xl overflow-hidden min-w-0">
-        <div id="${cfg.messagesId}" class="flex-1 overflow-y-auto p-3 sm:p-4">
+      <!-- Zone chat principale premium -->
+      <div class="flex-1 flex flex-col rounded-xl overflow-hidden min-w-0" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 2px 4px rgba(10,22,40,0.05), 0 8px 20px rgba(10,22,40,0.04);">
+        <div id="${cfg.messagesId}" class="flex-1 overflow-y-auto p-3 sm:p-5" style="background: var(--c-cream);">
           ${messages.length === 0 && !isLoading ? emptyState : ''}
-          ${isLoading ? '<div class="flex justify-center items-center h-full text-navy-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement…</div>' : ''}
+          ${isLoading ? `<div class="flex justify-center items-center h-full text-sm" style="color: rgba(15,27,40,0.5);"><i class="fas fa-spinner fa-spin mr-2" style="color: var(--c-gold);"></i>Chargement…</div>` : ''}
           ${messages.map(m => renderWikotMessage(m, mode)).join('')}
           ${isSending ? `
             <div class="flex justify-start mb-4">
               <div class="flex gap-2">
-                <div class="w-8 h-8 rounded-full bg-gradient-to-br ${cfg.avatarGradient} flex items-center justify-center text-white text-xs">
+                <div class="w-9 h-9 rounded-full flex items-center justify-center text-xs" style="background: var(--c-navy); color: var(--c-gold);">
                   <i class="fas ${cfg.icon}"></i>
                 </div>
-                <div class="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                <div class="rounded-2xl rounded-tl-sm px-4 py-3" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04);">
                   <div class="flex gap-1">
-                    <div class="w-2 h-2 rounded-full ${cfg.bouncingDots} animate-bounce" style="animation-delay: 0ms"></div>
-                    <div class="w-2 h-2 rounded-full ${cfg.bouncingDots} animate-bounce" style="animation-delay: 150ms"></div>
-                    <div class="w-2 h-2 rounded-full ${cfg.bouncingDots} animate-bounce" style="animation-delay: 300ms"></div>
+                    <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--c-gold); animation-delay: 0ms"></div>
+                    <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--c-gold); animation-delay: 150ms"></div>
+                    <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--c-gold); animation-delay: 300ms"></div>
                   </div>
                 </div>
               </div>
@@ -3618,20 +3639,20 @@ function renderWikotView(mode) {
           ` : ''}
         </div>
 
-        <!-- Zone de saisie -->
-        <div class="border-t border-gray-200 bg-white p-2 sm:p-3 shrink-0">
+        <!-- Zone de saisie premium -->
+        <div class="p-3 sm:p-4 shrink-0" style="background: #fff; border-top: 1px solid var(--c-line);">
           <div class="flex items-end gap-2">
             <textarea id="${cfg.inputId}" rows="1"
               placeholder="${cfg.placeholder}"
               oninput="autoResizeTextarea(this)"
               onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('${mode}');}"
               ${isSending ? 'disabled' : ''}
-              class="form-input-mobile flex-1 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 ${cfg.focusRing} resize-none max-h-32 text-sm"></textarea>
-            <button onclick="sendWikotMessage('${mode}')" ${isSending ? 'disabled' : ''} class="w-10 h-10 rounded-xl ${cfg.sendButton} disabled:bg-gray-300 text-white flex items-center justify-center shrink-0 transition-colors" title="Envoyer">
+              class="input-premium form-input-mobile flex-1 rounded-xl px-3.5 py-2.5 outline-none resize-none max-h-32 text-sm"></textarea>
+            <button onclick="sendWikotMessage('${mode}')" ${isSending ? 'disabled' : ''} class="btn-premium w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);" title="Envoyer">
               <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
             </button>
           </div>
-          <p class="text-[10px] text-navy-400 mt-1.5 text-center">${cfg.footer}</p>
+          <p class="text-[10px] mt-2 text-center uppercase tracking-wider" style="color: rgba(15,27,40,0.4);">${cfg.footer}</p>
         </div>
       </div>
     </div>
@@ -4221,41 +4242,40 @@ function renderConversationsView() {
   return `
   <div class="fade-in flex chat-view-shell w-full">
     <!-- Colonne liste des salons -->
-    <div class="${hasSelected ? 'hidden lg:flex' : 'flex'} flex-col w-full lg:w-80 xl:w-96 lg:border-r lg:border-gray-200 bg-white lg:bg-gray-50 overflow-hidden shrink-0">
-      <div class="px-4 sm:px-5 py-3 border-b border-gray-200 bg-white shrink-0 flex items-center justify-between gap-2">
+    <div class="${hasSelected ? 'hidden lg:flex' : 'flex'} flex-col w-full lg:w-80 xl:w-96 overflow-hidden shrink-0" style="background: var(--c-ivory); border-right: 1px solid var(--c-line);">
+      <div class="px-4 sm:px-5 py-4 shrink-0 flex items-center justify-between gap-2" style="border-bottom: 1px solid var(--c-line); background: #fff;">
         <div class="min-w-0">
-          <h2 class="text-base sm:text-lg font-bold text-navy-900 truncate">
-            <i class="fas fa-comments text-brand-400 mr-2"></i>Conversations
-          </h2>
-          <p class="text-[11px] text-navy-500 hidden sm:block">Salons de l'équipe</p>
+          <p class="section-eyebrow">Espace équipe</p>
+          <h2 class="font-display text-lg sm:text-xl font-semibold truncate" style="color: var(--c-navy);">Conversations</h2>
         </div>
         ${canManage ? `
-          <button onclick="showCreateChannelModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-2 rounded-lg text-xs font-semibold shadow flex items-center gap-1.5 shrink-0">
-            <i class="fas fa-plus"></i><span class="hidden sm:inline">Nouveau salon</span><span class="sm:hidden">Salon</span>
+          <button onclick="showCreateChannelModal()" class="btn-premium px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 shrink-0" style="background: var(--c-navy); color: #fff;">
+            <i class="fas fa-plus text-[10px]"></i><span class="hidden sm:inline">Nouveau salon</span><span class="sm:hidden">Salon</span>
           </button>
         ` : ''}
       </div>
 
       <div class="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3">
         ${groups.length === 0 ? `
-          <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 text-center">
-            <i class="fas fa-comments text-3xl text-navy-200 mb-2"></i>
-            <p class="text-navy-500 text-sm">Aucun salon pour le moment.</p>
+          <div class="card-premium empty-state-premium">
+            <div class="empty-icon"><i class="fas fa-comments"></i></div>
+            <p class="font-display text-base font-semibold" style="color: var(--c-navy);">Aucun salon</p>
+            <p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Créez votre premier salon d'équipe.</p>
           </div>
         ` : groups.map(g => renderGroupCard(g, canManage)).join('')}
       </div>
     </div>
 
-    <!-- Colonne salon ouvert (mobile : fullscreen fixe / desktop : 2e colonne qui prend tout l'espace restant) -->
-    <div class="${hasSelected ? 'chat-mobile-fullscreen lg:flex lg:flex-col lg:flex-1 lg:min-w-0 lg:bg-white' : 'hidden lg:flex flex-col flex-1 min-w-0 bg-white'}">
+    <!-- Colonne salon ouvert -->
+    <div class="${hasSelected ? 'chat-mobile-fullscreen lg:flex lg:flex-col lg:flex-1 lg:min-w-0' : 'hidden lg:flex flex-col flex-1 min-w-0'}" style="background: #fff;">
       ${hasSelected ? renderChannelView() : `
-        <div class="flex-1 flex items-center justify-center p-6 text-center bg-gray-50">
+        <div class="flex-1 flex items-center justify-center p-6 text-center" style="background: var(--c-ivory);">
           <div>
-            <div class="w-16 h-16 mx-auto bg-brand-50 rounded-2xl flex items-center justify-center mb-3">
-              <i class="fas fa-comment-dots text-brand-400 text-2xl"></i>
+            <div class="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-4" style="background: var(--c-navy);">
+              <i class="fas fa-comment-dots text-2xl" style="color: var(--c-gold);"></i>
             </div>
-            <p class="text-navy-700 font-semibold">Sélectionnez un salon</p>
-            <p class="text-navy-400 text-sm mt-1">Choisissez un salon dans la liste pour commencer à discuter.</p>
+            <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Sélectionnez un salon</p>
+            <p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Choisissez un salon pour commencer à discuter.</p>
           </div>
         </div>
       `}
@@ -4268,40 +4288,40 @@ function renderGroupCard(group, canManage) {
   const groupUnread = channels.reduce((s, c) => s + (c.unread_count || 0), 0);
 
   return `
-  <div class="mb-5 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden" data-group-card="${group.id}">
-    <div class="px-4 sm:px-5 py-3 bg-navy-50 border-b border-gray-200 flex items-center gap-3">
-      <div class="w-9 h-9 rounded-lg flex items-center justify-center text-white shrink-0" style="background:${group.color || '#3B82F6'}">
-        <i class="fas ${group.icon || 'fa-folder'}"></i>
+  <div class="mb-4 card-premium overflow-hidden" data-group-card="${group.id}">
+    <div class="px-4 sm:px-5 py-3 flex items-center gap-3" style="background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
+      <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style="background: var(--c-navy);">
+        <i class="fas ${group.icon || 'fa-folder'}" style="color: var(--c-gold);"></i>
       </div>
       <div class="flex-1 min-w-0">
-        <h3 class="font-semibold text-navy-800 text-sm sm:text-base truncate">
+        <h3 class="font-display font-semibold text-sm sm:text-base truncate" style="color: var(--c-navy);">
           ${escapeHtml(group.name)}
-          ${group.is_system ? '<span class="ml-2 text-[9px] uppercase font-bold text-navy-400 tracking-wider">par défaut</span>' : ''}
+          ${group.is_system ? '<span class="ml-2 text-[9px] uppercase font-bold tracking-wider" style="color: rgba(15,27,40,0.4);">par défaut</span>' : ''}
         </h3>
-        <p class="text-xs text-navy-500">${channels.length} salon${channels.length > 1 ? 's' : ''}<span data-group-unread>${groupUnread > 0 ? ` · <span class="text-red-500 font-semibold">${groupUnread} non lu${groupUnread > 1 ? 's' : ''}</span>` : ''}</span></p>
+        <p class="text-xs" style="color: rgba(15,27,40,0.55);">${channels.length} salon${channels.length > 1 ? 's' : ''}<span data-group-unread>${groupUnread > 0 ? ` · <span class="font-semibold" style="color: var(--c-gold-deep);">${groupUnread} non lu${groupUnread > 1 ? 's' : ''}</span>` : ''}</span></p>
       </div>
       ${canManage ? `
         <div class="flex items-center gap-1">
           <button onclick="showCreateChannelModal(${group.id})" title="Ajouter un salon dans ce groupe"
-            class="w-8 h-8 rounded-lg bg-white hover:bg-brand-50 text-brand-500 transition-colors flex items-center justify-center">
+            class="w-8 h-8 rounded-lg transition-colors flex items-center justify-center" style="background: #fff; color: var(--c-gold-deep); border: 1px solid var(--c-line);" onmouseover="this.style.background='var(--c-gold)'; this.style.color='#fff';" onmouseout="this.style.background='#fff'; this.style.color='var(--c-gold-deep)';">
             <i class="fas fa-plus text-xs"></i>
           </button>
           <button onclick="showEditGroupModal(${group.id})" title="Renommer le groupe"
-            class="w-8 h-8 rounded-lg bg-white hover:bg-navy-100 text-navy-500 transition-colors flex items-center justify-center">
+            class="w-8 h-8 rounded-lg transition-colors flex items-center justify-center" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line);" onmouseover="this.style.background='var(--c-cream-deep)'" onmouseout="this.style.background='#fff'">
             <i class="fas fa-pen text-xs"></i>
           </button>
           ${!group.is_system ? `
             <button onclick="deleteGroup(${group.id})" title="Supprimer le groupe"
-              class="w-8 h-8 rounded-lg bg-white hover:bg-red-50 text-red-500 transition-colors flex items-center justify-center">
+              class="w-8 h-8 rounded-lg transition-colors flex items-center justify-center" style="background: #fff; color: #C84C3F; border: 1px solid var(--c-line);" onmouseover="this.style.background='rgba(226,125,110,0.10)'" onmouseout="this.style.background='#fff'">
               <i class="fas fa-trash text-xs"></i>
             </button>
           ` : ''}
         </div>
       ` : ''}
     </div>
-    <div class="divide-y divide-gray-100">
+    <div>
       ${channels.length === 0 ? `
-        <div class="px-5 py-4 text-sm text-navy-400 italic">Aucun salon dans ce groupe</div>
+        <div class="px-5 py-4 text-sm italic" style="color: rgba(15,27,40,0.4);">Aucun salon dans ce groupe</div>
       ` : channels.map(ch => renderChannelRow(ch, canManage)).join('')}
     </div>
   </div>`;
@@ -4310,31 +4330,33 @@ function renderGroupCard(group, canManage) {
 function renderChannelRow(ch, canManage) {
   const unread = ch.unread_count || 0;
   return `
-  <div class="px-4 sm:px-5 py-3 hover:bg-navy-50 transition-colors flex items-center gap-3 cursor-pointer group"
+  <div class="px-4 sm:px-5 py-3 transition-colors flex items-center gap-3 cursor-pointer group"
+       style="border-bottom: 1px solid var(--c-line);"
+       onmouseover="this.style.background='var(--c-cream-deep)'" onmouseout="this.style.background='transparent'"
        onclick="openChannel(${ch.id})" data-channel-row="${ch.id}">
-    <div class="w-8 h-8 rounded-lg bg-navy-100 text-navy-600 flex items-center justify-center shrink-0">
+    <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background: var(--c-cream-deep); color: var(--c-navy);">
       <i class="fas ${ch.icon || 'fa-comment'} text-xs"></i>
     </div>
     <div class="flex-1 min-w-0">
       <div class="flex items-center gap-2">
-        <span data-channel-name class="text-navy-700 font-medium text-sm truncate ${unread > 0 ? 'font-bold' : ''}">${escapeHtml(ch.name)}</span>
-        <span data-channel-unread class="bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full ${unread > 0 ? '' : 'hidden'}">${unread > 0 ? `${unread > 99 ? '99+' : unread} non lu${unread > 1 ? 's' : ''}` : ''}</span>
+        <span data-channel-name class="font-medium text-sm truncate ${unread > 0 ? 'font-bold' : ''}" style="color: var(--c-navy);">${escapeHtml(ch.name)}</span>
+        <span data-channel-unread class="text-[10px] font-bold px-1.5 py-0.5 rounded-full ${unread > 0 ? '' : 'hidden'}" style="background: var(--c-gold); color: var(--c-navy);">${unread > 0 ? `${unread > 99 ? '99+' : unread} non lu${unread > 1 ? 's' : ''}` : ''}</span>
       </div>
-      ${ch.description ? `<p class="text-xs text-navy-400 truncate">${escapeHtml(ch.description)}</p>` : ''}
+      ${ch.description ? `<p class="text-xs truncate" style="color: rgba(15,27,40,0.45);">${escapeHtml(ch.description)}</p>` : ''}
     </div>
     ${canManage ? `
       <div class="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <button onclick="event.stopPropagation(); showEditChannelModal(${ch.id})" title="Modifier"
-          class="w-7 h-7 rounded bg-white border border-gray-200 hover:bg-navy-50 text-navy-500 flex items-center justify-center">
+          class="w-7 h-7 rounded flex items-center justify-center" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line);">
           <i class="fas fa-pen text-[10px]"></i>
         </button>
         <button onclick="event.stopPropagation(); deleteChannel(${ch.id})" title="Supprimer"
-          class="w-7 h-7 rounded bg-white border border-gray-200 hover:bg-red-50 text-red-500 flex items-center justify-center">
+          class="w-7 h-7 rounded flex items-center justify-center" style="background: #fff; color: #C84C3F; border: 1px solid var(--c-line);">
           <i class="fas fa-trash text-[10px]"></i>
         </button>
       </div>
     ` : ''}
-    <i class="fas fa-chevron-right text-navy-300 text-xs ml-1"></i>
+    <i class="fas fa-chevron-right text-xs ml-1" style="color: rgba(15,27,40,0.3);"></i>
   </div>`;
 }
 
@@ -4350,40 +4372,42 @@ function renderChannelView() {
   const messages = state.chatMessages || [];
 
   return `
-  <div class="flex flex-col h-full w-full bg-white min-h-0">
+  <div class="flex flex-col h-full w-full min-h-0" style="background: #fff;">
     <!-- Header salon -->
-    <div class="px-3 sm:px-5 py-3 border-b border-gray-200 flex items-center gap-3 shrink-0 bg-white">
-      <button onclick="closeChannel()" class="w-9 h-9 rounded-lg hover:bg-navy-50 text-navy-600 flex items-center justify-center shrink-0 lg:hidden">
+    <div class="px-3 sm:px-5 py-3 flex items-center gap-3 shrink-0" style="background: #fff; border-bottom: 1px solid var(--c-line);">
+      <button onclick="closeChannel()" class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0 lg:hidden" style="background: var(--c-cream-deep); color: var(--c-navy);">
         <i class="fas fa-arrow-left"></i>
       </button>
-      <div class="w-9 h-9 rounded-lg bg-navy-100 text-navy-600 flex items-center justify-center shrink-0">
-        <i class="fas ${ch.icon || 'fa-comment'}"></i>
+      <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style="background: var(--c-navy);">
+        <i class="fas ${ch.icon || 'fa-comment'}" style="color: var(--c-gold);"></i>
       </div>
       <div class="flex-1 min-w-0">
-        <h3 class="font-semibold text-navy-800 truncate">${escapeHtml(ch.name)}</h3>
-        ${ch.description ? `<p class="text-xs text-navy-500 truncate">${escapeHtml(ch.description)}</p>` : `<p class="text-xs text-navy-400 italic truncate">${escapeHtml(ch.group_name || '')}</p>`}
+        <h3 class="font-display font-semibold truncate" style="color: var(--c-navy);">${escapeHtml(ch.name)}</h3>
+        ${ch.description ? `<p class="text-xs truncate" style="color: rgba(15,27,40,0.55);">${escapeHtml(ch.description)}</p>` : `<p class="text-xs italic truncate" style="color: rgba(15,27,40,0.4);">${escapeHtml(ch.group_name || '')}</p>`}
       </div>
     </div>
 
     <!-- Zone messages -->
-    <div id="chat-messages-zone" class="chat-messages-scroll px-3 sm:px-5 py-4 space-y-3 bg-gray-50">
+    <div id="chat-messages-zone" class="chat-messages-scroll px-3 sm:px-5 py-4 space-y-3" style="background: var(--c-ivory);">
       ${messages.length === 0 ? `
         <div class="text-center py-12">
-          <i class="fas fa-comment-dots text-4xl text-navy-200 mb-2"></i>
-          <p class="text-sm text-navy-400">Aucun message pour le moment.</p>
-          <p class="text-xs text-navy-300 mt-1">Soyez le premier à écrire dans ce salon !</p>
+          <div class="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3" style="background: var(--c-navy);">
+            <i class="fas fa-comment-dots text-xl" style="color: var(--c-gold);"></i>
+          </div>
+          <p class="font-display text-base font-semibold" style="color: var(--c-navy);">Aucun message</p>
+          <p class="text-xs mt-1" style="color: rgba(15,27,40,0.4);">Soyez le premier à écrire dans ce salon.</p>
         </div>
       ` : messages.map((m, i) => renderMessage(m, messages[i - 1])).join('')}
     </div>
 
     <!-- Champ d'envoi -->
-    <div class="chat-input-bar border-t border-gray-200 p-2 sm:p-3 bg-white">
+    <div class="chat-input-bar p-2 sm:p-3" style="background: #fff; border-top: 1px solid var(--c-line);">
       <form onsubmit="event.preventDefault(); sendMessage()" class="flex items-end gap-2">
         <textarea id="chat-input" rows="1" placeholder="Écrivez votre message..."
-          class="flex-1 resize-none px-3 sm:px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none text-sm max-h-32"
+          class="flex-1 resize-none px-3 sm:px-4 py-2.5 input-premium rounded-xl outline-none text-sm max-h-32"
           onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault(); sendMessage();}"
           oninput="autoResizeTextarea(this)"></textarea>
-        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow">
+        <button type="submit" class="btn-premium w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);">
           <i class="fas fa-paper-plane text-sm"></i>
         </button>
       </form>
@@ -4398,30 +4422,30 @@ function renderMessage(m, prevMsg) {
   const isMe = state.user && m.user_id === state.user.id;
   const initials = (m.user_name || '?').charAt(0).toUpperCase();
   const time = formatChatTime(m.created_at);
-  const roleBadge = m.user_role === 'admin' ? '<span class="text-[9px] uppercase font-bold text-blue-600 ml-1">admin</span>'
-    : (m.user_role === 'employee' && m.user_can_edit ? '<span class="text-[9px] uppercase font-bold text-orange-500 ml-1">éditeur</span>' : '');
+  const roleBadge = m.user_role === 'admin' ? '<span class="text-[9px] uppercase font-bold ml-1" style="color: var(--c-gold-deep);">admin</span>'
+    : (m.user_role === 'employee' && m.user_can_edit ? '<span class="text-[9px] uppercase font-bold ml-1" style="color: var(--c-gold);">éditeur</span>' : '');
 
   if (sameAuthor) {
     return `
-    <div class="flex gap-3 pl-12 hover:bg-white/50 -mx-3 px-3 py-0.5 rounded">
+    <div class="flex gap-3 pl-12 -mx-3 px-3 py-0.5 rounded transition-colors" onmouseover="this.style.background='rgba(255,255,255,0.5)'" onmouseout="this.style.background='transparent'">
       <div class="flex-1 min-w-0">
-        <p class="text-sm text-navy-700 whitespace-pre-wrap break-words">${escapeHtml(m.content)}${m.edited_at ? '<span class="text-[10px] text-navy-300 ml-1">(modifié)</span>' : ''}</p>
+        <p class="text-sm whitespace-pre-wrap break-words" style="color: rgba(15,27,40,0.85);">${escapeHtml(m.content)}${m.edited_at ? '<span class="text-[10px] ml-1" style="color: rgba(15,27,40,0.3);">(modifié)</span>' : ''}</p>
       </div>
     </div>`;
   }
 
   return `
-  <div class="flex gap-3 hover:bg-white/50 -mx-3 px-3 py-1.5 rounded">
-    <div class="w-9 h-9 rounded-full ${isMe ? 'bg-brand-400' : 'bg-navy-600'} text-white flex items-center justify-center font-semibold text-sm shrink-0">
+  <div class="flex gap-3 -mx-3 px-3 py-1.5 rounded transition-colors" onmouseover="this.style.background='rgba(255,255,255,0.5)'" onmouseout="this.style.background='transparent'">
+    <div class="w-9 h-9 rounded-full flex items-center justify-center font-semibold text-sm shrink-0" style="background: ${isMe ? 'var(--c-gold)' : 'var(--c-navy)'}; color: ${isMe ? 'var(--c-navy)' : 'var(--c-gold)'};">
       ${initials}
     </div>
     <div class="flex-1 min-w-0">
       <div class="flex items-baseline gap-2 flex-wrap">
-        <span class="font-semibold text-navy-800 text-sm">${escapeHtml(m.user_name || 'Inconnu')}</span>
+        <span class="font-display font-semibold text-sm" style="color: var(--c-navy);">${escapeHtml(m.user_name || 'Inconnu')}</span>
         ${roleBadge}
-        <span class="text-[11px] text-navy-400">${time}</span>
+        <span class="text-[11px]" style="color: rgba(15,27,40,0.4);">${time}</span>
       </div>
-      <p class="text-sm text-navy-700 whitespace-pre-wrap break-words mt-0.5">${escapeHtml(m.content)}${m.edited_at ? '<span class="text-[10px] text-navy-300 ml-1">(modifié)</span>' : ''}</p>
+      <p class="text-sm whitespace-pre-wrap break-words mt-0.5" style="color: rgba(15,27,40,0.85);">${escapeHtml(m.content)}${m.edited_at ? '<span class="text-[10px] ml-1" style="color: rgba(15,27,40,0.3);">(modifié)</span>' : ''}</p>
     </div>
   </div>`;
 }
@@ -4588,7 +4612,7 @@ function showCreateChannelModal(presetGroupId = null) {
     <form onsubmit="event.preventDefault(); submitCreateChannel()">
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Groupe</label>
-        <select id="ch-group" onchange="refreshChannelSuggestions()" class="w-full px-3 py-2 border border-navy-200 rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+        <select id="ch-group" onchange="refreshChannelSuggestions()" class="w-full px-3 py-2 input-premium rounded-lg text-sm focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
           ${groups.map(g => `<option value="${g.id}" ${g.id === selectedGroupId ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
         </select>
       </div>
@@ -4608,20 +4632,20 @@ function showCreateChannelModal(presetGroupId = null) {
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom du salon <span class="text-red-500">*</span></label>
         <input id="ch-name" type="text" required maxlength="60" placeholder="ex: chambre-301"
-          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+          class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
       </div>
 
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Description <span class="text-navy-400 font-normal text-xs">(facultatif)</span></label>
         <textarea id="ch-description" rows="3" maxlength="200" oninput="autoResizeTextarea(this)" placeholder="ex: Discussions liées à cette chambre"
-          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none"></textarea>
+          class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none"></textarea>
       </div>
 
       <input type="hidden" id="ch-icon" value="fa-hashtag">
 
       <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
-        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">
+        <button type="submit" class="px-4 py-3 sm:py-2 btn-premium-navy text-white rounded-lg text-sm font-semibold shadow">
           <i class="fas fa-check mr-1"></i>Créer
         </button>
       </div>
@@ -4680,23 +4704,23 @@ function showEditChannelModal(channelId) {
     <form onsubmit="event.preventDefault(); submitEditChannel(${channelId})">
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Groupe</label>
-        <select id="ch-group" class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none bg-white">
+        <select id="ch-group" class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none bg-white">
           ${groups.map(g => `<option value="${g.id}" ${g.id === ch.group_id ? 'selected' : ''}>${escapeHtml(g.name)}</option>`).join('')}
         </select>
       </div>
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom du salon</label>
         <input id="ch-name" type="text" required maxlength="60" value="${escapeHtml(ch.name)}"
-          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+          class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
       </div>
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Description</label>
         <textarea id="ch-description" rows="3" maxlength="200" oninput="autoResizeTextarea(this)"
-          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">${escapeHtml(ch.description || '')}</textarea>
+          class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">${escapeHtml(ch.description || '')}</textarea>
       </div>
       <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
-        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
+        <button type="submit" class="px-4 py-3 sm:py-2 btn-premium-navy text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
       </div>
     </form>
   `);
@@ -4737,11 +4761,11 @@ function showEditGroupModal(groupId) {
       <div class="mb-4">
         <label class="block text-sm font-medium text-navy-600 mb-1.5">Nom du groupe</label>
         <input id="grp-name" type="text" required maxlength="60" value="${escapeHtml(g.name)}"
-          class="form-input-mobile w-full px-3 py-2 border border-navy-200 rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
+          class="form-input-mobile w-full px-3 py-2 input-premium rounded-lg focus:ring-2 focus:ring-brand-400 focus:border-transparent outline-none">
       </div>
       <div class="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end pt-2">
         <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 bg-navy-100 hover:bg-navy-200 text-navy-700 rounded-lg text-sm font-medium">Annuler</button>
-        <button type="submit" class="px-4 py-3 sm:py-2 bg-brand-400 hover:bg-brand-500 text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
+        <button type="submit" class="px-4 py-3 sm:py-2 btn-premium-navy text-white rounded-lg text-sm font-semibold shadow">Enregistrer</button>
       </div>
     </form>
   `);
@@ -4844,22 +4868,22 @@ async function showProcedureForm(procedureId = null) {
         <div>
           <label class="block text-sm font-medium text-navy-600 mb-1">Titre de la procédure *</label>
           <input id="proc-title" type="text" required value="${proc?.title || ''}" placeholder="Ex: Check-in d'un client" data-proc-id="${procedureId || ''}"
-            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
+            class="form-input-mobile w-full input-premium rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
         </div>
         <div>
           <label class="block text-sm font-medium text-navy-600 mb-1"><i class="fas fa-bolt text-brand-400 mr-1"></i>Déclencheur — Qu'est-ce qu'il se passe ? *</label>
           <input id="proc-trigger" type="text" required value="${proc?.trigger_event || ''}" placeholder="Ex: Un client arrive à la réception pour s'enregistrer"
-            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
+            class="form-input-mobile w-full input-premium rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">
         </div>
         <div>
           <label class="block text-sm font-medium text-navy-600 mb-1">Description / Contexte</label>
           <textarea id="proc-desc" rows="3" oninput="autoResizeTextarea(this)" placeholder="Contexte, objectif, infos importantes à savoir avant de commencer..."
-            class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">${proc?.description || ''}</textarea>
+            class="form-input-mobile w-full input-premium rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400">${proc?.description || ''}</textarea>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label class="block text-sm font-medium text-navy-600 mb-1">Catégorie</label>
-            <select id="proc-category" class="form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 bg-white">
+            <select id="proc-category" class="form-input-mobile w-full input-premium rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-brand-400 bg-white">
               <option value="">Sans catégorie</option>
               ${state.categories.map(c => `<option value="${c.id}" ${proc?.category_id == c.id ? 'selected' : ''}>${c.name}</option>`).join('')}
             </select>
@@ -4891,7 +4915,7 @@ async function showProcedureForm(procedureId = null) {
 
       <div class="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-4 border-t border-gray-100 sticky bottom-0 bg-white -mx-4 sm:-mx-5 px-4 sm:px-5 -mb-4 sm:-mb-5 pb-4 sm:pb-5 z-10">
         <button type="button" onclick="closeModal()" class="px-4 py-3 sm:py-2 text-sm font-medium text-navy-600 hover:text-navy-800 hover:bg-navy-50 rounded-lg transition-colors">Annuler</button>
-        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-3 sm:py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm">
+        <button type="submit" class="btn-premium-navy text-white px-6 py-3 sm:py-2 rounded-lg text-sm font-semibold transition-colors shadow-sm">
           <i class="fas fa-save mr-1.5"></i>${proc ? 'Mettre à jour' : 'Créer la procédure'}
         </button>
       </div>
@@ -4941,12 +4965,12 @@ function stepFieldHTML(index, step = null) {
     </div>
 
     <label class="block text-xs font-medium text-navy-500 mb-1">Titre *</label>
-    <input type="text" class="step-title form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-3" placeholder="Ex: Vérifier l'identité du client" value="${step?.title || ''}" required>
+    <input type="text" class="step-title form-input-mobile w-full input-premium rounded-lg px-3 py-2.5 text-base mb-3" placeholder="Ex: Vérifier l'identité du client" value="${step?.title || ''}" required>
 
     <!-- Bloc étape simple -->
     <div class="step-simple-block ${isLinked ? 'hidden' : ''}">
       <label class="block text-xs font-medium text-navy-500 mb-1">Contenu / Instructions</label>
-      <textarea class="step-content form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base" rows="5" oninput="autoResizeTextarea(this)" placeholder="Détails complets de l'étape : ce qu'il faut faire, dire, vérifier...&#10;&#10;Astuces : utilisez **gras** pour mettre en valeur, • pour des puces.">${step?.content || ''}</textarea>
+      <textarea class="step-content form-input-mobile w-full input-premium rounded-lg px-3 py-2.5 text-base" rows="5" oninput="autoResizeTextarea(this)" placeholder="Détails complets de l'étape : ce qu'il faut faire, dire, vérifier...&#10;&#10;Astuces : utilisez **gras** pour mettre en valeur, • pour des puces.">${step?.content || ''}</textarea>
       <p class="text-xs text-navy-400 mt-1">Vous pouvez utiliser **gras** et des puces (• ou -)</p>
     </div>
 
@@ -5015,15 +5039,15 @@ async function openInlineSubprocCreator(btn) {
       <div class="space-y-3">
         <div>
           <label class="block text-xs font-semibold text-navy-600 mb-1">Titre *</label>
-          <input id="sp-title" type="text" required placeholder="Ex: Vérification d'identité du client" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-400">
+          <input id="sp-title" type="text" required placeholder="Ex: Vérification d'identité du client" class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-400">
         </div>
         <div>
           <label class="block text-xs font-semibold text-navy-600 mb-1">Déclencheur *</label>
-          <input id="sp-trigger" type="text" required placeholder="Ex: Quand on doit vérifier l'identité d'un client à la réception" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-400">
+          <input id="sp-trigger" type="text" required placeholder="Ex: Quand on doit vérifier l'identité d'un client à la réception" class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-400">
         </div>
         <div>
           <label class="block text-xs font-semibold text-navy-600 mb-1">Description (optionnel)</label>
-          <textarea id="sp-desc" rows="2" oninput="autoResizeTextarea(this)" placeholder="Contexte, objectif..." class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-400"></textarea>
+          <textarea id="sp-desc" rows="2" oninput="autoResizeTextarea(this)" placeholder="Contexte, objectif..." class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-purple-400"></textarea>
         </div>
         <div>
           <div class="flex items-center justify-between mb-1">
@@ -5197,8 +5221,8 @@ function condStepFieldHTML(index, step = null) {
       <span class="text-xs font-semibold text-purple-500">Étape ${index + 1}</span>
       <button type="button" onclick="this.closest('.cond-step-field').remove()" class="ml-auto text-red-400 hover:text-red-600 w-7 h-7 rounded hover:bg-red-50 flex items-center justify-center"><i class="fas fa-times text-sm"></i></button>
     </div>
-    <input type="text" class="cstep-title form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base mb-2" placeholder="Titre de l'étape" value="${step?.title || ''}">
-    <textarea class="cstep-content form-input-mobile w-full border border-navy-200 rounded-lg px-3 py-2.5 text-base" rows="3" oninput="autoResizeTextarea(this)" placeholder="Contenu / instructions">${step?.content || step?.description || ''}</textarea>
+    <input type="text" class="cstep-title form-input-mobile w-full input-premium rounded-lg px-3 py-2.5 text-base mb-2" placeholder="Titre de l'étape" value="${step?.title || ''}">
+    <textarea class="cstep-content form-input-mobile w-full input-premium rounded-lg px-3 py-2.5 text-base" rows="3" oninput="autoResizeTextarea(this)" placeholder="Contenu / instructions">${step?.content || step?.description || ''}</textarea>
   </div>`;
 }
 
@@ -5287,7 +5311,7 @@ function showSuggestionForm(procedureId = null) {
     <div class="space-y-4">
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Type de suggestion *</label>
-        <select id="sugg-type" required class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        <select id="sugg-type" required class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
           <option value="improvement">💡 Amélioration d'une procédure existante</option>
           <option value="new_procedure">➕ Proposition de nouvelle procédure</option>
           <option value="issue">🐛 Signaler un problème</option>
@@ -5296,12 +5320,12 @@ function showSuggestionForm(procedureId = null) {
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Titre *</label>
         <input id="sugg-title" type="text" required placeholder="Résumé court de votre suggestion"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Description détaillée *</label>
         <textarea id="sugg-desc" rows="4" required placeholder="Décrivez en détail votre suggestion..."
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400"></textarea>
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400"></textarea>
       </div>
       <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
         <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
@@ -5346,7 +5370,7 @@ function showUserForm() {
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Hôtel *</label>
-        <select id="user-hotel" required class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        <select id="user-hotel" required class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
           <option value="">— Sélectionner un hôtel —</option>
           ${state.hotels.map(h => `<option value="${h.id}">${h.name}</option>`).join('')}
         </select>
@@ -5354,29 +5378,29 @@ function showUserForm() {
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Nom complet *</label>
         <input id="user-name" type="text" required placeholder="Prénom Nom"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Email *</label>
         <input id="user-email" type="email" required placeholder="email@hotel.com"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Mot de passe *</label>
         <input id="user-password" type="password" required placeholder="••••••••"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       ${!isSuperAdmin ? `
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Rôle *</label>
-        <select id="user-role" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        <select id="user-role" class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
           <option value="employee">Employé</option>
           <option value="admin">Administrateur</option>
         </select>
       </div>` : '<input type="hidden" id="user-role" value="admin">'}
       <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
         <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
-        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
+        <button type="submit" class="btn-premium-navy text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
           <i class="fas fa-user-plus mr-1.5"></i>Créer le compte
         </button>
       </div>
@@ -5410,16 +5434,16 @@ function showHotelForm() {
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Nom de l'hôtel *</label>
         <input id="hotel-name" type="text" required placeholder="Ex: Hôtel Le Grand Paris"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Adresse</label>
         <input id="hotel-address" type="text" placeholder="Adresse complète"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
         <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
-        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
+        <button type="submit" class="btn-premium-navy text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
           <i class="fas fa-hotel mr-1.5"></i>Créer l'hôtel
         </button>
       </div>
@@ -5449,15 +5473,15 @@ function showTemplateForm() {
     <div class="space-y-4">
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Nom du template *</label>
-        <input id="tpl-name" type="text" required class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        <input id="tpl-name" type="text" required class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Description</label>
-        <textarea id="tpl-desc" rows="2" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400"></textarea>
+        <textarea id="tpl-desc" rows="2" class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400"></textarea>
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Catégorie suggérée</label>
-        <input id="tpl-category" type="text" placeholder="Ex: Réception" class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        <input id="tpl-category" type="text" placeholder="Ex: Réception" class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <div class="flex items-center justify-between mb-2">
@@ -5473,7 +5497,7 @@ function showTemplateForm() {
       </div>
       <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
         <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
-        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
+        <button type="submit" class="btn-premium-navy text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
           <i class="fas fa-save mr-1.5"></i>Créer le template
         </button>
       </div>
@@ -5563,21 +5587,21 @@ function showChangePasswordModal() {
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Mot de passe actuel *</label>
         <input id="cp-current" type="password" required placeholder="••••••••"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Nouveau mot de passe *</label>
         <input id="cp-new" type="password" required placeholder="••••••••" minlength="6"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Confirmer le nouveau mot de passe *</label>
         <input id="cp-confirm" type="password" required placeholder="••••••••" minlength="6"
-          class="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
         <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
-        <button type="submit" class="bg-brand-400 hover:bg-brand-500 text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
+        <button type="submit" class="btn-premium-navy text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
           <i class="fas fa-key mr-1.5"></i>Changer le mot de passe
         </button>
       </div>
@@ -5730,53 +5754,56 @@ function renderRoomsView() {
   }
   const canEdit = userCanEditClients();
   return `
-  <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
-    <div>
-      <h2 class="text-2xl font-bold text-navy-800"><i class="fas fa-door-closed text-brand-400 mr-2"></i>Chambres</h2>
-      <p class="text-sm text-gray-500 mt-1">${state.rooms.length} chambre(s) · ${state.rooms.filter(r => r.is_active).length} active(s)</p>
-    </div>
-    ${canEdit ? `
-      <div class="flex flex-wrap gap-2">
-        ${state.rooms.length === 0 ? `<button onclick="seedLecquesRooms()" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow" title="Crée les 56 chambres du Grand Hôtel des Lecques (étage 1: 01-09, étage 2: 101-109, étage 3: 201-219, étage 4: 301-319)"><i class="fas fa-magic mr-2"></i>Seed Lecques (56)</button>` : ''}
-        <button onclick="showBulkRoomsModal()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-file-import mr-2"></i>Import en masse</button>
-        <button onclick="showRoomModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-plus mr-2"></i>Nouvelle chambre</button>
+  <div class="fade-in">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-7">
+      <div>
+        <p class="section-eyebrow mb-2">Hébergement</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Chambres</h2>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">${state.rooms.length} chambre(s) · ${state.rooms.filter(r => r.is_active).length} active(s)</p>
       </div>
-    ` : ''}
-  </div>
-  <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-    <div class="table-scroll-wrapper">
-      <table class="min-w-full text-sm">
-        <thead class="bg-gray-50 text-xs uppercase text-gray-500">
-          <tr>
-            <th class="px-4 py-3 text-left">Numéro</th>
-            <th class="px-4 py-3 text-left">Étage</th>
-            <th class="px-4 py-3 text-left">Capacité</th>
-            <th class="px-4 py-3 text-left">Client actuel</th>
-            <th class="px-4 py-3 text-left">Statut</th>
-            ${canEdit ? '<th class="px-4 py-3 text-right">Actions</th>' : ''}
-          </tr>
-        </thead>
-        <tbody class="divide-y divide-gray-100">
-          ${state.rooms.length === 0 ? `<tr><td colspan="${canEdit ? 6 : 5}" class="px-4 py-8 text-center text-gray-400">Aucune chambre. Créez la première !</td></tr>` : state.rooms.map(r => `
-            <tr class="hover:bg-gray-50">
-              <td class="px-4 py-3 font-bold text-navy-800">${escapeHtml(r.room_number)}</td>
-              <td class="px-4 py-3 text-gray-600">${escapeHtml(r.floor || '—')}</td>
-              <td class="px-4 py-3 text-gray-600">${r.capacity || 2} pers.</td>
-              <td class="px-4 py-3">
-                ${r.current_guest ? `<span class="font-medium text-navy-800">${escapeHtml(r.current_guest)}</span>` : '<span class="text-gray-400 italic">Libre</span>'}
-                ${r.checkout_date ? `<div class="text-[11px] text-gray-500">Départ: ${r.checkout_date}</div>` : ''}
-              </td>
-              <td class="px-4 py-3">
-                ${r.is_active ? '<span class="inline-flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded">Active</span>' : '<span class="inline-flex items-center gap-1 text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">Désactivée</span>'}
-              </td>
-              ${canEdit ? `<td class="px-4 py-3 text-right">
-                <button onclick="showRoomModal(${r.id})" class="text-blue-500 hover:text-blue-700 mr-3" title="Modifier"><i class="fas fa-pen"></i></button>
-                <button onclick="deleteRoom(${r.id}, '${escapeHtml(r.room_number).replace(/'/g, "\\'")}')" class="text-red-500 hover:text-red-700" title="Supprimer"><i class="fas fa-trash"></i></button>
-              </td>` : ''}
+      ${canEdit ? `
+        <div class="flex flex-wrap gap-2">
+          ${state.rooms.length === 0 ? `<button onclick="seedLecquesRooms()" class="px-4 py-2 rounded-lg text-sm font-semibold transition-all" style="background: var(--c-gold); color: var(--c-navy);" title="Crée les 56 chambres du Grand Hôtel des Lecques"><i class="fas fa-magic mr-2"></i>Seed Lecques (56)</button>` : ''}
+          <button onclick="showBulkRoomsModal()" class="px-4 py-2 rounded-lg text-sm font-semibold transition-all" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);"><i class="fas fa-file-import mr-2"></i>Import en masse</button>
+          <button onclick="showRoomModal()" class="btn-premium px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;"><i class="fas fa-plus text-xs"></i>Nouvelle chambre</button>
+        </div>
+      ` : ''}
+    </div>
+    <div class="card-premium overflow-hidden">
+      <div class="table-scroll-wrapper">
+        <table class="min-w-full text-sm">
+          <thead class="text-xs uppercase tracking-wider" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.55);">
+            <tr>
+              <th class="px-4 py-3 text-left">Numéro</th>
+              <th class="px-4 py-3 text-left">Étage</th>
+              <th class="px-4 py-3 text-left">Capacité</th>
+              <th class="px-4 py-3 text-left">Client actuel</th>
+              <th class="px-4 py-3 text-left">Statut</th>
+              ${canEdit ? '<th class="px-4 py-3 text-right">Actions</th>' : ''}
             </tr>
-          `).join('')}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            ${state.rooms.length === 0 ? `<tr><td colspan="${canEdit ? 6 : 5}" class="px-4 py-12 text-center" style="color: rgba(15,27,40,0.4);">Aucune chambre. Créez la première !</td></tr>` : state.rooms.map(r => `
+              <tr style="border-top: 1px solid var(--c-line);" onmouseover="this.style.background='var(--c-cream-deep)'" onmouseout="this.style.background='transparent'">
+                <td class="px-4 py-3 font-display font-bold" style="color: var(--c-navy);">${escapeHtml(r.room_number)}</td>
+                <td class="px-4 py-3" style="color: rgba(15,27,40,0.6);">${escapeHtml(r.floor || '—')}</td>
+                <td class="px-4 py-3" style="color: rgba(15,27,40,0.6);">${r.capacity || 2} pers.</td>
+                <td class="px-4 py-3">
+                  ${r.current_guest ? `<span class="font-medium" style="color: var(--c-navy);">${escapeHtml(r.current_guest)}</span>` : '<span class="italic" style="color: rgba(15,27,40,0.35);">Libre</span>'}
+                  ${r.checkout_date ? `<div class="text-[11px]" style="color: rgba(15,27,40,0.5);">Départ: ${r.checkout_date}</div>` : ''}
+                </td>
+                <td class="px-4 py-3">
+                  ${r.is_active ? '<span class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded" style="background: rgba(201,169,97,0.15); color: var(--c-gold-deep);">Active</span>' : '<span class="inline-flex items-center gap-1 text-xs px-2 py-1 rounded" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">Désactivée</span>'}
+                </td>
+                ${canEdit ? `<td class="px-4 py-3 text-right">
+                  <button onclick="showRoomModal(${r.id})" class="mr-3 transition-colors" style="color: var(--c-navy);" title="Modifier"><i class="fas fa-pen"></i></button>
+                  <button onclick="deleteRoom(${r.id}, '${escapeHtml(r.room_number).replace(/'/g, "\\'")}')" class="transition-colors" style="color: #C84C3F;" title="Supprimer"><i class="fas fa-trash"></i></button>
+                </td>` : ''}
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>`;
 }
@@ -5807,7 +5834,7 @@ function showRoomModal(roomId = null) {
         ${isEdit ? `<div class="flex items-center gap-2"><input id="room_active" type="checkbox" ${room.is_active ? 'checked' : ''}><label for="room_active" class="text-sm text-navy-700">Chambre active</label></div>` : ''}
         <div class="flex justify-end gap-2 pt-2">
           <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Annuler</button>
-          <button onclick="saveRoom(${roomId || 'null'})" class="px-4 py-2 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded-lg font-semibold">${isEdit ? 'Enregistrer' : 'Créer'}</button>
+          <button onclick="saveRoom(${roomId || 'null'})" class="px-4 py-2 text-sm btn-premium-navy text-white rounded-lg font-semibold">${isEdit ? 'Enregistrer' : 'Créer'}</button>
         </div>
       </div>
     </div>
@@ -5980,52 +6007,57 @@ function renderOccupancyView() {
   const tomorrowStr = tomorrow.toISOString().slice(0, 10);
 
   return `
-  <div class="mb-6">
-    <div class="flex flex-wrap items-start justify-between gap-3">
+  <div class="fade-in">
+    <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6">
       <div>
-        <h2 class="text-2xl font-bold text-navy-800"><i class="fas fa-id-card text-brand-400 mr-2"></i>Présents du jour</h2>
-        <p class="text-sm text-gray-500 mt-1">Saisie quotidienne à 12h00 — ${occupied}/${rooms.length} chambre(s) occupée(s)</p>
-        <p class="text-xs text-gray-400 mt-1">Date : <span class="font-mono">${today}</span> · Code hôtel : <span class="font-mono font-bold text-brand-500">${hotel.client_login_code || '— (à définir dans Paramètres)'}</span></p>
+        <p class="section-eyebrow mb-2">Saisie quotidienne</p>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Présents du jour</h2>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.55);">${occupied}/${rooms.length} chambre(s) occupée(s) · à valider à 12h00</p>
+        <p class="text-xs mt-1" style="color: rgba(15,27,40,0.45);">Date : <span class="font-mono">${today}</span> · Code hôtel : <span class="font-mono font-bold" style="color: var(--c-gold-deep);">${hotel.client_login_code || '— (à définir)'}</span></p>
       </div>
       <div class="flex flex-wrap gap-2">
-        <button onclick="printOccupancyCards()" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-print mr-2"></i>Imprimer les fiches</button>
-        <button onclick="saveOccupancyDay()" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow"><i class="fas fa-save mr-2"></i>Enregistrer la journée</button>
+        <button onclick="printOccupancyCards()" class="px-4 py-2 rounded-lg text-sm font-semibold transition-all" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);"><i class="fas fa-print mr-2"></i>Imprimer les fiches</button>
+        <button onclick="saveOccupancyDay()" class="btn-premium px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;"><i class="fas fa-save text-xs"></i>Enregistrer la journée</button>
       </div>
     </div>
-  </div>
 
-  <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-5 text-sm text-blue-800">
-    <i class="fas fa-info-circle mr-2"></i>
-    <strong>Comment ça marche :</strong> Pour chaque chambre, saisissez le nom du client + date de départ. Le nom devient automatiquement son mot de passe pour se connecter à Wikot depuis sa chambre. Une chambre laissée vide est considérée comme libre. Cliquez sur <strong>Enregistrer la journée</strong> pour valider tout d'un coup.
-  </div>
+    <div class="card-premium p-4 mb-6" style="background: var(--c-cream-deep); border-left: 3px solid var(--c-gold);">
+      <div class="flex gap-3">
+        <i class="fas fa-info-circle mt-0.5" style="color: var(--c-gold-deep);"></i>
+        <p class="text-sm" style="color: rgba(15,27,40,0.75);">
+          <strong style="color: var(--c-navy);">Comment ça marche :</strong> Pour chaque chambre, saisissez le nom du client + date de départ. Le nom devient automatiquement son mot de passe pour se connecter à Wikot depuis sa chambre. Une chambre laissée vide est considérée comme libre.
+        </p>
+      </div>
+    </div>
 
-  <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3">
-      ${rooms.length === 0 ? `<div class="col-span-full text-center py-12 text-gray-400">Aucune chambre. Allez dans <strong>Chambres</strong> pour en créer.</div>` : rooms.map(r => {
-        const entry = state.occupancyEntries[r.room_id] || { guest_name: '', checkout_date: '' };
-        const isOccupied = r.is_active === 1;
-        return `
-        <div class="border ${isOccupied ? 'border-brand-300 bg-brand-50/40' : 'border-gray-200'} rounded-lg p-3">
-          <div class="flex items-center justify-between mb-2">
-            <span class="font-bold text-navy-800 text-lg">Ch. ${escapeHtml(r.room_number)}</span>
-            ${isOccupied ? '<span class="text-[10px] bg-brand-400 text-white px-2 py-0.5 rounded-full font-semibold">OCCUPÉE</span>' : '<span class="text-[10px] bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">LIBRE</span>'}
-          </div>
-          <div class="space-y-2">
-            <div>
-              <label class="block text-[11px] font-medium text-gray-600 mb-1">Nom du client (= mot de passe)</label>
-              <input type="text" value="${escapeHtml(entry.guest_name)}" oninput="state.occupancyEntries[${r.room_id}].guest_name = this.value"
-                placeholder="Ex: Dupont"
-                class="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm form-input-mobile">
+    <div class="card-premium overflow-hidden">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 p-3">
+        ${rooms.length === 0 ? `<div class="col-span-full text-center py-12" style="color: rgba(15,27,40,0.4);">Aucune chambre. Allez dans <strong>Chambres</strong> pour en créer.</div>` : rooms.map(r => {
+          const entry = state.occupancyEntries[r.room_id] || { guest_name: '', checkout_date: '' };
+          const isOccupied = r.is_active === 1;
+          return `
+          <div class="rounded-lg p-3 transition-all" style="background: ${isOccupied ? 'rgba(201,169,97,0.06)' : '#fff'}; border: 1px solid ${isOccupied ? 'rgba(201,169,97,0.30)' : 'var(--c-line)'};">
+            <div class="flex items-center justify-between mb-3">
+              <span class="font-display font-bold text-lg" style="color: var(--c-navy);">Ch. ${escapeHtml(r.room_number)}</span>
+              ${isOccupied ? '<span class="text-[10px] px-2 py-0.5 rounded-full font-semibold uppercase tracking-wider" style="background: var(--c-gold); color: var(--c-navy);">Occupée</span>' : '<span class="text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wider" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">Libre</span>'}
             </div>
-            <div>
-              <label class="block text-[11px] font-medium text-gray-600 mb-1">Date de départ</label>
-              <input type="date" value="${entry.checkout_date || tomorrowStr}" oninput="state.occupancyEntries[${r.room_id}].checkout_date = this.value"
-                class="w-full px-2.5 py-1.5 border border-gray-200 rounded text-sm form-input-mobile">
+            <div class="space-y-2">
+              <div>
+                <label class="block text-[10px] font-medium uppercase tracking-wider mb-1" style="color: rgba(15,27,40,0.5);">Nom du client (= mot de passe)</label>
+                <input type="text" value="${escapeHtml(entry.guest_name)}" oninput="state.occupancyEntries[${r.room_id}].guest_name = this.value"
+                  placeholder="Ex: Dupont"
+                  class="w-full px-2.5 py-1.5 input-premium rounded text-sm form-input-mobile">
+              </div>
+              <div>
+                <label class="block text-[10px] font-medium uppercase tracking-wider mb-1" style="color: rgba(15,27,40,0.5);">Date de départ</label>
+                <input type="date" value="${entry.checkout_date || tomorrowStr}" oninput="state.occupancyEntries[${r.room_id}].checkout_date = this.value"
+                  class="w-full px-2.5 py-1.5 input-premium rounded text-sm form-input-mobile">
+              </div>
+              ${isOccupied ? `<button onclick="clearRoomOccupancy(${r.room_id})" class="w-full text-xs py-1.5 rounded transition-all" style="color: #C84C3F; background: rgba(226,125,110,0.08);"><i class="fas fa-eraser mr-1"></i>Marquer libre</button>` : ''}
             </div>
-            ${isOccupied ? `<button onclick="clearRoomOccupancy(${r.room_id})" class="w-full text-xs text-red-500 hover:bg-red-50 py-1 rounded"><i class="fas fa-eraser mr-1"></i>Marquer libre</button>` : ''}
-          </div>
-        </div>`;
-      }).join('')}
+          </div>`;
+        }).join('')}
+      </div>
     </div>
   </div>`;
 }
@@ -6161,25 +6193,32 @@ function renderRestaurantView() {
     return `<div class="text-center py-12 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl mb-2"></i><p>Chargement...</p></div>`;
   }
   const tab = state.restaurantTab || 'dashboard';
+  const tabBtn = (key, icon, label) => `
+    <button onclick="state.restaurantTab='${key}'; render()" class="px-4 py-3 text-sm font-medium transition-colors" style="${tab === key ? 'color: var(--c-navy); border-bottom: 2px solid var(--c-gold); background: rgba(201,169,97,0.06);' : 'color: rgba(15,27,40,0.55); border-bottom: 2px solid transparent;'}">
+      <i class="fas ${icon} mr-1.5 text-xs"></i>${label}
+    </button>`;
   return `
-  <div class="mb-6">
-    <h2 class="text-2xl font-bold text-navy-800"><i class="fas fa-utensils text-brand-400 mr-2"></i>Restaurant</h2>
-    <p class="text-sm text-gray-500 mt-1">Planning hebdomadaire, exceptions et tableau de bord des réservations.</p>
-  </div>
-  <div class="bg-white rounded-xl shadow-sm overflow-hidden">
-    <div class="border-b border-gray-200 flex flex-wrap">
-      <button onclick="state.restaurantTab='dashboard'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'dashboard' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-chart-column mr-1"></i> Tableau de bord</button>
-      <button onclick="state.restaurantTab='reservations'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'reservations' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-list mr-1"></i> Réservations</button>
-      <button onclick="state.restaurantTab='schedule'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'schedule' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-calendar-week mr-1"></i> Planning</button>
-      <button onclick="state.restaurantTab='templates'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'templates' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-clone mr-1"></i> Modèles</button>
-      <button onclick="state.restaurantTab='exceptions'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'exceptions' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-calendar-xmark mr-1"></i> Exceptions</button>
+  <div class="fade-in">
+    <div class="mb-6">
+      <p class="section-eyebrow mb-2">Service en salle</p>
+      <h2 class="section-title-premium text-2xl sm:text-3xl">Restaurant</h2>
+      <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">Planning hebdomadaire, exceptions et tableau de bord des réservations</p>
     </div>
-    <div class="p-5">
-      ${tab === 'dashboard' ? renderRestaurantDashboard()
-        : tab === 'reservations' ? renderRestaurantReservations()
-        : tab === 'schedule' ? renderRestaurantSchedule()
-        : tab === 'templates' ? renderRestaurantTemplates()
-        : renderRestaurantExceptions()}
+    <div class="card-premium overflow-hidden">
+      <div class="flex flex-wrap" style="border-bottom: 1px solid var(--c-line);">
+        ${tabBtn('dashboard', 'fa-chart-column', 'Tableau de bord')}
+        ${tabBtn('reservations', 'fa-list', 'Réservations')}
+        ${tabBtn('schedule', 'fa-calendar-week', 'Planning')}
+        ${tabBtn('templates', 'fa-clone', 'Modèles')}
+        ${tabBtn('exceptions', 'fa-calendar-xmark', 'Exceptions')}
+      </div>
+      <div class="p-5">
+        ${tab === 'dashboard' ? renderRestaurantDashboard()
+          : tab === 'reservations' ? renderRestaurantReservations()
+          : tab === 'schedule' ? renderRestaurantSchedule()
+          : tab === 'templates' ? renderRestaurantTemplates()
+          : renderRestaurantExceptions()}
+      </div>
     </div>
   </div>`;
 }
@@ -6207,18 +6246,18 @@ function renderRestaurantDashboard() {
   const totalBookings = stats.reduce((acc, s) => acc + parseInt(s.bookings || 0), 0);
 
   return `
-  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-    <div class="bg-amber-50 border border-amber-100 rounded-lg p-4">
-      <div class="text-xs text-amber-700 uppercase tracking-wide font-semibold">Période</div>
-      <div class="text-sm font-bold text-amber-900 mt-1">${d.from} → ${d.to}</div>
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+    <div class="card-premium p-4" style="border-left: 3px solid var(--c-gold);">
+      <div class="section-eyebrow">Période</div>
+      <div class="font-display text-sm font-semibold mt-1" style="color: var(--c-navy);">${d.from} → ${d.to}</div>
     </div>
-    <div class="bg-blue-50 border border-blue-100 rounded-lg p-4">
-      <div class="text-xs text-blue-700 uppercase tracking-wide font-semibold">Réservations</div>
-      <div class="text-2xl font-bold text-blue-900">${totalBookings}</div>
+    <div class="card-premium p-4" style="border-left: 3px solid var(--c-navy);">
+      <div class="section-eyebrow">Réservations</div>
+      <div class="font-display text-2xl font-bold mt-1" style="color: var(--c-navy);">${totalBookings}</div>
     </div>
-    <div class="bg-green-50 border border-green-100 rounded-lg p-4">
-      <div class="text-xs text-green-700 uppercase tracking-wide font-semibold">Couverts totaux</div>
-      <div class="text-2xl font-bold text-green-900">${totalGuests}</div>
+    <div class="card-premium p-4" style="border-left: 3px solid var(--c-gold-deep);">
+      <div class="section-eyebrow">Couverts totaux</div>
+      <div class="font-display text-2xl font-bold mt-1" style="color: var(--c-navy);">${totalGuests}</div>
     </div>
   </div>
   <div class="space-y-3">
@@ -6236,16 +6275,16 @@ function renderRestaurantDashboard() {
             const ratio = capacity > 0 ? Math.min(100, (guests / capacity) * 100) : 0;
             const isClosed = capacity === 0;
             return `
-            <div class="bg-gray-50 rounded p-2 ${isClosed ? 'opacity-50' : ''}">
+            <div class="rounded p-2.5 ${isClosed ? 'opacity-50' : ''}" style="background: var(--c-cream-deep);">
               <div class="flex items-center justify-between text-xs">
-                <span class="font-medium">${mealLabels[m]}</span>
-                <span class="text-gray-600">${guests}/${capacity || '—'}</span>
+                <span class="font-medium" style="color: var(--c-navy);">${mealLabels[m]}</span>
+                <span style="color: rgba(15,27,40,0.6);">${guests}/${capacity || '—'}</span>
               </div>
-              ${isClosed ? '<div class="text-[10px] text-gray-400 italic mt-1">Fermé</div>' : `
-              <div class="w-full bg-gray-200 rounded-full h-2 mt-1.5">
-                <div class="${mealColors[m]} h-2 rounded-full transition-all" style="width: ${ratio}%"></div>
+              ${isClosed ? '<div class="text-[10px] italic mt-1" style="color: rgba(15,27,40,0.4);">Fermé</div>' : `
+              <div class="w-full rounded-full h-1.5 mt-1.5" style="background: rgba(15,27,40,0.10);">
+                <div class="h-1.5 rounded-full transition-all" style="width: ${ratio}%; background: var(--c-gold);"></div>
               </div>
-              <div class="text-[10px] text-gray-500 mt-0.5">${Math.round(ratio)}% rempli</div>
+              <div class="text-[10px] mt-0.5" style="color: rgba(15,27,40,0.5);">${Math.round(ratio)}% rempli</div>
               `}
             </div>`;
           }).join('')}
@@ -6262,7 +6301,7 @@ function renderRestaurantReservations() {
   return `
   <div class="flex justify-between items-center mb-3">
     <p class="text-sm text-gray-500">${reservations.length} réservation(s) du ${state.restaurantDashboardFrom} au ${state.restaurantDashboardTo}</p>
-    ${canEdit ? `<button onclick="showStaffReservationModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Ajouter</button>` : ''}
+    ${canEdit ? `<button onclick="showStaffReservationModal()" class="btn-premium-navy text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Ajouter</button>` : ''}
   </div>
   <div class="table-scroll-wrapper">
     <table class="min-w-full text-sm">
@@ -6356,7 +6395,7 @@ function renderRestaurantTemplates() {
   return `
   <div class="flex justify-between items-center mb-3">
     <p class="text-sm text-gray-500">Modèles de semaine — appliquez en 1 clic des horaires &amp; capacités complètes sur les 7 jours.</p>
-    ${canEdit ? `<button onclick="newRestaurantTemplate()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Nouveau modèle</button>` : ''}
+    ${canEdit ? `<button onclick="newRestaurantTemplate()" class="btn-premium-navy text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Nouveau modèle</button>` : ''}
   </div>
   ${tpls.length === 0 ? '<div class="text-center py-8 text-gray-400">Aucun modèle. Créez-en un ou utilisez les modèles par défaut.</div>' : ''}
   <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -6513,7 +6552,7 @@ function showRestaurantTemplateModal() {
         </div>
         <div class="flex justify-end gap-2 pt-2 sticky bottom-0 bg-white">
           <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 rounded hover:bg-gray-100">Annuler</button>
-          <button onclick="saveRestaurantTemplate()" class="px-4 py-2 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded font-semibold"><i class="fas fa-save mr-1"></i>Enregistrer</button>
+          <button onclick="saveRestaurantTemplate()" class="px-4 py-2 text-sm btn-premium-navy text-white rounded font-semibold"><i class="fas fa-save mr-1"></i>Enregistrer</button>
         </div>
       </div>
     </div>
@@ -6568,7 +6607,7 @@ function renderRestaurantExceptions() {
   return `
   <div class="flex justify-between items-center mb-3">
     <p class="text-sm text-gray-500">Exceptions ponctuelles (jours fériés, événements privés…)</p>
-    ${canEdit ? `<button onclick="showExceptionModal()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Ajouter</button>` : ''}
+    ${canEdit ? `<button onclick="showExceptionModal()" class="btn-premium-navy text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Ajouter</button>` : ''}
   </div>
   <div class="space-y-2">
     ${exc.length === 0 ? '<div class="text-center py-8 text-gray-400">Aucune exception programmée.</div>' : exc.map(e => `
@@ -6601,7 +6640,7 @@ function showExceptionModal() {
         <div><label class="block text-xs mb-1">Notes</label><input id="exc_notes" type="text" class="w-full px-2 py-1 border rounded text-sm" placeholder="Ex: Mariage privé"></div>
         <div class="flex justify-end gap-2 pt-2">
           <button onclick="closeModal()" class="px-3 py-1.5 text-sm text-gray-600 rounded hover:bg-gray-100">Annuler</button>
-          <button onclick="saveException()" class="px-3 py-1.5 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded">Enregistrer</button>
+          <button onclick="saveException()" class="px-3 py-1.5 text-sm btn-premium-navy text-white rounded">Enregistrer</button>
         </div>
       </div>
     </div>
@@ -6646,7 +6685,7 @@ function showStaffReservationModal() {
         <div><label class="block text-xs mb-1">Notes</label><input id="resa_notes" type="text" class="w-full px-3 py-2 border rounded text-sm" placeholder="Allergies, demandes spéciales…"></div>
         <div class="flex justify-end gap-2 pt-2">
           <button onclick="closeModal()" class="px-3 py-1.5 text-sm text-gray-600 rounded hover:bg-gray-100">Annuler</button>
-          <button onclick="saveStaffReservation()" class="px-3 py-1.5 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded">Enregistrer</button>
+          <button onclick="saveStaffReservation()" class="px-3 py-1.5 text-sm btn-premium-navy text-white rounded">Enregistrer</button>
         </div>
       </div>
     </div>
@@ -6815,34 +6854,42 @@ async function ensureClientWikotLoaded() {
 function renderClientWikot() {
   const messages = state.clientWikotMessages || [];
   return `
-  <div class="bg-white rounded-2xl shadow-sm flex flex-col" style="height: calc(100vh - 180px); min-height: 400px;">
-    <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-      <div>
-        <h2 class="font-bold text-navy-800"><i class="fas fa-robot text-brand-400 mr-2"></i>Front Wikot</h2>
-        <p class="text-[11px] text-gray-500">Votre concierge virtuel</p>
+  <div class="card-premium flex flex-col" style="height: calc(100vh - 180px); min-height: 400px;">
+    <div class="px-5 py-4 flex items-center justify-between" style="border-bottom: 1px solid var(--c-line);">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: var(--c-navy);">
+          <i class="fas fa-robot" style="color: var(--c-gold);"></i>
+        </div>
+        <div>
+          <p class="section-eyebrow">Concierge digital</p>
+          <h2 class="font-display font-semibold" style="color: var(--c-navy);">Front Wikot</h2>
+        </div>
       </div>
-      <button onclick="newClientWikotConversation()" class="text-xs text-gray-500 hover:text-brand-500"><i class="fas fa-rotate-right mr-1"></i>Nouvelle</button>
+      <button onclick="newClientWikotConversation()" class="text-xs transition-colors" style="color: rgba(15,27,40,0.55);" onmouseover="this.style.color='var(--c-gold-deep)'" onmouseout="this.style.color='rgba(15,27,40,0.55)'"><i class="fas fa-rotate-right mr-1"></i>Nouvelle</button>
     </div>
-    <div id="client-wikot-messages" class="flex-1 overflow-y-auto p-4 space-y-3">
+    <div id="client-wikot-messages" class="flex-1 overflow-y-auto p-4 space-y-3" style="background: var(--c-ivory);">
       ${messages.length === 0 ? `
-        <div class="text-center py-8 text-gray-400">
-          <i class="fas fa-comments text-3xl mb-2"></i>
-          <p class="text-sm">Posez-moi une question ou demandez à réserver !</p>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4 max-w-md mx-auto">
-            <button onclick="sendClientWikotMessage('À quelle heure est servi le petit-déjeuner ?')" class="text-left bg-amber-50 hover:bg-amber-100 px-3 py-2 rounded-lg text-xs text-amber-800">À quelle heure est servi le petit-déjeuner ?</button>
-            <button onclick="sendClientWikotMessage('Je voudrais réserver une table pour le dîner')" class="text-left bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-lg text-xs text-rose-800">Réserver une table pour ce soir</button>
-            <button onclick="sendClientWikotMessage('Quel est le code wifi ?')" class="text-left bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded-lg text-xs text-blue-800">Quel est le code wifi ?</button>
-            <button onclick="sendClientWikotMessage('Réserver le petit-déjeuner')" class="text-left bg-green-50 hover:bg-green-100 px-3 py-2 rounded-lg text-xs text-green-800">Réserver le petit-déjeuner</button>
+        <div class="text-center py-8">
+          <div class="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3" style="background: var(--c-navy);">
+            <i class="fas fa-comments text-xl" style="color: var(--c-gold);"></i>
+          </div>
+          <p class="font-display text-base font-semibold" style="color: var(--c-navy);">Bienvenue à bord</p>
+          <p class="text-sm mt-1" style="color: rgba(15,27,40,0.55);">Posez-moi une question ou demandez à réserver.</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-5 max-w-md mx-auto">
+            <button onclick="sendClientWikotMessage('À quelle heure est servi le petit-déjeuner ?')" class="text-left px-3.5 py-2.5 rounded-lg text-xs transition-all" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line-strong);" onmouseover="this.style.borderColor='var(--c-gold)'; this.style.background='var(--c-cream-deep)';" onmouseout="this.style.borderColor='var(--c-line-strong)'; this.style.background='#fff';"><i class="fas fa-coffee mr-1.5" style="color: var(--c-gold);"></i>Heure du petit-déjeuner ?</button>
+            <button onclick="sendClientWikotMessage('Je voudrais réserver une table pour le dîner')" class="text-left px-3.5 py-2.5 rounded-lg text-xs transition-all" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line-strong);" onmouseover="this.style.borderColor='var(--c-gold)'; this.style.background='var(--c-cream-deep)';" onmouseout="this.style.borderColor='var(--c-line-strong)'; this.style.background='#fff';"><i class="fas fa-utensils mr-1.5" style="color: var(--c-gold);"></i>Réserver une table ce soir</button>
+            <button onclick="sendClientWikotMessage('Quel est le code wifi ?')" class="text-left px-3.5 py-2.5 rounded-lg text-xs transition-all" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line-strong);" onmouseover="this.style.borderColor='var(--c-gold)'; this.style.background='var(--c-cream-deep)';" onmouseout="this.style.borderColor='var(--c-line-strong)'; this.style.background='#fff';"><i class="fas fa-wifi mr-1.5" style="color: var(--c-gold);"></i>Code wifi ?</button>
+            <button onclick="sendClientWikotMessage('Réserver le petit-déjeuner')" class="text-left px-3.5 py-2.5 rounded-lg text-xs transition-all" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line-strong);" onmouseover="this.style.borderColor='var(--c-gold)'; this.style.background='var(--c-cream-deep)';" onmouseout="this.style.borderColor='var(--c-line-strong)'; this.style.background='#fff';"><i class="fas fa-mug-hot mr-1.5" style="color: var(--c-gold);"></i>Réserver le petit-déjeuner</button>
           </div>
         </div>` : messages.map(m => renderFrontWikotMessage(m)).join('')}
-      ${state.clientWikotSending ? '<div class="flex justify-start"><div class="bg-gray-100 rounded-2xl px-4 py-2 text-sm text-gray-500"><i class="fas fa-circle-notch fa-spin mr-1"></i> Front Wikot réfléchit...</div></div>' : ''}
+      ${state.clientWikotSending ? '<div class="flex justify-start"><div class="rounded-2xl px-4 py-2 text-sm" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.55);"><i class="fas fa-circle-notch fa-spin mr-1"></i> Front Wikot réfléchit...</div></div>' : ''}
     </div>
-    <div class="border-t border-gray-100 p-3 flex gap-2">
+    <div class="p-3 flex gap-2" style="border-top: 1px solid var(--c-line); background: #fff;">
       <input id="client_wikot_input" type="text" placeholder="Posez votre question..."
         onkeydown="if(event.key==='Enter'){sendClientWikotMessage(this.value);this.value='';}"
-        class="flex-1 px-4 py-2 border border-gray-200 rounded-full text-sm form-input-mobile">
+        class="flex-1 input-premium px-4 py-2 rounded-full text-sm form-input-mobile">
       <button onclick="const i=document.getElementById('client_wikot_input'); sendClientWikotMessage(i.value); i.value='';"
-        class="bg-brand-400 hover:bg-brand-500 text-white w-10 h-10 rounded-full flex items-center justify-center"><i class="fas fa-paper-plane"></i></button>
+        class="btn-premium w-10 h-10 rounded-full flex items-center justify-center" style="background: var(--c-navy); color: var(--c-gold);"><i class="fas fa-paper-plane"></i></button>
     </div>
   </div>`;
 }
@@ -6852,7 +6899,7 @@ function renderFrontWikotMessage(m) {
   if (m.role === 'user') {
     return `
       <div class="flex justify-end">
-        <div class="max-w-[80%] bg-brand-400 text-white rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap">${escapeHtml(m.content || '')}</div>
+        <div class="max-w-[80%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap" style="background: var(--c-navy); color: var(--c-gold);">${escapeHtml(m.content || '')}</div>
       </div>`;
   }
   // Assistant : on lit references_json pour afficher la carte
@@ -6863,60 +6910,38 @@ function renderFrontWikotMessage(m) {
     const it = ref.item;
     return `
       <div class="flex justify-start">
-        <div class="max-w-[90%] bg-white border-2 border-blue-200 rounded-2xl shadow-sm overflow-hidden">
-          <div class="bg-blue-50 px-4 py-2 border-b border-blue-100 flex items-center gap-2">
-            <i class="fas fa-circle-info text-blue-600"></i>
-            <div class="text-[10px] uppercase tracking-wide text-blue-700 font-semibold">${escapeHtml(it.category || 'Info')}</div>
+        <div class="max-w-[90%] card-premium overflow-hidden" style="border-left: 3px solid var(--c-gold);">
+          <div class="px-4 py-2.5 flex items-center gap-2" style="background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
+            <i class="fas fa-circle-info" style="color: var(--c-gold-deep);"></i>
+            <div class="section-eyebrow">${escapeHtml(it.category || 'Info')}</div>
           </div>
           <div class="px-4 py-3">
-            <h4 class="font-bold text-navy-800 mb-1.5">${escapeHtml(it.title || '')}</h4>
-            <div class="text-sm text-gray-700 whitespace-pre-wrap">${escapeHtml(it.content || '')}</div>
+            <h4 class="font-display font-semibold mb-1.5" style="color: var(--c-navy);">${escapeHtml(it.title || '')}</h4>
+            <div class="text-sm whitespace-pre-wrap" style="color: rgba(15,27,40,0.75);">${escapeHtml(it.content || '')}</div>
           </div>
         </div>
       </div>`;
   }
 
   if (ref?.kind === 'reservation_card') {
-    // ⚠️ Classes Tailwind écrites en littéral (pas de concaténation dynamique : sinon Tailwind CDN ne les détecte pas)
-    const styles = {
-      breakfast: {
-        icon: 'fa-mug-hot',
-        wrap: 'border-amber-200',
-        head: 'bg-amber-50 border-amber-100',
-        chip: 'text-amber-600',
-        label: 'text-amber-700',
-        btn: 'bg-amber-500 hover:bg-amber-600'
-      },
-      lunch: {
-        icon: 'fa-utensils',
-        wrap: 'border-orange-200',
-        head: 'bg-orange-50 border-orange-100',
-        chip: 'text-orange-600',
-        label: 'text-orange-700',
-        btn: 'bg-orange-500 hover:bg-orange-600'
-      },
-      dinner: {
-        icon: 'fa-wine-glass',
-        wrap: 'border-rose-200',
-        head: 'bg-rose-50 border-rose-100',
-        chip: 'text-rose-600',
-        label: 'text-rose-700',
-        btn: 'bg-rose-500 hover:bg-rose-600'
-      }
+    const icons = {
+      breakfast: 'fa-mug-hot',
+      lunch: 'fa-utensils',
+      dinner: 'fa-wine-glass'
     };
-    const s = styles[ref.meal_type] || styles.dinner;
+    const icon = icons[ref.meal_type] || icons.dinner;
     return `
       <div class="flex justify-start">
-        <div class="max-w-[90%] bg-white border-2 ${s.wrap} rounded-2xl shadow-sm overflow-hidden">
-          <div class="${s.head} px-4 py-2 border-b flex items-center gap-2">
-            <i class="fas ${s.icon} ${s.chip}"></i>
-            <div class="text-[10px] uppercase tracking-wide ${s.label} font-semibold">Réservation restaurant</div>
+        <div class="max-w-[90%] card-premium overflow-hidden" style="border-left: 3px solid var(--c-gold);">
+          <div class="px-4 py-2.5 flex items-center gap-2" style="background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
+            <i class="fas ${icon}" style="color: var(--c-gold-deep);"></i>
+            <div class="section-eyebrow">Réservation restaurant</div>
           </div>
           <div class="px-4 py-3">
-            <h4 class="font-bold text-navy-800 mb-1">Réserver : ${escapeHtml(ref.meal_label || ref.meal_type)}</h4>
-            <p class="text-xs text-gray-600 mb-3">Choisissez la date, l'heure et le nombre de couverts.</p>
+            <h4 class="font-display font-semibold mb-1" style="color: var(--c-navy);">Réserver : ${escapeHtml(ref.meal_label || ref.meal_type)}</h4>
+            <p class="text-xs mb-3" style="color: rgba(15,27,40,0.55);">Choisissez la date, l'heure et le nombre de couverts.</p>
             <button onclick="openClientReservationFromWikot('${ref.meal_type}')"
-              class="w-full ${s.btn} text-white py-2 rounded-lg text-sm font-semibold transition-colors">
+              class="w-full btn-premium py-2.5 rounded-lg text-sm font-semibold" style="background: var(--c-navy); color: var(--c-gold);">
               <i class="fas fa-calendar-plus mr-1"></i> Réserver maintenant
             </button>
           </div>
@@ -7019,16 +7044,24 @@ function renderClientRestaurant() {
   const reservations = state.clientRestaurantReservations || [];
   const date = state.clientRestaurantDate || new Date().toISOString().slice(0, 10);
   const today = new Date().toISOString().slice(0, 10);
-  const mealLabels = { breakfast: { label: 'Petit-déjeuner', icon: '☕', color: 'amber' }, lunch: { label: 'Déjeuner', icon: '🍽️', color: 'orange' }, dinner: { label: 'Dîner', icon: '🍷', color: 'rose' } };
+  const mealLabels = { breakfast: { label: 'Petit-déjeuner', icon: '☕' }, lunch: { label: 'Déjeuner', icon: '🍽️' }, dinner: { label: 'Dîner', icon: '🍷' } };
 
   return `
   <div class="space-y-4">
-    <div class="bg-white rounded-2xl shadow-sm p-5">
-      <h2 class="font-bold text-navy-800 mb-3"><i class="fas fa-utensils text-brand-400 mr-2"></i>Réserver une table</h2>
-      <label class="block text-xs text-gray-600 mb-1">Choisir une date</label>
-      <input type="date" value="${date}" min="${today}" onchange="state.clientRestaurantDate=this.value; loadClientRestaurant()" class="w-full px-3 py-2 border rounded form-input-mobile">
+    <div class="card-premium p-5">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: var(--c-navy);">
+          <i class="fas fa-utensils" style="color: var(--c-gold);"></i>
+        </div>
+        <div>
+          <p class="section-eyebrow">Service en salle</p>
+          <h2 class="font-display font-semibold" style="color: var(--c-navy);">Réserver une table</h2>
+        </div>
+      </div>
+      <label class="block text-[10px] uppercase tracking-wider mb-1.5" style="color: rgba(15,27,40,0.5);">Choisir une date</label>
+      <input type="date" value="${date}" min="${today}" onchange="state.clientRestaurantDate=this.value; loadClientRestaurant()" class="w-full input-premium px-3 py-2 rounded-lg form-input-mobile">
     </div>
-    ${!avail ? '<div class="text-center text-gray-400">Chargement...</div>' : `
+    ${!avail ? '<div class="text-center" style="color: rgba(15,27,40,0.4);">Chargement...</div>' : `
     <div class="space-y-3">
       ${['breakfast', 'lunch', 'dinner'].map(m => {
         const a = avail[m] || {};
@@ -7036,34 +7069,42 @@ function renderClientRestaurant() {
         const closed = !a.is_open;
         const full = a.slots_left <= 0;
         return `
-        <div class="bg-white rounded-2xl shadow-sm p-5 ${closed ? 'opacity-60' : ''}">
+        <div class="card-premium p-5 ${closed ? 'opacity-60' : ''}">
           <div class="flex items-center justify-between mb-2">
             <div>
-              <div class="font-bold text-navy-800">${config.icon} ${config.label}</div>
-              <div class="text-xs text-gray-500">${a.open_time && a.close_time ? `${a.open_time} – ${a.close_time}` : ''}</div>
+              <div class="font-display font-semibold" style="color: var(--c-navy);">${config.icon} ${config.label}</div>
+              <div class="text-xs mt-0.5" style="color: rgba(15,27,40,0.5);">${a.open_time && a.close_time ? `${a.open_time} – ${a.close_time}` : ''}</div>
             </div>
-            ${closed ? '<span class="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded">Fermé</span>'
-              : full ? '<span class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">Complet</span>'
-              : `<span class="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">${a.slots_left} place(s)</span>`}
+            ${closed ? '<span class="text-[10px] uppercase tracking-wider px-2 py-1 rounded" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">Fermé</span>'
+              : full ? '<span class="text-[10px] uppercase tracking-wider px-2 py-1 rounded" style="background: rgba(226,125,110,0.12); color: #C84C3F;">Complet</span>'
+              : `<span class="text-[10px] uppercase tracking-wider px-2 py-1 rounded font-semibold" style="background: rgba(201,169,97,0.15); color: var(--c-gold-deep);">${a.slots_left} place(s)</span>`}
           </div>
-          ${!closed && !full ? `<button onclick="showClientReservationModal('${m}', '${config.label}')" class="w-full bg-brand-400 hover:bg-brand-500 text-white py-2 rounded-lg text-sm font-semibold mt-2"><i class="fas fa-calendar-check mr-1"></i>Réserver</button>` : ''}
+          ${!closed && !full ? `<button onclick="showClientReservationModal('${m}', '${config.label}')" class="w-full btn-premium py-2.5 rounded-lg text-sm font-semibold mt-2" style="background: var(--c-navy); color: var(--c-gold);"><i class="fas fa-calendar-check mr-1"></i>Réserver</button>` : ''}
         </div>`;
       }).join('')}
     </div>`}
 
-    <div class="bg-white rounded-2xl shadow-sm p-5">
-      <h3 class="font-bold text-navy-800 mb-3"><i class="fas fa-bookmark text-brand-400 mr-2"></i>Mes réservations</h3>
-      ${reservations.length === 0 ? '<div class="text-sm text-gray-400 italic">Aucune réservation pour le moment.</div>' : `
+    <div class="card-premium p-5">
+      <div class="flex items-center gap-3 mb-4">
+        <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: var(--c-navy);">
+          <i class="fas fa-bookmark" style="color: var(--c-gold);"></i>
+        </div>
+        <div>
+          <p class="section-eyebrow">Vos réservations</p>
+          <h3 class="font-display font-semibold" style="color: var(--c-navy);">Mes réservations</h3>
+        </div>
+      </div>
+      ${reservations.length === 0 ? '<div class="text-sm italic" style="color: rgba(15,27,40,0.4);">Aucune réservation pour le moment.</div>' : `
         <div class="space-y-2">
           ${reservations.map(r => {
             const config = mealLabels[r.meal_type] || { label: r.meal_type, icon: '🍴' };
             return `
-            <div class="border border-gray-200 rounded-lg p-3 flex items-center justify-between">
+            <div class="rounded-lg p-3 flex items-center justify-between" style="background: var(--c-cream-deep); border: 1px solid var(--c-line);">
               <div>
-                <div class="font-semibold text-sm">${config.icon} ${config.label} · ${r.reservation_date}</div>
-                <div class="text-xs text-gray-500">${r.time_slot ? r.time_slot + ' · ' : ''}${r.guest_count} pers.${r.notes ? ' · ' + escapeHtml(r.notes) : ''}</div>
+                <div class="font-display font-semibold text-sm" style="color: var(--c-navy);">${config.icon} ${config.label} · ${r.reservation_date}</div>
+                <div class="text-xs mt-0.5" style="color: rgba(15,27,40,0.55);">${r.time_slot ? r.time_slot + ' · ' : ''}${r.guest_count} pers.${r.notes ? ' · ' + escapeHtml(r.notes) : ''}</div>
               </div>
-              <button onclick="cancelClientReservation(${r.id})" class="text-red-500 hover:text-red-700 text-xs"><i class="fas fa-times"></i> Annuler</button>
+              <button onclick="cancelClientReservation(${r.id})" class="text-xs transition-colors" style="color: #C84C3F;"><i class="fas fa-times"></i> Annuler</button>
             </div>`;
           }).join('')}
         </div>`}
@@ -7085,7 +7126,7 @@ function showClientReservationModal(mealType, mealLabel) {
         <div><label class="block text-xs mb-1">Demandes spéciales (optionnel)</label><textarea id="client_resa_notes" rows="2" class="w-full px-2 py-2 border rounded form-input-mobile" placeholder="Allergies, table à proximité de la fenêtre..."></textarea></div>
         <div class="flex justify-end gap-2 pt-2">
           <button onclick="closeClientModal()" class="px-3 py-2 text-sm text-gray-600 rounded hover:bg-gray-100">Annuler</button>
-          <button onclick="confirmClientReservation('${mealType}')" class="px-3 py-2 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded font-semibold">Confirmer</button>
+          <button onclick="confirmClientReservation('${mealType}')" class="px-3 py-2 text-sm btn-premium-navy text-white rounded font-semibold">Confirmer</button>
         </div>
       </div>
     </div>

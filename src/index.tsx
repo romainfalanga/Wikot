@@ -4161,6 +4161,20 @@ app.get('*', (c) => {
     }
     .btn-premium:active { transform: translateY(0); }
 
+    /* Variante navy : alias pratique pour les CTA principaux */
+    .btn-premium-navy {
+      background: var(--c-navy);
+      color: #fff;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.2s ease;
+      box-shadow: 0 1px 2px rgba(10,22,40,0.08), 0 4px 12px rgba(10,22,40,0.06);
+    }
+    .btn-premium-navy:hover {
+      transform: translateY(-1px);
+      background: var(--c-navy-soft);
+      box-shadow: 0 2px 4px rgba(10,22,40,0.10), 0 10px 24px rgba(10,22,40,0.12);
+    }
+    .btn-premium-navy:active { transform: translateY(0); }
+
     /* Ombrages premium pour cartes / panneaux */
     .shadow-premium-sm { box-shadow: 0 1px 2px rgba(10,22,40,0.04), 0 2px 6px rgba(10,22,40,0.04); }
     .shadow-premium    { box-shadow: 0 2px 4px rgba(10,22,40,0.05), 0 8px 20px rgba(10,22,40,0.06); }

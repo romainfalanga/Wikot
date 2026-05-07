@@ -2256,6 +2256,52 @@ function normalizeWikotMode(rawMode: any): 'standard' | 'max' {
 
 // GET liste des conversations de l'utilisateur courant, filtrées par mode
 // ?mode=standard (défaut) ou ?mode=max
+// DIAGNOSTIC TEMPORAIRE — vérifier que la clé OpenRouter est bien lue + valide
+app.get('/api/_diag/openrouter', async (c) => {
+  const apiKey = c.env.OPENROUTER_API_KEY
+  if (!apiKey) {
+    return c.json({
+      ok: false,
+      stage: 'binding',
+      error: 'OPENROUTER_API_KEY not bound in c.env',
+      keys_in_env: Object.keys(c.env || {}).filter(k => !k.startsWith('CF_'))
+    }, 503)
+  }
+  // Masquer la clé tout en confirmant sa présence
+  const keyInfo = {
+    length: apiKey.length,
+    prefix: apiKey.slice(0, 10),
+    suffix: apiKey.slice(-4)
+  }
+  // Test ping minimal sur OpenRouter
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://wikot.fr',
+        'X-Title': 'Wikot Diag'
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-2.0-flash-001',
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 5
+      })
+    })
+    const text = await res.text()
+    return c.json({
+      ok: res.ok,
+      stage: 'openrouter',
+      status: res.status,
+      keyInfo,
+      body: text.slice(0, 500)
+    })
+  } catch (e: any) {
+    return c.json({ ok: false, stage: 'fetch', keyInfo, error: e.message }, 500)
+  }
+})
+
 app.get('/api/wikot/conversations', authMiddleware, async (c) => {
   const user = c.get('user')
   const mode = normalizeWikotMode(c.req.query('mode'))

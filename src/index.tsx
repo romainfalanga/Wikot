@@ -1275,14 +1275,18 @@ app.delete('/api/chat/groups/:id', authMiddleware, async (c) => {
   if (!group || group.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
   if (group.is_system) return c.json({ error: 'Impossible de supprimer un groupe par défaut' }, 400)
 
-  // Supprimer les messages des salons du groupe puis les salons puis le groupe
+  // OPTIM : supprimer en 1 seul batch atomique (au lieu de 2*N+2 round-trips D1)
   const channels = await c.env.DB.prepare('SELECT id FROM chat_channels WHERE group_id = ?').bind(id).all()
-  for (const ch of channels.results as any[]) {
-    await c.env.DB.prepare('DELETE FROM chat_messages WHERE channel_id = ?').bind(ch.id).run()
-    await c.env.DB.prepare('DELETE FROM chat_reads WHERE channel_id = ?').bind(ch.id).run()
+  const chIds = (channels.results as any[]).map(r => r.id)
+  const ops: D1PreparedStatement[] = []
+  if (chIds.length > 0) {
+    const ph = chIds.map(() => '?').join(',')
+    ops.push(c.env.DB.prepare(`DELETE FROM chat_messages WHERE channel_id IN (${ph})`).bind(...chIds))
+    ops.push(c.env.DB.prepare(`DELETE FROM chat_reads    WHERE channel_id IN (${ph})`).bind(...chIds))
   }
-  await c.env.DB.prepare('DELETE FROM chat_channels WHERE group_id = ?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM chat_groups WHERE id = ?').bind(id).run()
+  ops.push(c.env.DB.prepare('DELETE FROM chat_channels WHERE group_id = ?').bind(id))
+  ops.push(c.env.DB.prepare('DELETE FROM chat_groups   WHERE id = ?').bind(id))
+  await c.env.DB.batch(ops)
 
   return c.json({ success: true })
 })
@@ -1656,11 +1660,15 @@ function titleMatchesText(title: string, normalizedText: string): boolean {
 }
 
 // Helper : construit l'arborescence courte de l'hôtel pour le system prompt
+// OPTIMISATION : les 4 requêtes sont exécutées en parallèle (Promise.all)
+// au lieu de séquentiellement → divise le temps réseau D1 par ~4 (~30ms gagnés).
 async function buildHotelArborescence(db: D1Database, hotelId: number): Promise<string> {
-  const cats = await db.prepare('SELECT id, name FROM categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all()
-  const procs = await db.prepare('SELECT id, title, category_id, trigger_event FROM procedures WHERE hotel_id = ? ORDER BY title').bind(hotelId).all()
-  const infoCats = await db.prepare('SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all()
-  const infoItems = await db.prepare('SELECT id, title, category_id FROM hotel_info_items WHERE hotel_id = ? ORDER BY title').bind(hotelId).all()
+  const [cats, procs, infoCats, infoItems] = await Promise.all([
+    db.prepare('SELECT id, name FROM categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all(),
+    db.prepare('SELECT id, title, category_id, trigger_event FROM procedures WHERE hotel_id = ? ORDER BY title').bind(hotelId).all(),
+    db.prepare('SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY sort_order, name').bind(hotelId).all(),
+    db.prepare('SELECT id, title, category_id FROM hotel_info_items WHERE hotel_id = ? ORDER BY title').bind(hotelId).all()
+  ])
 
   let tree = '## Procédures de l\'hôtel\n'
   for (const cat of cats.results as any[]) {
@@ -2332,26 +2340,16 @@ function normalizeWikotMode(rawMode: any): 'standard' | 'max' {
   return rawMode === 'max' ? 'max' : 'standard'
 }
 
-// GET liste des conversations de l'utilisateur courant, filtrées par mode
-// ?mode=standard (défaut) ou ?mode=max
-// DIAGNOSTIC TEMPORAIRE — vérifier que la clé OpenRouter est bien lue + valide
-app.get('/api/_diag/openrouter', async (c) => {
+// Diagnostic OpenRouter — protégé par authMiddleware + super-admin uniquement
+// (avant : public ; risque de fuite de la prefix/suffix de la clé + abus de quota)
+app.get('/api/_diag/openrouter', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
   const apiKey = c.env.OPENROUTER_API_KEY
   if (!apiKey) {
-    return c.json({
-      ok: false,
-      stage: 'binding',
-      error: 'OPENROUTER_API_KEY not bound in c.env',
-      keys_in_env: Object.keys(c.env || {}).filter(k => !k.startsWith('CF_'))
-    }, 503)
+    return c.json({ ok: false, stage: 'binding', error: 'OPENROUTER_API_KEY not bound' }, 503)
   }
-  // Masquer la clé tout en confirmant sa présence
-  const keyInfo = {
-    length: apiKey.length,
-    prefix: apiKey.slice(0, 10),
-    suffix: apiKey.slice(-4)
-  }
-  // Test ping minimal sur OpenRouter
+  const keyInfo = { length: apiKey.length, prefix: apiKey.slice(0, 6) + '...', suffix: '...' + apiKey.slice(-2) }
   try {
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -2367,14 +2365,7 @@ app.get('/api/_diag/openrouter', async (c) => {
         max_tokens: 5
       })
     })
-    const text = await res.text()
-    return c.json({
-      ok: res.ok,
-      stage: 'openrouter',
-      status: res.status,
-      keyInfo,
-      body: text.slice(0, 500)
-    })
+    return c.json({ ok: res.ok, stage: 'openrouter', status: res.status, keyInfo })
   } catch (e: any) {
     return c.json({ ok: false, stage: 'fetch', keyInfo, error: e.message }, 500)
   }
@@ -2450,10 +2441,14 @@ app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
 
   // Sous-requête : on prend les N derniers ORDER BY created_at DESC,
   // puis on les ré-ordonne ASC pour l'affichage.
+  // OPTIMISATION : on inclut audio_key/mime/duration pour permettre au frontend
+  // de re-rendre les bulles vocales en re-ouvrant une conversation existante.
   const messages = await c.env.DB.prepare(`
-    SELECT id, role, content, references_json, created_at
+    SELECT id, role, content, references_json, created_at,
+           audio_key, audio_mime, audio_duration_ms
     FROM (
-      SELECT id, role, content, references_json, created_at
+      SELECT id, role, content, references_json, created_at,
+             audio_key, audio_mime, audio_duration_ms
       FROM wikot_messages
       WHERE conversation_id = ? AND role IN ('user', 'assistant')
       ORDER BY created_at DESC, id DESC
@@ -3780,42 +3775,62 @@ app.post('/api/ai-import/restaurant/apply', authMiddleware, async (c) => {
   let applied = 0
   const errors: any[] = []
 
+  // OPTIMISATION : on charge en 1 seule requête toutes les chambres actives
+  // pour faire le mapping room_number -> id en mémoire (évite N requêtes).
+  const allRooms = await c.env.DB.prepare(
+    'SELECT id, room_number FROM rooms WHERE hotel_id = ? AND is_active = 1'
+  ).bind(hotelId).all()
+  const roomMap = new Map<string, number>()
+  for (const room of (allRooms.results || []) as any[]) {
+    roomMap.set(String(room.room_number).trim(), room.id)
+  }
+
+  // Statement préparé réutilisable
+  const insertStmt = c.env.DB.prepare(`
+    INSERT INTO restaurant_reservations
+      (hotel_id, room_id, reservation_date, meal_type, time_slot, guest_count, guest_name, notes, status, created_by_user_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)
+  `)
+
+  // OPTIMISATION : batch toutes les insertions
+  const batchOps: D1PreparedStatement[] = []
   for (const r of body.rows) {
     if (!r.date || !r.guest_name) { errors.push({ row: r, error: 'Champs incomplets' }); continue }
     const meal = ['breakfast', 'lunch', 'dinner'].includes(r.meal_type) ? r.meal_type : 'breakfast'
 
-    // Tente de retrouver la chambre par numéro pour lier la réservation
-    let roomId: number | null = null
-    if (r.room_number) {
-      const room = await c.env.DB.prepare(
-        'SELECT id FROM rooms WHERE hotel_id = ? AND room_number = ? AND is_active = 1'
-      ).bind(hotelId, String(r.room_number).trim()).first() as any
-      if (room) roomId = room.id
-    }
+    const roomId = r.room_number ? (roomMap.get(String(r.room_number).trim()) || null) : null
 
-    // Annoter les notes avec un tag d'origine pour pouvoir distinguer les imports IA
     const noteWithTag = (r.notes || '').toString().trim()
     const finalNotes = noteWithTag ? `${noteWithTag} [import IA]` : '[import IA]'
 
+    batchOps.push(insertStmt.bind(
+      hotelId,
+      roomId,
+      r.date,
+      meal,
+      r.time || null,
+      r.guests_count || 1,
+      String(r.guest_name).trim(),
+      finalNotes,
+      user.id
+    ))
+    applied++
+  }
+
+  if (batchOps.length > 0) {
     try {
-      await c.env.DB.prepare(`
-        INSERT INTO restaurant_reservations
-          (hotel_id, room_id, reservation_date, meal_type, time_slot, guest_count, guest_name, notes, status, created_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)
-      `).bind(
-        hotelId,
-        roomId,
-        r.date,
-        meal,
-        r.time || null,
-        r.guests_count || 1,
-        String(r.guest_name).trim(),
-        finalNotes,
-        user.id
-      ).run()
-      applied++
+      await c.env.DB.batch(batchOps)
     } catch (e: any) {
-      errors.push({ row: r, error: e?.message || 'Insert failed' })
+      // En cas d'échec batch, on retombe en mode unitaire pour identifier les rows fautives
+      applied = 0
+      for (let i = 0; i < batchOps.length; i++) {
+        try {
+          await batchOps[i].run()
+          applied++
+        } catch (err: any) {
+          errors.push({ row_index: i, error: err?.message || 'Insert failed' })
+        }
+      }
     }
   }
 
@@ -4093,21 +4108,25 @@ app.post('/api/tasks/instances/:id/assign', authMiddleware, async (c) => {
     if (a.status === 'done') doneMap.set(a.user_id, a)
   }
 
-  await c.env.DB.prepare('DELETE FROM task_assignments WHERE task_instance_id = ?').bind(id).run()
+  // OPTIM : un seul batch atomique (DELETE + N INSERT) au lieu de N+1 round-trips D1
+  const batchOps: D1PreparedStatement[] = [
+    c.env.DB.prepare('DELETE FROM task_assignments WHERE task_instance_id = ?').bind(id)
+  ]
   for (const uid of userIds) {
     const previous = doneMap.get(uid)
     if (previous) {
-      await c.env.DB.prepare(
+      batchOps.push(c.env.DB.prepare(
         `INSERT INTO task_assignments (task_instance_id, user_id, status, completed_at, notes, assigned_by)
          VALUES (?, ?, 'done', ?, ?, ?)`
-      ).bind(id, uid, previous.completed_at, previous.notes, user.id).run()
+      ).bind(id, uid, previous.completed_at, previous.notes, user.id))
     } else {
-      await c.env.DB.prepare(
+      batchOps.push(c.env.DB.prepare(
         `INSERT INTO task_assignments (task_instance_id, user_id, status, assigned_by)
          VALUES (?, ?, 'pending', ?)`
-      ).bind(id, uid, user.id).run()
+      ).bind(id, uid, user.id))
     }
   }
+  await c.env.DB.batch(batchOps)
 
   // Mise à jour du statut global de l'instance
   await refreshInstanceStatus(c.env.DB, id)
@@ -4616,8 +4635,10 @@ app.get('/api/client/wikot/conversations/:id', clientAuthMiddleware, async (c) =
     WHERE id = ? AND client_account_id = ? AND mode = 'concierge'
   `).bind(id, client.id).first()
   if (!conv) return c.json({ error: 'Conversation non trouvée' }, 404)
+  // OPTIMISATION : inclure audio_key pour ré-affichage bulles vocales côté client
   const messages = await c.env.DB.prepare(`
-    SELECT id, role, content, references_json, created_at
+    SELECT id, role, content, references_json, created_at,
+           audio_key, audio_mime, audio_duration_ms
     FROM wikot_messages
     WHERE conversation_id = ? AND role IN ('user', 'assistant')
     ORDER BY created_at ASC

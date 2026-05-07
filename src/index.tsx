@@ -404,6 +404,53 @@ function canEditSettings(user: { role: string; can_edit_settings?: number }) {
   return user.role === 'admin' || user.can_edit_settings === 1
 }
 
+// ============================================
+// MULTI-TENANCY GUARD
+// ============================================
+// Vérifie qu'une ressource appartient bien à l'hôtel du user courant.
+// Le super_admin contourne cette vérification.
+// Retourne la ressource si OK, sinon une Response 403/404 à propager.
+async function assertHotelOwnership(
+  db: D1Database,
+  table: string,
+  id: number | string,
+  user: { role: string; hotel_id: number | null },
+  hotelColumn: string = 'hotel_id'
+): Promise<any | Response> {
+  const allowedTables = new Set([
+    'procedures', 'categories', 'hotel_info_items', 'hotel_info_categories',
+    'rooms', 'restaurant_week_templates', 'restaurant_schedule',
+    'restaurant_exceptions', 'restaurant_reservations', 'suggestions',
+    'templates', 'chat_groups', 'chat_channels', 'client_accounts',
+    'wikot_conversations', 'users'
+  ])
+  if (!allowedTables.has(table)) {
+    return new Response(JSON.stringify({ error: 'Table non autorisée' }), {
+      status: 500, headers: { 'Content-Type': 'application/json' }
+    })
+  }
+
+  const row = await db.prepare(
+    `SELECT * FROM ${table} WHERE id = ?`
+  ).bind(id).first<any>()
+
+  if (!row) {
+    return new Response(JSON.stringify({ error: 'Ressource non trouvée' }), {
+      status: 404, headers: { 'Content-Type': 'application/json' }
+    })
+  }
+
+  if (user.role === 'super_admin') return row
+
+  if (row[hotelColumn] !== user.hotel_id) {
+    return new Response(JSON.stringify({ error: 'Accès refusé' }), {
+      status: 403, headers: { 'Content-Type': 'application/json' }
+    })
+  }
+
+  return row
+}
+
 // Normalise un nom (suppression accents + lowercase + trim) pour comparaison
 // insensible à la casse / aux accents.
 function normalizeName(name: string): string {
@@ -631,6 +678,8 @@ app.put('/api/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
+  const owned = await assertHotelOwnership(c.env.DB, 'categories', id, user)
+  if (owned instanceof Response) return owned
   const { name, icon, color } = await c.req.json()
   await c.env.DB.prepare('UPDATE categories SET name = ?, icon = ?, color = ? WHERE id = ?').bind(name, icon, color, id).run()
   return c.json({ success: true })
@@ -640,6 +689,8 @@ app.delete('/api/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
+  const owned = await assertHotelOwnership(c.env.DB, 'categories', id, user)
+  if (owned instanceof Response) return owned
   await c.env.DB.prepare('DELETE FROM categories WHERE id = ?').bind(id).run()
   return c.json({ success: true })
 })
@@ -694,9 +745,11 @@ app.get('/api/procedures/:id', authMiddleware, async (c) => {
     FROM procedures p 
     LEFT JOIN categories c ON p.category_id = c.id 
     LEFT JOIN users u1 ON p.created_by = u1.id
-    WHERE p.id = ?`).bind(id).first()
+    WHERE p.id = ?`).bind(id).first() as any
 
   if (!procedure) return c.json({ error: 'Procédure non trouvée' }, 404)
+  // Multi-tenancy: vérifie que la procédure appartient à l'hôtel du user
+  if (procedure.hotel_id !== user.hotel_id) return c.json({ error: 'Accès refusé' }, 403)
 
   // Steps avec linked_procedure (titre de la procédure liée)
   const steps = await c.env.DB.prepare(`
@@ -807,6 +860,8 @@ app.put('/api/procedures/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
+  const owned = await assertHotelOwnership(c.env.DB, 'procedures', id, user)
+  if (owned instanceof Response) return owned
   const body = await c.req.json()
 
   // Status reste 'active', priority reste inchangé (champs supprimés de l'UI)
@@ -867,6 +922,8 @@ app.put('/api/procedures/:id/status', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
+  const owned = await assertHotelOwnership(c.env.DB, 'procedures', id, user)
+  if (owned instanceof Response) return owned
   const { status } = await c.req.json()
 
   let approvedBy = null
@@ -893,6 +950,8 @@ app.delete('/api/procedures/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditProcedures(user)) return c.json({ error: 'Non autorisé' }, 403)
   const id = c.req.param('id')
+  const owned = await assertHotelOwnership(c.env.DB, 'procedures', id, user)
+  if (owned instanceof Response) return owned
 
   const proc = await c.env.DB.prepare('SELECT hotel_id, title FROM procedures WHERE id = ?').bind(id).first() as any
   
@@ -1435,6 +1494,8 @@ app.put('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
+  const owned = await assertHotelOwnership(c.env.DB, 'hotel_info_categories', id, user)
+  if (owned instanceof Response) return owned
   const { name, icon, color, sort_order } = await c.req.json()
 
   await c.env.DB.prepare(`
@@ -1451,6 +1512,8 @@ app.delete('/api/hotel-info/categories/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
+  const owned = await assertHotelOwnership(c.env.DB, 'hotel_info_categories', id, user)
+  if (owned instanceof Response) return owned
 
   await c.env.DB.prepare(`DELETE FROM hotel_info_categories WHERE id = ?`).bind(id).run()
   return c.json({ success: true })
@@ -1479,6 +1542,8 @@ app.put('/api/hotel-info/items/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
+  const owned = await assertHotelOwnership(c.env.DB, 'hotel_info_items', id, user)
+  if (owned instanceof Response) return owned
   const { category_id, title, content, sort_order } = await c.req.json()
 
   await c.env.DB.prepare(`
@@ -1496,6 +1561,8 @@ app.delete('/api/hotel-info/items/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canEditInfo(user) && user.role !== 'super_admin') return c.json({ error: 'Accès refusé' }, 403)
   const id = parseInt(c.req.param('id'))
+  const owned = await assertHotelOwnership(c.env.DB, 'hotel_info_items', id, user)
+  if (owned instanceof Response) return owned
 
   await c.env.DB.prepare(`DELETE FROM hotel_info_items WHERE id = ?`).bind(id).run()
   return c.json({ success: true })

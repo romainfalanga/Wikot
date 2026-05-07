@@ -4268,15 +4268,102 @@ function canAssignTasks(user: WikotUser): boolean {
   return user.role === 'admin' || user.can_assign_tasks === 1
 }
 
-// Helpers récurrence (bitmask 7 bits : lun=bit0..dim=bit6)
-function dateMatchesRecurrence(dateStr: string, recurrenceDays: number, activeFrom?: string | null, activeTo?: string | null): boolean {
+// Helpers récurrence v2
+// - 'daily'   → match toujours (dans la fenêtre active_from/to)
+// - 'weekly'  → bitmask 7 bits (lun=bit0..dim=bit6) sur recurrence_days
+// - 'monthly' → match si date.day === monthly_day (ou dernier jour du mois si monthly_day === -1)
+function dateMatchesRecurrence(
+  dateStr: string,
+  recurrenceDays: number,
+  activeFrom?: string | null,
+  activeTo?: string | null,
+  recurrenceType: string = 'weekly',
+  monthlyDay?: number | null
+): boolean {
   if (activeFrom && dateStr < activeFrom) return false
   if (activeTo && dateStr > activeTo) return false
   const d = new Date(dateStr + 'T12:00:00Z')
-  // getUTCDay : 0=dimanche..6=samedi → on remappe pour lun=0..dim=6
+
+  if (recurrenceType === 'daily') return true
+
+  if (recurrenceType === 'monthly') {
+    if (monthlyDay == null) return false
+    const dayOfMonth = d.getUTCDate()
+    if (monthlyDay === -1) {
+      // Dernier jour du mois : tester si demain est dans un autre mois
+      const tomorrow = new Date(d.getTime() + 24 * 3600 * 1000)
+      return tomorrow.getUTCMonth() !== d.getUTCMonth()
+    }
+    return dayOfMonth === monthlyDay
+  }
+
+  // 'weekly' (par défaut, rétrocompatible)
   const dow = d.getUTCDay()
   const mondayBased = dow === 0 ? 6 : dow - 1
   return ((recurrenceDays >> mondayBased) & 1) === 1
+}
+
+// Matérialise les instances pour une date donnée + propage les pré-assignations.
+// Idempotent grâce à idx_task_instances_template_date (UNIQUE).
+// Utilisée par GET /api/tasks et GET /api/tasks/week.
+async function materializeTasksForDate(db: D1Database, hotelId: number, dateStr: string): Promise<void> {
+  const templates = await db.prepare(
+    `SELECT id, title, description, recurrence_type, recurrence_days, monthly_day,
+            active_from, active_to, suggested_time, category, priority, duration_min
+     FROM task_templates WHERE hotel_id = ? AND is_active = 1`
+  ).bind(hotelId).all()
+
+  const eligibleTemplates = ((templates.results || []) as any[]).filter(t =>
+    dateMatchesRecurrence(dateStr, t.recurrence_days, t.active_from, t.active_to, t.recurrence_type, t.monthly_day)
+  )
+  if (eligibleTemplates.length === 0) return
+
+  const tplIds = eligibleTemplates.map(t => t.id)
+  const ph = tplIds.map(() => '?').join(',')
+  const existing = await db.prepare(
+    `SELECT template_id FROM task_instances WHERE task_date = ? AND template_id IN (${ph})`
+  ).bind(dateStr, ...tplIds).all()
+  const existingSet = new Set(((existing.results || []) as any[]).map((r: any) => r.template_id))
+  const toCreate = eligibleTemplates.filter(t => !existingSet.has(t.id))
+  if (toCreate.length === 0) return
+
+  // Précharge les pré-assignés de tous les templates à matérialiser (1 seule requête)
+  const createIds = toCreate.map(t => t.id)
+  const cph = createIds.map(() => '?').join(',')
+  const preAssigns = await db.prepare(
+    `SELECT template_id, user_id FROM task_template_assignees WHERE template_id IN (${cph})`
+  ).bind(...createIds).all()
+  const assignByTpl = new Map<number, number[]>()
+  for (const r of (preAssigns.results || []) as any[]) {
+    if (!assignByTpl.has(r.template_id)) assignByTpl.set(r.template_id, [])
+    assignByTpl.get(r.template_id)!.push(r.user_id)
+  }
+
+  // INSERT instances en batch
+  const insStmts = toCreate.map(t => db.prepare(
+    `INSERT OR IGNORE INTO task_instances
+       (hotel_id, template_id, task_date, title, description, suggested_time, category, priority, duration_min, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(hotelId, t.id, dateStr, t.title, t.description, t.suggested_time, t.category, t.priority || 'normal', t.duration_min || null, null))
+  await db.batch(insStmts)
+
+  // Récupère les ids des instances qu'on vient de créer pour propager les assignments
+  const createdRows = await db.prepare(
+    `SELECT id, template_id FROM task_instances
+     WHERE task_date = ? AND template_id IN (${cph})`
+  ).bind(dateStr, ...createIds).all()
+
+  const assignStmts: D1PreparedStatement[] = []
+  for (const row of (createdRows.results || []) as any[]) {
+    const userIds = assignByTpl.get(row.template_id) || []
+    for (const uid of userIds) {
+      assignStmts.push(db.prepare(
+        `INSERT OR IGNORE INTO task_assignments (task_instance_id, user_id, status, assigned_by)
+         VALUES (?, ?, 'pending', NULL)`
+      ).bind(row.id, uid))
+    }
+  }
+  if (assignStmts.length > 0) await db.batch(assignStmts)
 }
 
 // GET /api/tasks?date=YYYY-MM-DD — toutes les tâches du jour pour l'hôtel
@@ -4286,41 +4373,18 @@ app.get('/api/tasks', authMiddleware, async (c) => {
   if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
   const dateStr = c.req.query('date') || new Date().toISOString().slice(0, 10)
 
-  // 1) Matérialisation lazy : pour chaque template actif dont la récurrence matche la date,
-  //    on crée une instance si elle n'existe pas déjà (idempotent grâce à l'unique index).
-  const templates = await c.env.DB.prepare(
-    `SELECT id, title, description, recurrence_days, active_from, active_to, suggested_time, category
-     FROM task_templates WHERE hotel_id = ? AND is_active = 1`
-  ).bind(user.hotel_id).all()
-
-  // Optim : on filtre d'abord les templates pertinents pour la date,
-  // puis on regarde lesquels ont déjà une instance pour ne pas relancer N INSERT (chacun = round-trip D1).
-  const eligibleTemplates = ((templates.results || []) as any[]).filter(t =>
-    dateMatchesRecurrence(dateStr, t.recurrence_days, t.active_from, t.active_to)
-  )
-  if (eligibleTemplates.length > 0) {
-    const tplIds = eligibleTemplates.map(t => t.id)
-    const ph = tplIds.map(() => '?').join(',')
-    const existing = await c.env.DB.prepare(
-      `SELECT template_id FROM task_instances WHERE task_date = ? AND template_id IN (${ph})`
-    ).bind(dateStr, ...tplIds).all()
-    const existingSet = new Set(((existing.results || []) as any[]).map((r: any) => r.template_id))
-    const toCreate = eligibleTemplates.filter(t => !existingSet.has(t.id))
-    if (toCreate.length > 0) {
-      const stmts = toCreate.map(t => c.env.DB.prepare(
-        `INSERT OR IGNORE INTO task_instances (hotel_id, template_id, task_date, title, description, suggested_time, category, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(user.hotel_id, t.id, dateStr, t.title, t.description, t.suggested_time, t.category, t.id))
-      await c.env.DB.batch(stmts)
-    }
-  }
+  // 1) Matérialisation lazy : génère les instances + propage les pré-assignations
+  await materializeTasksForDate(c.env.DB, user.hotel_id, dateStr)
 
   // 2) Récupère toutes les instances du jour avec leurs assignments
   const instances = await c.env.DB.prepare(
-    `SELECT ti.id, ti.template_id, ti.task_date, ti.title, ti.description, ti.suggested_time, ti.category, ti.status, ti.is_unassigned_visible, ti.created_at
+    `SELECT ti.id, ti.template_id, ti.task_date, ti.title, ti.description, ti.suggested_time, ti.category, ti.status, ti.is_unassigned_visible, ti.priority, ti.duration_min, ti.created_at
      FROM task_instances ti
      WHERE ti.hotel_id = ? AND ti.task_date = ?
-     ORDER BY COALESCE(ti.suggested_time,'99:99'), ti.id`
+     ORDER BY
+       CASE ti.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,
+       COALESCE(ti.suggested_time,'99:99'),
+       ti.id`
   ).bind(user.hotel_id, dateStr).all()
 
   const instanceIds = (instances.results || []).map((i: any) => i.id)
@@ -4355,13 +4419,70 @@ app.get('/api/tasks/templates', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
   const r = await c.env.DB.prepare(
-    `SELECT id, title, description, recurrence_days, active_from, active_to, suggested_time, category, is_active, created_at
+    `SELECT id, title, description, recurrence_type, recurrence_days, monthly_day,
+            active_from, active_to, suggested_time, category, priority, duration_min,
+            is_active, created_at
      FROM task_templates WHERE hotel_id = ? ORDER BY is_active DESC, title`
   ).bind(user.hotel_id).all()
-  return c.json({ templates: r.results })
+  // Charge tous les pré-assignés en 1 requête (joint pour avoir les noms)
+  const tplIds = (r.results || []).map((t: any) => t.id)
+  let assignsByTpl: Record<number, Array<{ user_id: number; user_name: string }>> = {}
+  if (tplIds.length > 0) {
+    const ph = tplIds.map(() => '?').join(',')
+    const a = await c.env.DB.prepare(
+      `SELECT tta.template_id, tta.user_id, u.name AS user_name
+       FROM task_template_assignees tta
+       JOIN users u ON u.id = tta.user_id
+       WHERE tta.template_id IN (${ph})`
+    ).bind(...tplIds).all()
+    for (const row of (a.results || []) as any[]) {
+      if (!assignsByTpl[row.template_id]) assignsByTpl[row.template_id] = []
+      assignsByTpl[row.template_id].push({ user_id: row.user_id, user_name: row.user_name })
+    }
+  }
+  const templates = (r.results || []).map((t: any) => ({ ...t, assignees: assignsByTpl[t.id] || [] }))
+  return c.json({ templates })
 })
 
-// POST /api/tasks/templates — créer un modèle récurrent
+// Helper : valide & normalise les champs de récurrence
+function validateRecurrence(body: any): { ok: true; recurrence_type: string; recurrence_days: number; monthly_day: number | null } | { ok: false; error: string } {
+  const type = body.recurrence_type || 'weekly'
+  if (!['daily', 'weekly', 'monthly'].includes(type)) return { ok: false, error: 'recurrence_type invalide' }
+  const recDays = Number.isFinite(body.recurrence_days) ? body.recurrence_days : 127
+  if (recDays < 0 || recDays > 127) return { ok: false, error: 'recurrence_days hors plage (0-127)' }
+  let monthlyDay: number | null = null
+  if (type === 'monthly') {
+    const md = Number.isFinite(body.monthly_day) ? body.monthly_day : null
+    if (md === null || (md !== -1 && (md < 1 || md > 31))) return { ok: false, error: 'monthly_day requis (1-31 ou -1)' }
+    monthlyDay = md
+  }
+  if (type === 'weekly' && recDays === 0) return { ok: false, error: 'Sélectionne au moins un jour de la semaine' }
+  return { ok: true, recurrence_type: type, recurrence_days: recDays, monthly_day: monthlyDay }
+}
+
+// Helper : remplace les pré-assignés d'un template (delete-all + insert)
+async function setTemplateAssignees(db: D1Database, hotelId: number, templateId: number, userIds: number[]): Promise<void> {
+  // Sécurité : ne garder que les users de l'hôtel
+  let validIds: number[] = []
+  if (userIds.length > 0) {
+    const ph = userIds.map(() => '?').join(',')
+    const r = await db.prepare(
+      `SELECT id FROM users WHERE hotel_id = ? AND id IN (${ph})`
+    ).bind(hotelId, ...userIds).all()
+    validIds = ((r.results || []) as any[]).map(u => u.id)
+  }
+  const ops: D1PreparedStatement[] = [
+    db.prepare('DELETE FROM task_template_assignees WHERE template_id = ?').bind(templateId)
+  ]
+  for (const uid of validIds) {
+    ops.push(db.prepare(
+      'INSERT OR IGNORE INTO task_template_assignees (template_id, user_id) VALUES (?, ?)'
+    ).bind(templateId, uid))
+  }
+  await db.batch(ops)
+}
+
+// POST /api/tasks/templates — créer un modèle récurrent (avec pré-assignation optionnelle)
 app.post('/api/tasks/templates', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
@@ -4369,22 +4490,39 @@ app.post('/api/tasks/templates', authMiddleware, async (c) => {
   const body = await c.req.json() as any
   const title = String(body.title || '').trim()
   if (!title) return c.json({ error: 'Titre requis' }, 400)
-  const recurrence = Number.isFinite(body.recurrence_days) ? body.recurrence_days : 127
-  if (recurrence < 0 || recurrence > 127) return c.json({ error: 'Récurrence invalide' }, 400)
+  if (title.length > 200) return c.json({ error: 'Titre trop long (max 200)' }, 400)
+
+  const rec = validateRecurrence(body)
+  if (!rec.ok) return c.json({ error: rec.error }, 400)
+
+  const priority = ['normal', 'high', 'urgent'].includes(body.priority) ? body.priority : 'normal'
+  const durationMin = Number.isFinite(body.duration_min) && body.duration_min > 0 && body.duration_min < 1440 ? body.duration_min : null
+  const assigneeIds = Array.isArray(body.assignee_ids)
+    ? body.assignee_ids.filter((n: any) => Number.isInteger(n))
+    : []
+
   const r = await c.env.DB.prepare(
-    `INSERT INTO task_templates (hotel_id, title, description, recurrence_days, active_from, active_to, suggested_time, category, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO task_templates
+       (hotel_id, title, description, recurrence_type, recurrence_days, monthly_day,
+        active_from, active_to, suggested_time, category, priority, duration_min, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     user.hotel_id, title,
-    body.description || null, recurrence,
+    body.description || null, rec.recurrence_type, rec.recurrence_days, rec.monthly_day,
     body.active_from || null, body.active_to || null,
     body.suggested_time || null, body.category || null,
+    priority, durationMin,
     user.id
   ).run()
-  return c.json({ id: r.meta.last_row_id, success: true })
+  const newId = r.meta.last_row_id as number
+
+  if (assigneeIds.length > 0) {
+    await setTemplateAssignees(c.env.DB, user.hotel_id, newId, assigneeIds)
+  }
+  return c.json({ id: newId, success: true })
 })
 
-// PUT /api/tasks/templates/:id — modifier un modèle
+// PUT /api/tasks/templates/:id — modifier un modèle (incl. pré-assignation)
 app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
@@ -4392,29 +4530,62 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
   const tpl = await c.env.DB.prepare('SELECT id, hotel_id FROM task_templates WHERE id = ?').bind(id).first() as any
   if (!tpl || tpl.hotel_id !== user.hotel_id) return c.json({ error: 'Template introuvable' }, 404)
   const body = await c.req.json() as any
+
+  // Validation conditionnelle de la récurrence (seulement si fournie)
+  let recType: string | null = null, recDays: number | null = null, monthlyDay: number | null | undefined = undefined
+  if (body.recurrence_type !== undefined || body.recurrence_days !== undefined || body.monthly_day !== undefined) {
+    const rec = validateRecurrence({
+      recurrence_type: body.recurrence_type || 'weekly',
+      recurrence_days: Number.isFinite(body.recurrence_days) ? body.recurrence_days : 127,
+      monthly_day: body.monthly_day
+    })
+    if (!rec.ok) return c.json({ error: rec.error }, 400)
+    recType = rec.recurrence_type
+    recDays = rec.recurrence_days
+    monthlyDay = rec.monthly_day
+  }
+  const priority = body.priority && ['normal', 'high', 'urgent'].includes(body.priority) ? body.priority : null
+  const durationMin = Number.isFinite(body.duration_min) && body.duration_min > 0 && body.duration_min < 1440
+    ? body.duration_min
+    : (body.duration_min === null ? null : undefined)
+
   await c.env.DB.prepare(
     `UPDATE task_templates SET
        title = COALESCE(?, title),
        description = ?,
+       recurrence_type = COALESCE(?, recurrence_type),
        recurrence_days = COALESCE(?, recurrence_days),
+       monthly_day = ${monthlyDay !== undefined ? '?' : 'monthly_day'},
        active_from = ?,
        active_to = ?,
        suggested_time = ?,
        category = ?,
+       priority = COALESCE(?, priority),
+       duration_min = ${durationMin !== undefined ? '?' : 'duration_min'},
        is_active = COALESCE(?, is_active),
        updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
   ).bind(
     body.title || null,
     body.description ?? null,
-    Number.isFinite(body.recurrence_days) ? body.recurrence_days : null,
+    recType,
+    recDays,
+    ...(monthlyDay !== undefined ? [monthlyDay] : []),
     body.active_from ?? null,
     body.active_to ?? null,
     body.suggested_time ?? null,
     body.category ?? null,
+    priority,
+    ...(durationMin !== undefined ? [durationMin] : []),
     typeof body.is_active === 'number' ? body.is_active : null,
     id
   ).run()
+
+  // Mise à jour pré-assignés si fournie
+  if (Array.isArray(body.assignee_ids)) {
+    const ids = body.assignee_ids.filter((n: any) => Number.isInteger(n))
+    await setTemplateAssignees(c.env.DB, user.hotel_id, id, ids)
+  }
   return c.json({ success: true })
 })
 
@@ -4437,15 +4608,44 @@ app.post('/api/tasks/instances', authMiddleware, async (c) => {
   const body = await c.req.json() as any
   const title = String(body.title || '').trim()
   if (!title) return c.json({ error: 'Titre requis' }, 400)
+  if (title.length > 200) return c.json({ error: 'Titre trop long (max 200)' }, 400)
   const date = String(body.task_date || new Date().toISOString().slice(0, 10))
+  const priority = ['normal', 'high', 'urgent'].includes(body.priority) ? body.priority : 'normal'
+  const durationMin = Number.isFinite(body.duration_min) && body.duration_min > 0 && body.duration_min < 1440 ? body.duration_min : null
+  const assigneeIds = Array.isArray(body.assignee_ids)
+    ? body.assignee_ids.filter((n: any) => Number.isInteger(n))
+    : []
+
   const r = await c.env.DB.prepare(
-    `INSERT INTO task_instances (hotel_id, template_id, task_date, title, description, suggested_time, category, created_by)
-     VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`
-  ).bind(user.hotel_id, date, title, body.description || null, body.suggested_time || null, body.category || null, user.id).run()
-  return c.json({ id: r.meta.last_row_id, success: true })
+    `INSERT INTO task_instances
+       (hotel_id, template_id, task_date, title, description, suggested_time, category, priority, duration_min, created_by)
+     VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    user.hotel_id, date, title,
+    body.description || null, body.suggested_time || null, body.category || null,
+    priority, durationMin, user.id
+  ).run()
+  const newId = r.meta.last_row_id as number
+
+  // Assignation directe à la création (gain UX énorme : 1 seul aller-retour)
+  if (assigneeIds.length > 0 && canAssignTasks(user)) {
+    const ph = assigneeIds.map(() => '?').join(',')
+    const valid = await c.env.DB.prepare(
+      `SELECT id FROM users WHERE hotel_id = ? AND id IN (${ph})`
+    ).bind(user.hotel_id, ...assigneeIds).all()
+    const validIds = ((valid.results || []) as any[]).map(u => u.id)
+    if (validIds.length > 0) {
+      const stmts = validIds.map(uid => c.env.DB.prepare(
+        `INSERT OR IGNORE INTO task_assignments (task_instance_id, user_id, status, assigned_by)
+         VALUES (?, ?, 'pending', ?)`
+      ).bind(newId, uid, user.id))
+      await c.env.DB.batch(stmts)
+    }
+  }
+  return c.json({ id: newId, success: true })
 })
 
-// PUT /api/tasks/instances/:id — modifier une instance (titre, description, heure, etc.)
+// PUT /api/tasks/instances/:id — modifier une instance (titre, description, heure, priorité, etc.)
 app.put('/api/tasks/instances/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
@@ -4453,12 +4653,18 @@ app.put('/api/tasks/instances/:id', authMiddleware, async (c) => {
   const inst = await c.env.DB.prepare('SELECT id, hotel_id FROM task_instances WHERE id = ?').bind(id).first() as any
   if (!inst || inst.hotel_id !== user.hotel_id) return c.json({ error: 'Tâche introuvable' }, 404)
   const body = await c.req.json() as any
+  const priority = body.priority && ['normal', 'high', 'urgent'].includes(body.priority) ? body.priority : null
+  const durationMin = Number.isFinite(body.duration_min) && body.duration_min > 0 && body.duration_min < 1440
+    ? body.duration_min
+    : (body.duration_min === null ? null : undefined)
   await c.env.DB.prepare(
     `UPDATE task_instances SET
        title = COALESCE(?, title),
        description = ?,
        suggested_time = ?,
        category = ?,
+       priority = COALESCE(?, priority),
+       duration_min = ${durationMin !== undefined ? '?' : 'duration_min'},
        task_date = COALESCE(?, task_date),
        status = COALESCE(?, status),
        updated_at = CURRENT_TIMESTAMP
@@ -4468,6 +4674,8 @@ app.put('/api/tasks/instances/:id', authMiddleware, async (c) => {
     body.description ?? null,
     body.suggested_time ?? null,
     body.category ?? null,
+    priority,
+    ...(durationMin !== undefined ? [durationMin] : []),
     body.task_date || null,
     body.status || null,
     id
@@ -4587,6 +4795,74 @@ app.post('/api/tasks/instances/:id/uncomplete', authMiddleware, async (c) => {
   ).bind(id, user.id).run()
   await refreshInstanceStatus(c.env.DB, id)
   return c.json({ success: true })
+})
+
+// GET /api/tasks/week?start=YYYY-MM-DD — vue semaine (matrice 7 jours)
+// Renvoie les instances pour 7 jours consécutifs en une seule requête.
+// Matérialise les tâches récurrentes pour chaque jour de la semaine.
+app.get('/api/tasks/week', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  const startStr = c.req.query('start') || new Date().toISOString().slice(0, 10)
+
+  // Calcule les 7 dates
+  const dates: string[] = []
+  const start = new Date(startStr + 'T12:00:00Z')
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start.getTime() + i * 24 * 3600 * 1000)
+    dates.push(d.toISOString().slice(0, 10))
+  }
+
+  // Matérialise pour chaque jour (lazy, idempotent)
+  for (const dateStr of dates) {
+    await materializeTasksForDate(c.env.DB, user.hotel_id, dateStr)
+  }
+
+  // Récupère toutes les instances de la semaine en 1 seule requête
+  const endStr = dates[6]
+  const instances = await c.env.DB.prepare(
+    `SELECT ti.id, ti.template_id, ti.task_date, ti.title, ti.description,
+            ti.suggested_time, ti.category, ti.status, ti.priority, ti.duration_min
+     FROM task_instances ti
+     WHERE ti.hotel_id = ? AND ti.task_date >= ? AND ti.task_date <= ?
+     ORDER BY ti.task_date,
+       CASE ti.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,
+       COALESCE(ti.suggested_time,'99:99'), ti.id`
+  ).bind(user.hotel_id, dates[0], endStr).all()
+
+  const instanceIds = (instances.results || []).map((i: any) => i.id)
+  let assignments: any[] = []
+  if (instanceIds.length > 0) {
+    const ph = instanceIds.map(() => '?').join(',')
+    const r = await c.env.DB.prepare(
+      `SELECT ta.task_instance_id, ta.user_id, ta.status, u.name as user_name
+       FROM task_assignments ta
+       JOIN users u ON u.id = ta.user_id
+       WHERE ta.task_instance_id IN (${ph})`
+    ).bind(...instanceIds).all()
+    assignments = r.results || []
+  }
+
+  return c.json({
+    start: dates[0], end: endStr, dates,
+    instances: instances.results, assignments,
+    me: { id: user.id, can_create_tasks: canCreateTasks(user) ? 1 : 0, can_assign_tasks: canAssignTasks(user) ? 1 : 0 }
+  })
+})
+
+// GET /api/tasks/my-pending-count — badge sidebar : nombre de tâches en attente pour moi (aujourd'hui + retard)
+app.get('/api/tasks/my-pending-count', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ count: 0 })
+  const today = new Date().toISOString().slice(0, 10)
+  const r = await c.env.DB.prepare(
+    `SELECT COUNT(*) as cnt
+     FROM task_assignments ta
+     JOIN task_instances ti ON ti.id = ta.task_instance_id
+     WHERE ta.user_id = ? AND ta.status = 'pending'
+       AND ti.hotel_id = ? AND ti.task_date <= ? AND ti.status != 'cancelled'`
+  ).bind(user.id, user.hotel_id, today).first() as any
+  return c.json({ count: r?.cnt || 0 })
 })
 
 // Helper : recalcule le statut global de l'instance basé sur les assignments

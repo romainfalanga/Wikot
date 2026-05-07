@@ -2557,12 +2557,15 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     audioSizeBytes || null
   ).run()
 
-  // Récupérer l'historique des messages (limité aux 30 derniers pour économiser les tokens)
-  const history = await c.env.DB.prepare(`
+  // Récupérer l'historique des messages (vraiment limité à 30 côté DB pour économiser les tokens et le temps CPU)
+  // On prend les 30 derniers en DESC puis on remet en ASC pour conserver l'ordre chronologique côté LLM.
+  const historyDesc = await c.env.DB.prepare(`
     SELECT role, content, tool_calls, tool_call_id, audio_key, audio_mime
     FROM wikot_messages WHERE conversation_id = ?
-    ORDER BY created_at, id
+    ORDER BY created_at DESC, id DESC
+    LIMIT 30
   `).bind(convId).all()
+  const history = { results: ((historyDesc.results || []) as any[]).slice().reverse() }
 
   // Récupérer infos hôtel
   const hotel = await c.env.DB.prepare('SELECT name FROM hotels WHERE id = ?').bind(user.hotel_id).first() as any
@@ -3707,43 +3710,58 @@ app.post('/api/ai-import/occupancy/apply', authMiddleware, async (c) => {
   let applied = 0
   const errors: any[] = []
 
+  // OPTIMISATION : on charge en 1 seule requête toutes les chambres actives
+  // de l'hôtel pour faire le lookup en mémoire (évite N requêtes SELECT).
+  const allRooms = await c.env.DB.prepare(
+    'SELECT id, room_number FROM rooms WHERE hotel_id = ? AND is_active = 1'
+  ).bind(hotelId).all()
+  const roomMap = new Map<string, number>()
+  for (const room of (allRooms.results || []) as any[]) {
+    roomMap.set(String(room.room_number).trim(), room.id)
+  }
+
+  // Préparer les statements une seule fois (réutilisables avec bind)
+  const updateStmt = c.env.DB.prepare(`
+    UPDATE client_accounts
+    SET guest_name = ?, guest_name_normalized = ?, checkout_date = ?, is_active = 1,
+        session_valid_until = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE hotel_id = ? AND room_id = ?
+  `)
+  const deleteSessStmt = c.env.DB.prepare(
+    'DELETE FROM client_sessions WHERE client_account_id IN (SELECT id FROM client_accounts WHERE hotel_id = ? AND room_id = ?)'
+  )
+  const insertOccStmt = c.env.DB.prepare(`
+    INSERT INTO room_occupancy (hotel_id, room_id, occupancy_date, guest_name, guest_name_normalized, checkout_date, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  // OPTIMISATION : on accumule toutes les writes pour les exécuter en 1 seul batch
+  // (atomique + 1 seul round-trip au lieu de 3*N).
+  const batchOps: D1PreparedStatement[] = []
   for (const r of body.rows) {
     const roomNum = String(r.room_number || '').trim()
     const guest = String(r.guest_name || '').trim()
     if (!roomNum || !guest) { errors.push({ row: r, error: 'Champs incomplets' }); continue }
-
-    // Trouve la chambre par numéro dans cet hôtel
-    const room = await c.env.DB.prepare(
-      'SELECT id FROM rooms WHERE hotel_id = ? AND room_number = ? AND is_active = 1'
-    ).bind(hotelId, roomNum).first() as any
-    if (!room) { errors.push({ row: r, error: `Chambre ${roomNum} introuvable` }); continue }
+    const roomId = roomMap.get(roomNum)
+    if (!roomId) { errors.push({ row: r, error: `Chambre ${roomNum} introuvable` }); continue }
 
     const normalized = normalizeName(guest)
     const checkoutDate = r.checkout_date || todayStr
 
-    await c.env.DB.prepare(`
-      UPDATE client_accounts
-      SET guest_name = ?, guest_name_normalized = ?, checkout_date = ?, is_active = 1,
-          session_valid_until = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE hotel_id = ? AND room_id = ?
-    `).bind(guest, normalized, checkoutDate, checkoutDate + ' 12:00:00', hotelId, room.id).run()
-
-    await c.env.DB.prepare(
-      'DELETE FROM client_sessions WHERE client_account_id IN (SELECT id FROM client_accounts WHERE hotel_id = ? AND room_id = ?)'
-    ).bind(hotelId, room.id).run()
-
-    await c.env.DB.prepare(`
-      INSERT INTO room_occupancy (hotel_id, room_id, occupancy_date, guest_name, guest_name_normalized, checkout_date, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).bind(hotelId, room.id, todayStr, guest, normalized, checkoutDate, user.id).run()
-
+    batchOps.push(updateStmt.bind(guest, normalized, checkoutDate, checkoutDate + ' 12:00:00', hotelId, roomId))
+    batchOps.push(deleteSessStmt.bind(hotelId, roomId))
+    batchOps.push(insertOccStmt.bind(hotelId, roomId, todayStr, guest, normalized, checkoutDate, user.id))
     applied++
   }
 
   if (body.import_id) {
-    await c.env.DB.prepare(
+    batchOps.push(c.env.DB.prepare(
       'UPDATE ai_imports SET applied_at = CURRENT_TIMESTAMP, applied_by = ? WHERE id = ? AND hotel_id = ?'
-    ).bind(user.id, body.import_id, hotelId).run()
+    ).bind(user.id, body.import_id, hotelId))
+  }
+
+  if (batchOps.length > 0) {
+    await c.env.DB.batch(batchOps)
   }
 
   return c.json({ success: true, applied, errors })
@@ -3848,15 +3866,25 @@ app.get('/api/tasks', authMiddleware, async (c) => {
      FROM task_templates WHERE hotel_id = ? AND is_active = 1`
   ).bind(user.hotel_id).all()
 
-  for (const t of (templates.results || []) as any[]) {
-    if (!dateMatchesRecurrence(dateStr, t.recurrence_days, t.active_from, t.active_to)) continue
-    try {
-      await c.env.DB.prepare(
-        `INSERT INTO task_instances (hotel_id, template_id, task_date, title, description, suggested_time, category, created_by)
+  // Optim : on filtre d'abord les templates pertinents pour la date,
+  // puis on regarde lesquels ont déjà une instance pour ne pas relancer N INSERT (chacun = round-trip D1).
+  const eligibleTemplates = ((templates.results || []) as any[]).filter(t =>
+    dateMatchesRecurrence(dateStr, t.recurrence_days, t.active_from, t.active_to)
+  )
+  if (eligibleTemplates.length > 0) {
+    const tplIds = eligibleTemplates.map(t => t.id)
+    const ph = tplIds.map(() => '?').join(',')
+    const existing = await c.env.DB.prepare(
+      `SELECT template_id FROM task_instances WHERE task_date = ? AND template_id IN (${ph})`
+    ).bind(dateStr, ...tplIds).all()
+    const existingSet = new Set(((existing.results || []) as any[]).map((r: any) => r.template_id))
+    const toCreate = eligibleTemplates.filter(t => !existingSet.has(t.id))
+    if (toCreate.length > 0) {
+      const stmts = toCreate.map(t => c.env.DB.prepare(
+        `INSERT OR IGNORE INTO task_instances (hotel_id, template_id, task_date, title, description, suggested_time, category, created_by)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(user.hotel_id, t.id, dateStr, t.title, t.description, t.suggested_time, t.category, t.id).run()
-    } catch (_) {
-      // Conflict (déjà créée) → on ignore, c'est l'effet attendu de l'unique index
+      ).bind(user.hotel_id, t.id, dateStr, t.title, t.description, t.suggested_time, t.category, t.id))
+      await c.env.DB.batch(stmts)
     }
   }
 

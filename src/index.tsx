@@ -3082,6 +3082,130 @@ app.put('/api/restaurant/schedule/:id', authMiddleware, async (c) => {
   return c.json({ success: true })
 })
 
+// ============================================
+// RESTAURANT WEEK TEMPLATES — CRUD + apply
+// ============================================
+// Liste les templates d'un hôtel
+app.get('/api/restaurant/templates', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const rows = await c.env.DB.prepare(`
+    SELECT id, name, description, is_default, days_json, created_at, updated_at
+    FROM restaurant_week_templates WHERE hotel_id = ? ORDER BY is_default DESC, name
+  `).bind(user.hotel_id).all()
+  // Parser days_json côté serveur pour simplifier le client
+  const templates = (rows.results || []).map((t: any) => ({
+    ...t,
+    days: (() => { try { return JSON.parse(t.days_json) } catch { return [] } })()
+  }))
+  return c.json({ templates })
+})
+
+// Créer un template
+app.post('/api/restaurant/templates', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const body = await c.req.json() as { name: string; description?: string; days: any[] }
+  if (!body.name || !Array.isArray(body.days) || body.days.length !== 7) {
+    return c.json({ error: 'Nom et 7 jours requis' }, 400)
+  }
+  try {
+    const result = await c.env.DB.prepare(`
+      INSERT INTO restaurant_week_templates (hotel_id, name, description, is_default, days_json, created_by)
+      VALUES (?, ?, ?, 0, ?, ?)
+    `).bind(user.hotel_id, body.name.trim(), body.description || null, JSON.stringify(body.days), user.id).run()
+    return c.json({ id: result.meta.last_row_id })
+  } catch (e: any) {
+    return c.json({ error: e?.message || 'Erreur serveur' }, 500)
+  }
+})
+
+// Mettre à jour un template (nom, description, jours)
+app.put('/api/restaurant/templates/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const body = await c.req.json() as { name?: string; description?: string; days?: any[] }
+  const row = await c.env.DB.prepare('SELECT hotel_id FROM restaurant_week_templates WHERE id = ?').bind(id).first() as any
+  if (!row || row.hotel_id !== user.hotel_id) return c.json({ error: 'Non trouvé' }, 404)
+  const fields: string[] = []
+  const values: any[] = []
+  if (body.name !== undefined)        { fields.push('name = ?');        values.push(String(body.name).trim()) }
+  if (body.description !== undefined) { fields.push('description = ?'); values.push(body.description || null) }
+  if (body.days !== undefined && Array.isArray(body.days)) {
+    if (body.days.length !== 7) return c.json({ error: '7 jours requis' }, 400)
+    fields.push('days_json = ?'); values.push(JSON.stringify(body.days))
+  }
+  if (fields.length === 0) return c.json({ error: 'Aucune modification' }, 400)
+  fields.push('updated_at = CURRENT_TIMESTAMP')
+  values.push(id)
+  await c.env.DB.prepare(`UPDATE restaurant_week_templates SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+  return c.json({ success: true })
+})
+
+// Supprimer un template
+app.delete('/api/restaurant/templates/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const row = await c.env.DB.prepare('SELECT hotel_id, is_default FROM restaurant_week_templates WHERE id = ?').bind(id).first() as any
+  if (!row || row.hotel_id !== user.hotel_id) return c.json({ error: 'Non trouvé' }, 404)
+  if (row.is_default === 1) return c.json({ error: 'Impossible de supprimer le template par défaut' }, 400)
+  await c.env.DB.prepare('DELETE FROM restaurant_week_templates WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
+
+// Appliquer un template au planning hebdo (UPSERT sur restaurant_schedule)
+app.post('/api/restaurant/templates/:id/apply', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canEditRestaurant(user)) return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const tpl = await c.env.DB.prepare('SELECT hotel_id, days_json FROM restaurant_week_templates WHERE id = ?').bind(id).first() as any
+  if (!tpl || tpl.hotel_id !== user.hotel_id) return c.json({ error: 'Non trouvé' }, 404)
+  let days: any[]
+  try { days = JSON.parse(tpl.days_json) } catch { return c.json({ error: 'Template invalide' }, 400) }
+
+  // Helper : extrait la liste {meal_type, is_open, open_time, close_time, capacity} d'un jour.
+  // Supporte 2 formats JSON :
+  //   - format A : { weekday, breakfast: {...}, lunch: {...}, dinner: {...} }
+  //   - format B : { weekday, meals: [{ meal_type, ... }, ...] }
+  const extractMeals = (d: any): any[] => {
+    if (Array.isArray(d.meals)) return d.meals
+    const out: any[] = []
+    for (const k of ['breakfast', 'lunch', 'dinner']) {
+      if (d[k] && typeof d[k] === 'object') out.push({ meal_type: k, ...d[k] })
+    }
+    return out
+  }
+
+  let updated = 0
+  let inserted = 0
+  for (const d of days) {
+    const weekday = parseInt(d.weekday)
+    if (isNaN(weekday) || weekday < 0 || weekday > 6) continue
+    for (const m of extractMeals(d)) {
+      if (!['breakfast', 'lunch', 'dinner'].includes(m.meal_type)) continue
+      // Vérifier si une ligne existe déjà
+      const existing = await c.env.DB.prepare(
+        'SELECT id FROM restaurant_schedule WHERE hotel_id = ? AND weekday = ? AND meal_type = ?'
+      ).bind(user.hotel_id, weekday, m.meal_type).first() as any
+      if (existing) {
+        await c.env.DB.prepare(`
+          UPDATE restaurant_schedule SET is_open = ?, open_time = ?, close_time = ?, capacity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        `).bind(m.is_open ? 1 : 0, m.open_time || null, m.close_time || null, parseInt(m.capacity) || 0, existing.id).run()
+        updated++
+      } else {
+        await c.env.DB.prepare(`
+          INSERT INTO restaurant_schedule (hotel_id, weekday, meal_type, is_open, open_time, close_time, capacity)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).bind(user.hotel_id, weekday, m.meal_type, m.is_open ? 1 : 0, m.open_time || null, m.close_time || null, parseInt(m.capacity) || 0).run()
+        inserted++
+      }
+    }
+  }
+  return c.json({ success: true, updated, inserted })
+})
+
 app.get('/api/restaurant/exceptions', authMiddleware, async (c) => {
   const user = c.get('user')
   if (isSuperAdmin(user)) return c.json({ error: 'Non autorisé' }, 403)
@@ -3376,6 +3500,52 @@ app.get('/api/client/wikot/conversations/:id', clientAuthMiddleware, async (c) =
   return c.json({ conversation: conv, messages: messages.results })
 })
 
+// ============================================
+// FRONT WIKOT — moteur tool-calling Gemini 2.0 Flash via OpenRouter
+// ============================================
+// 2 tools uniquement :
+//  - respond_with_info_card(item_id) : renvoie une carte info existante
+//  - propose_reservation(meal_type)  : carte action "Réserver" avec lien direct
+// Pas de génération de texte libre, pas d'accès aux procédures.
+
+const FRONT_WIKOT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'respond_with_info_card',
+      description: "Sélectionne UNE information existante dans le catalogue de l'hôtel et la présente au client comme une carte. Utilise cette fonction dès que la question du client correspond à une information référencée (horaires petit-déjeuner, wifi, parking, équipements de la chambre, services, etc.).",
+      parameters: {
+        type: 'object',
+        properties: {
+          item_id: {
+            type: 'integer',
+            description: "ID de l'info à afficher, choisi STRICTEMENT dans le catalogue fourni dans le system prompt."
+          }
+        },
+        required: ['item_id']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_reservation',
+      description: "Affiche un bouton de réservation pour le restaurant. À utiliser UNIQUEMENT si le client demande explicitement à réserver un repas (petit-déjeuner, déjeuner ou dîner).",
+      parameters: {
+        type: 'object',
+        properties: {
+          meal_type: {
+            type: 'string',
+            enum: ['breakfast', 'lunch', 'dinner'],
+            description: "Type de repas à réserver."
+          }
+        },
+        required: ['meal_type']
+      }
+    }
+  }
+]
+
 app.post('/api/client/wikot/conversations/:id/message', clientAuthMiddleware, async (c) => {
   const client = c.get('client')
   const convId = c.req.param('id')
@@ -3393,49 +3563,59 @@ app.post('/api/client/wikot/conversations/:id/message', clientAuthMiddleware, as
     INSERT INTO wikot_messages (conversation_id, role, content) VALUES (?, 'user', ?)
   `).bind(convId, userMessage).run()
 
-  // Construire le contexte : toutes les hotel_info de l'hôtel
+  // Construire le catalogue : toutes les hotel_info de l'hôtel (id + cat + titre + contenu)
   const categories = await c.env.DB.prepare(`
     SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY sort_order, name
   `).bind(client.hotel_id).all()
   const items = await c.env.DB.prepare(`
-    SELECT id, category_id, title, content FROM hotel_info_items WHERE hotel_id = ? ORDER BY sort_order, title
+    SELECT id, category_id, title, content FROM hotel_info_items
+    WHERE hotel_id = ? ORDER BY sort_order, title
   `).bind(client.hotel_id).all()
 
   const catMap: Record<number, string> = {}
   for (const cat of categories.results as any[]) catMap[cat.id] = cat.name
-  const knowledgeBase = (items.results as any[]).map((it: any) =>
-    `### ${catMap[it.category_id] || 'Général'} — ${it.title}\n${it.content || ''}`
-  ).join('\n\n')
 
-  // Historique récent (10 derniers messages)
+  // Catalogue compact pour le LLM : id, catégorie, titre, début du contenu
+  const itemsList = items.results as any[]
+  const knowledgeBase = itemsList.map((it: any) => {
+    const preview = String(it.content || '').slice(0, 220).replace(/\s+/g, ' ').trim()
+    return `[id=${it.id}] (${catMap[it.category_id] || 'Général'}) ${it.title} — ${preview}`
+  }).join('\n')
+
+  // Historique récent (8 derniers messages user/assistant)
   const history = await c.env.DB.prepare(`
     SELECT role, content FROM wikot_messages
     WHERE conversation_id = ? AND role IN ('user', 'assistant')
-    ORDER BY created_at DESC LIMIT 10
+    ORDER BY created_at DESC LIMIT 8
   `).bind(convId).all()
   const historyMessages = (history.results as any[]).reverse()
 
-  const systemPrompt = `Tu es Wikot, le concierge virtuel de l'hôtel ${client.hotel_name}.
-Tu aides ${client.guest_name} (chambre ${client.room_number}) avec des informations pratiques sur l'hôtel.
+  const systemPrompt = `Tu es Front Wikot, le concierge virtuel de l'hôtel ${client.hotel_name}.
+Tu aides ${client.guest_name} (chambre ${client.room_number}).
 
-## Ton rôle
-- Réponds UNIQUEMENT à partir des informations ci-dessous fournies par l'hôtel.
-- Si la question dépasse ces informations, dis poliment que tu n'as pas l'info et invite à contacter la réception.
-- Sois chaleureux, concis, et utilise le vouvoiement.
-- Pour les réservations restaurant, indique au client qu'il peut les faire directement dans la section "Restaurant" de l'application.
+## Ton fonctionnement (STRICT)
+Tu n'écris JAMAIS de texte libre. Tu DOIS appeler exactement UN tool parmi :
+1. respond_with_info_card(item_id) — pour répondre avec une info du catalogue ci-dessous.
+2. propose_reservation(meal_type) — UNIQUEMENT si le client demande à réserver un repas.
 
-## Informations disponibles sur l'hôtel ${client.hotel_name}
+## Comment choisir
+- Question sur l'hôtel, équipements, horaires, wifi, services → respond_with_info_card avec l'id le plus pertinent.
+- Demande explicite de réservation petit-déj / déjeuner / dîner → propose_reservation.
+- Si AUCUNE info ne correspond raisonnablement → choisis l'info la plus proche du sujet (ex: "Maintenance" pour un problème en chambre, ou la première info de la catégorie pertinente).
 
-${knowledgeBase || '(Aucune information n\'a encore été publiée par l\'hôtel.)'}
+## Catalogue d'informations (utilise UNIQUEMENT ces id)
+${knowledgeBase || '(Aucune information publiée par l\'hôtel.)'}
 
 ## Règles strictes
-- Ne JAMAIS inventer d'information non présente ci-dessus.
-- Ne JAMAIS parler d'autres hôtels, d'autres clients, ni des procédures internes du staff.
-- Ne JAMAIS révéler que tu es un système IA basé sur OpenRouter ou un LLM.`
+- TOUJOURS appeler un tool, JAMAIS répondre en texte.
+- L'item_id DOIT exister dans le catalogue ci-dessus.
+- Ne révèle jamais que tu es une IA / LLM.`
 
-  let assistantText = "Je suis désolé, le service de chat n'est pas configuré actuellement. Veuillez contacter la réception."
+  let toolCall: { name: string; args: any } | null = null
+  let fallbackInfoItemId: number | null = null
   const apiKey = c.env.OPENROUTER_API_KEY
-  if (apiKey) {
+
+  if (apiKey && itemsList.length > 0) {
     try {
       const messages = [
         { role: 'system', content: systemPrompt },
@@ -3445,25 +3625,97 @@ ${knowledgeBase || '(Aucune information n\'a encore été publiée par l\'hôtel
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://wikot.fr',
+          'X-Title': 'Front Wikot'
         },
         body: JSON.stringify({
-          model: 'openai/gpt-4o-mini',
+          model: 'google/gemini-2.0-flash-001',
           messages,
-          temperature: 0.4
+          tools: FRONT_WIKOT_TOOLS,
+          tool_choice: 'required',
+          temperature: 0.2
         })
       })
-      const data: any = await resp.json()
-      assistantText = data?.choices?.[0]?.message?.content || assistantText
+      if (resp.ok) {
+        const data: any = await resp.json()
+        const tc = data?.choices?.[0]?.message?.tool_calls?.[0]
+        if (tc?.function?.name) {
+          let args = {}
+          try { args = JSON.parse(tc.function.arguments || '{}') } catch {}
+          toolCall = { name: tc.function.name, args }
+        }
+      }
     } catch (e) {
-      assistantText = "Désolé, je rencontre un problème technique. Réessayez dans un instant."
+      // Silencieux — on tombe sur le fallback
     }
   }
 
-  // Stocker la réponse
+  // Validation et fallback
+  if (toolCall?.name === 'respond_with_info_card') {
+    const requestedId = parseInt((toolCall.args as any)?.item_id)
+    const exists = itemsList.some(it => it.id === requestedId)
+    if (!exists) {
+      // Fallback : prendre la 1ère info disponible
+      fallbackInfoItemId = itemsList[0]?.id || null
+      toolCall = null
+    }
+  } else if (toolCall?.name === 'propose_reservation') {
+    const mt = (toolCall.args as any)?.meal_type
+    if (!['breakfast', 'lunch', 'dinner'].includes(mt)) {
+      toolCall = null
+      fallbackInfoItemId = itemsList[0]?.id || null
+    }
+  } else if (!toolCall && itemsList.length > 0) {
+    fallbackInfoItemId = itemsList[0].id
+  }
+
+  // Construction de la réponse structurée (stockée en references_json côté assistant)
+  let assistantContent = ''
+  let referencesJson: any = null
+
+  if (toolCall?.name === 'respond_with_info_card' || fallbackInfoItemId !== null) {
+    const itemId = toolCall?.name === 'respond_with_info_card'
+      ? parseInt((toolCall.args as any).item_id)
+      : fallbackInfoItemId
+    const item = itemsList.find(it => it.id === itemId)
+    if (item) {
+      assistantContent = `[info_card:${item.id}]`
+      referencesJson = {
+        kind: 'info_card',
+        item: {
+          id: item.id,
+          category: catMap[item.category_id] || 'Général',
+          title: item.title,
+          content: item.content || ''
+        }
+      }
+    }
+  } else if (toolCall?.name === 'propose_reservation') {
+    const mealType = (toolCall.args as any).meal_type
+    const labels: Record<string, string> = { breakfast: 'Petit-déjeuner', lunch: 'Déjeuner', dinner: 'Dîner' }
+    assistantContent = `[reservation_card:${mealType}]`
+    referencesJson = {
+      kind: 'reservation_card',
+      meal_type: mealType,
+      meal_label: labels[mealType] || mealType
+    }
+  }
+
+  // Si vraiment rien, message d'erreur courtois
+  if (!referencesJson) {
+    assistantContent = '[empty]'
+    referencesJson = {
+      kind: 'fallback',
+      message: "Je n'ai pas trouvé d'information correspondante. Contactez la réception pour plus d'aide."
+    }
+  }
+
+  // Stocker la réponse (content = marqueur, references_json = données structurées)
   const assistantInsert = await c.env.DB.prepare(`
-    INSERT INTO wikot_messages (conversation_id, role, content) VALUES (?, 'assistant', ?)
-  `).bind(convId, assistantText).run()
+    INSERT INTO wikot_messages (conversation_id, role, content, references_json)
+    VALUES (?, 'assistant', ?, ?)
+  `).bind(convId, assistantContent, JSON.stringify(referencesJson)).run()
 
   // Mettre à jour le titre si premier message
   const msgCount = await c.env.DB.prepare(`SELECT COUNT(*) as n FROM wikot_messages WHERE conversation_id = ? AND role='user'`).bind(convId).first() as any
@@ -3479,7 +3731,8 @@ ${knowledgeBase || '(Aucune information n\'a encore été publiée par l\'hôtel
     assistant_message: {
       id: assistantInsert.meta.last_row_id,
       role: 'assistant',
-      content: assistantText
+      content: assistantContent,
+      references_json: JSON.stringify(referencesJson)
     }
   })
 })

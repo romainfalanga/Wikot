@@ -11,9 +11,9 @@ let state = {
   // Auth CLIENT (Front Wikot — chambre client)
   clientToken: localStorage.getItem('wikot_client_token'),
   client: JSON.parse(localStorage.getItem('wikot_client') || 'null'),
-  loginTab: 'staff', // 'staff' | 'client' — onglet actif sur la page de login
+  loginTab: 'client', // 'staff' | 'client' — onglet actif sur la page de login (client par défaut)
   // Vues client
-  clientView: 'home', // 'home' | 'wikot' | 'restaurant' | 'info'
+  clientView: 'wikot', // 'wikot' | 'restaurant' | 'info' — Front Wikot par défaut
   clientWikotConversations: [],
   clientWikotCurrentConvId: null,
   clientWikotMessages: [],
@@ -33,7 +33,7 @@ let state = {
   restaurantDashboardFrom: null,
   restaurantDashboardTo: null,
   restaurantPickedDate: null,
-  hotelSettings: null,
+  // hotelSettings retiré : la page Paramètres hôtel n'existe plus.
   currentView: 'dashboard',
   currentHotelId: null,
   procedures: [],
@@ -156,10 +156,8 @@ function userCanEditRestaurant() {
   return state.user.role === 'admin' || Number(state.user.can_edit_restaurant) === 1;
 }
 
-function userCanEditSettings() {
-  if (!state.user) return false;
-  return state.user.role === 'admin' || Number(state.user.can_edit_settings) === 1;
-}
+// Note: la permission can_edit_settings est conservée en DB pour compat,
+// mais la page Paramètres hôtel n'existe plus côté UI.
 
 // ============================================
 // CLIENT API HELPER (token séparé du staff)
@@ -546,9 +544,12 @@ async function clientLogin(hotelCode, roomNumber, guestName) {
     state.client = data.client;
     localStorage.setItem('wikot_client_token', data.token);
     localStorage.setItem('wikot_client', JSON.stringify(data.client));
-    state.clientView = 'home';
+    state.clientView = 'wikot';
+    state._clientWikotLoaded = false;
     showToast(`Bienvenue ${data.client.guest_name} !`, 'success');
     render();
+    // Pré-charger Front Wikot immédiatement après login
+    ensureClientWikotLoaded();
   } catch (e) {
     showToast('Erreur réseau', 'error');
   }
@@ -561,7 +562,7 @@ function clientLogout() {
   }
   state.clientToken = null;
   state.client = null;
-  state.clientView = 'home';
+  state.clientView = 'wikot';
   state.clientWikotConversations = [];
   state.clientWikotCurrentConvId = null;
   state.clientWikotMessages = [];
@@ -588,20 +589,19 @@ function renderLoginPage() {
           <i class="fas fa-concierge-bell text-3xl text-white"></i>
         </div>
         <h1 class="text-4xl font-bold text-white tracking-tight">Wik<span class="text-brand-400">ot</span></h1>
-        <p class="text-navy-300 mt-2 text-sm">${tab === 'client' ? 'Votre concierge virtuel' : 'Gestion intelligente des procédures hôtelières'}</p>
       </div>
       <div class="bg-white rounded-2xl shadow-2xl overflow-hidden fade-in">
-        <!-- Tabs -->
+        <!-- Tabs : Espace Client à gauche (par défaut), Espace Équipe à droite -->
         <div class="flex border-b border-gray-200">
-          <button onclick="setLoginTab('staff')" class="flex-1 py-4 text-sm font-semibold transition-colors ${tab === 'staff' ? 'text-brand-500 border-b-2 border-brand-400 bg-brand-50' : 'text-gray-500 hover:bg-gray-50'}">
-            <i class="fas fa-user-tie mr-2"></i>Espace Équipe
-          </button>
           <button onclick="setLoginTab('client')" class="flex-1 py-4 text-sm font-semibold transition-colors ${tab === 'client' ? 'text-brand-500 border-b-2 border-brand-400 bg-brand-50' : 'text-gray-500 hover:bg-gray-50'}">
             <i class="fas fa-bed mr-2"></i>Espace Client
           </button>
+          <button onclick="setLoginTab('staff')" class="flex-1 py-4 text-sm font-semibold transition-colors ${tab === 'staff' ? 'text-brand-500 border-b-2 border-brand-400 bg-brand-50' : 'text-gray-500 hover:bg-gray-50'}">
+            <i class="fas fa-user-tie mr-2"></i>Espace Équipe
+          </button>
         </div>
         <div class="p-8">
-          ${tab === 'staff' ? renderStaffLoginForm() : renderClientLoginForm()}
+          ${tab === 'client' ? renderClientLoginForm() : renderStaffLoginForm()}
         </div>
       </div>
     </div>
@@ -701,7 +701,7 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else if (isAdmin) {
-    // Admin hôtel : accès complet à toutes les pages opérationnelles + paramètres
+    // Admin hôtel : accès complet à toutes les pages opérationnelles
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
       { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' },
@@ -712,7 +712,6 @@ function renderMainLayout() {
       { id: 'occupancy', icon: 'fa-id-card', label: 'Présents du jour' },
       { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
-      { id: 'hotel-settings', icon: 'fa-gear', label: 'Paramètres hôtel' },
     ];
   } else {
     // Employé : Wikot pour tous + items conditionnels selon permissions granulaires
@@ -729,9 +728,6 @@ function renderMainLayout() {
       ] : []),
       ...(userCanEditRestaurant() ? [
         { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' }
-      ] : []),
-      ...(userCanEditSettings() ? [
-        { id: 'hotel-settings', icon: 'fa-gear', label: 'Paramètres hôtel' }
       ] : []),
     ];
   }
@@ -753,7 +749,6 @@ function renderMainLayout() {
     rooms: 'Chambres',
     occupancy: 'Présents du jour',
     restaurant: 'Restaurant',
-    'hotel-settings': 'Paramètres hôtel',
   };
   const currentTitle = viewTitles[state.currentView] || 'Wikot';
 
@@ -963,7 +958,7 @@ function renderCurrentView() {
     case 'rooms': return renderRoomsView();
     case 'occupancy': return renderOccupancyView();
     case 'restaurant': return renderRestaurantView();
-    case 'hotel-settings': return renderHotelSettingsView();
+    case 'hotel-settings': state.currentView = isSuperAdmin ? 'dashboard' : 'wikot'; return renderCurrentView();
     default:
       return (state.user && state.user.role === 'super_admin') ? renderDashboard() : renderProceduresList();
   }
@@ -1450,25 +1445,33 @@ async function toggleEditPermission(userId, newValue) {
   }
 }
 
-// Bascule une permission granulaire (procedures, info, chat) pour un employé
+// Bascule une permission granulaire pour un employé.
+// Mutation LOCALE de state.users + re-render ciblé (zéro refresh / zéro reload).
 async function togglePermission(userId, permKey, newValue) {
   const labels = {
     can_edit_procedures: 'modifier les procédures',
     can_edit_info: 'modifier les informations',
     can_manage_chat: 'gérer les salons et conversations',
     can_edit_clients: 'gérer les chambres et présents du jour',
-    can_edit_restaurant: 'gérer le restaurant',
-    can_edit_settings: 'modifier les paramètres de l\'hôtel'
+    can_edit_restaurant: 'gérer le restaurant'
   };
-  const verb = newValue === 1 ? 'accorder' : 'retirer';
-  if (!confirm(`Voulez-vous ${verb} le droit de ${labels[permKey] || permKey} à cet employé ?`)) return;
+  // Optimistic update : on met à jour le state local immédiatement
+  const list = state.users || [];
+  const idx = list.findIndex(u => u.id === userId);
+  const previousValue = idx >= 0 ? Number(list[idx][permKey]) : 0;
+  if (idx >= 0) {
+    list[idx] = { ...list[idx], [permKey]: newValue };
+  }
   const body = {};
   body[permKey] = newValue;
   const result = await api(`/users/${userId}/permissions`, { method: 'PUT', body: JSON.stringify(body) });
   if (result) {
-    await loadData();
+    // Pas de loadData() ni de render() complet : la case est déjà cochée localement.
+    showToast(newValue === 1 ? `Droit accordé : ${labels[permKey] || permKey}` : `Droit retiré : ${labels[permKey] || permKey}`, 'success');
+  } else if (idx >= 0) {
+    // Échec serveur : on annule l'optimistic update et on re-render
+    list[idx] = { ...list[idx], [permKey]: previousValue };
     render();
-    showToast(newValue === 1 ? 'Droit accordé' : 'Droit retiré', 'success');
   }
 }
 
@@ -1480,8 +1483,7 @@ function permissionCheckboxes(u, compact = false) {
     { key: 'can_edit_info',        label: 'Informations',       icon: 'fa-circle-info' },
     { key: 'can_manage_chat',      label: 'Salons / chat',      icon: 'fa-comments' },
     { key: 'can_edit_clients',     label: 'Chambres & présents',icon: 'fa-door-closed' },
-    { key: 'can_edit_restaurant',  label: 'Restaurant',         icon: 'fa-utensils' },
-    { key: 'can_edit_settings',    label: 'Paramètres hôtel',   icon: 'fa-gear' }
+    { key: 'can_edit_restaurant',  label: 'Restaurant',         icon: 'fa-utensils' }
   ];
   return `
     <div class="flex flex-col gap-1.5">
@@ -6090,16 +6092,18 @@ async function loadRestaurantData() {
   const to = fortnight.toISOString().slice(0, 10);
   state.restaurantDashboardFrom = state.restaurantDashboardFrom || today;
   state.restaurantDashboardTo = state.restaurantDashboardTo || to;
-  const [sched, exc, dash, resa] = await Promise.all([
+  const [sched, exc, dash, resa, tpls] = await Promise.all([
     api('/restaurant/schedule'),
     api('/restaurant/exceptions'),
     api(`/restaurant/dashboard?from=${state.restaurantDashboardFrom}&to=${state.restaurantDashboardTo}`),
-    api(`/restaurant/reservations?from=${state.restaurantDashboardFrom}&to=${state.restaurantDashboardTo}`)
+    api(`/restaurant/reservations?from=${state.restaurantDashboardFrom}&to=${state.restaurantDashboardTo}`),
+    api('/restaurant/templates')
   ]);
   if (sched) state.restaurantSchedule = sched.schedule || [];
   if (exc) state.restaurantExceptions = exc.exceptions || [];
   if (dash) state.restaurantDashboard = dash;
   if (resa) state.restaurantReservations = resa.reservations || [];
+  if (tpls) state.restaurantTemplates = tpls.templates || [];
 }
 
 function renderRestaurantView() {
@@ -6119,12 +6123,14 @@ function renderRestaurantView() {
       <button onclick="state.restaurantTab='dashboard'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'dashboard' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-chart-column mr-1"></i> Tableau de bord</button>
       <button onclick="state.restaurantTab='reservations'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'reservations' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-list mr-1"></i> Réservations</button>
       <button onclick="state.restaurantTab='schedule'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'schedule' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-calendar-week mr-1"></i> Planning</button>
+      <button onclick="state.restaurantTab='templates'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'templates' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-clone mr-1"></i> Modèles</button>
       <button onclick="state.restaurantTab='exceptions'; render()" class="px-4 py-3 text-sm font-semibold ${tab === 'exceptions' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-calendar-xmark mr-1"></i> Exceptions</button>
     </div>
     <div class="p-5">
       ${tab === 'dashboard' ? renderRestaurantDashboard()
         : tab === 'reservations' ? renderRestaurantReservations()
         : tab === 'schedule' ? renderRestaurantSchedule()
+        : tab === 'templates' ? renderRestaurantTemplates()
         : renderRestaurantExceptions()}
     </div>
   </div>`;
@@ -6293,6 +6299,220 @@ async function updateScheduleField(id, field, value) {
   }
 }
 
+// ============================================
+// RESTAURANT — Modèles de semaine (CRUD)
+// ============================================
+function renderRestaurantTemplates() {
+  const tpls = state.restaurantTemplates || [];
+  const canEdit = userCanEditRestaurant();
+  return `
+  <div class="flex justify-between items-center mb-3">
+    <p class="text-sm text-gray-500">Modèles de semaine — appliquez en 1 clic des horaires &amp; capacités complètes sur les 7 jours.</p>
+    ${canEdit ? `<button onclick="newRestaurantTemplate()" class="bg-brand-400 hover:bg-brand-500 text-white px-3 py-1.5 rounded text-sm"><i class="fas fa-plus mr-1"></i>Nouveau modèle</button>` : ''}
+  </div>
+  ${tpls.length === 0 ? '<div class="text-center py-8 text-gray-400">Aucun modèle. Créez-en un ou utilisez les modèles par défaut.</div>' : ''}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+    ${tpls.map(t => {
+      const summary = summarizeTemplate(t.days || []);
+      return `
+      <div class="border-2 ${t.is_default ? 'border-brand-300 bg-brand-50/30' : 'border-gray-200'} rounded-lg p-4">
+        <div class="flex items-start justify-between mb-2">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <h4 class="font-bold text-navy-800 truncate">${escapeHtml(t.name)}</h4>
+              ${t.is_default ? '<span class="text-[10px] px-1.5 py-0.5 bg-brand-400 text-white rounded">Défaut</span>' : ''}
+            </div>
+            ${t.description ? `<p class="text-xs text-gray-500 mt-0.5">${escapeHtml(t.description)}</p>` : ''}
+          </div>
+        </div>
+        <div class="text-xs text-gray-600 space-y-0.5 mb-3 bg-gray-50 rounded p-2 font-mono">
+          <div>☕ ${summary.breakfast}</div>
+          <div>🍽️ ${summary.lunch}</div>
+          <div>🍷 ${summary.dinner}</div>
+        </div>
+        <div class="flex items-center gap-2 flex-wrap">
+          ${canEdit ? `
+            <button onclick="applyRestaurantTemplate(${t.id}, '${escapeHtml(t.name)}')" class="bg-green-500 hover:bg-green-600 text-white px-3 py-1.5 rounded text-xs font-semibold"><i class="fas fa-bolt mr-1"></i>Appliquer</button>
+            <button onclick="editRestaurantTemplate(${t.id})" class="bg-white border border-gray-300 hover:bg-gray-50 text-navy-700 px-3 py-1.5 rounded text-xs"><i class="fas fa-pen mr-1"></i>Modifier</button>
+            ${!t.is_default ? `<button onclick="deleteRestaurantTemplate(${t.id}, '${escapeHtml(t.name)}')" class="text-red-500 hover:text-red-700 px-2 py-1.5 rounded text-xs"><i class="fas fa-trash"></i></button>` : ''}
+          ` : '<span class="text-xs text-gray-400 italic">Lecture seule</span>'}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// Résumé compact d'un template (heures dominantes par repas)
+function summarizeTemplate(days) {
+  const out = { breakfast: '—', lunch: '—', dinner: '—' };
+  const counts = { breakfast: {}, lunch: {}, dinner: {} };
+  for (const d of days) {
+    for (const m of (d.meals || [])) {
+      if (!m.is_open) continue;
+      const k = `${m.open_time || '?'}–${m.close_time || '?'} (${m.capacity || 0} pl.)`;
+      counts[m.meal_type] = counts[m.meal_type] || {};
+      counts[m.meal_type][k] = (counts[m.meal_type][k] || 0) + 1;
+    }
+  }
+  for (const meal of ['breakfast', 'lunch', 'dinner']) {
+    const entries = Object.entries(counts[meal] || {});
+    if (entries.length === 0) { out[meal] = 'Fermé toute la semaine'; continue; }
+    entries.sort((a, b) => b[1] - a[1]);
+    out[meal] = `${entries[0][0]} · ${entries[0][1]}j/7`;
+  }
+  return out;
+}
+
+async function applyRestaurantTemplate(id, name) {
+  if (!confirm(`Appliquer le modèle "${name}" ?\n\nLes 7 jours du planning seront remplacés par les horaires & capacités du modèle.`)) return;
+  const result = await api(`/restaurant/templates/${id}/apply`, { method: 'POST' });
+  if (result) {
+    showToast(`Modèle appliqué (${result.updated} mis à jour, ${result.inserted} créés)`, 'success');
+    // Recharger uniquement le planning, pas toute la page
+    const sched = await api('/restaurant/schedule');
+    if (sched) state.restaurantSchedule = sched.schedule || [];
+    state.restaurantTab = 'schedule';
+    render();
+  }
+}
+
+async function deleteRestaurantTemplate(id, name) {
+  if (!confirm(`Supprimer définitivement le modèle "${name}" ?`)) return;
+  const result = await api(`/restaurant/templates/${id}`, { method: 'DELETE' });
+  if (result) {
+    showToast('Modèle supprimé', 'success');
+    state.restaurantTemplates = state.restaurantTemplates.filter(t => t.id !== id);
+    render();
+  }
+}
+
+function newRestaurantTemplate() {
+  // Cloner le planning actuel comme base
+  const days = [0,1,2,3,4,5,6].map(weekday => ({
+    weekday,
+    meals: ['breakfast', 'lunch', 'dinner'].map(meal_type => {
+      const s = (state.restaurantSchedule || []).find(x => x.weekday === weekday && x.meal_type === meal_type);
+      return s ? {
+        meal_type,
+        is_open: s.is_open ? 1 : 0,
+        open_time: s.open_time,
+        close_time: s.close_time,
+        capacity: s.capacity || 0
+      } : { meal_type, is_open: 0, open_time: null, close_time: null, capacity: 0 };
+    })
+  }));
+  state.editingTemplate = { id: null, name: '', description: '', days };
+  showRestaurantTemplateModal();
+}
+
+function editRestaurantTemplate(id) {
+  const t = (state.restaurantTemplates || []).find(x => x.id === id);
+  if (!t) return;
+  // Deep clone pour ne pas muter l'état avant validation
+  state.editingTemplate = JSON.parse(JSON.stringify({ id: t.id, name: t.name, description: t.description || '', days: t.days || [] }));
+  showRestaurantTemplateModal();
+}
+
+function showRestaurantTemplateModal() {
+  const t = state.editingTemplate;
+  const dayNames = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+  const mealLabels = { breakfast: '☕ Petit-déj', lunch: '🍽️ Déjeuner', dinner: '🍷 Dîner' };
+  const html = `
+  <div class="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-2" onclick="if(event.target===this) closeModal()">
+    <div class="modal-panel bg-white w-full sm:max-w-3xl max-h-[90vh] overflow-y-auto">
+      <div class="modal-header bg-brand-400 text-white px-5 py-3 sticky top-0 z-10">
+        <h3 class="font-semibold">${t.id ? 'Modifier' : 'Nouveau'} modèle de semaine</h3>
+      </div>
+      <div class="modal-body p-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-navy-700 mb-1">Nom *</label>
+            <input id="tpl_name" type="text" value="${escapeHtml(t.name || '')}" placeholder="Ex: Semaine été" class="w-full px-3 py-2 border rounded form-input-mobile text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-navy-700 mb-1">Description</label>
+            <input id="tpl_desc" type="text" value="${escapeHtml(t.description || '')}" placeholder="Optionnel" class="w-full px-3 py-2 border rounded form-input-mobile text-sm">
+          </div>
+        </div>
+        <div class="space-y-2">
+          ${dayNames.map((dn, weekday) => {
+            const day = t.days.find(d => d.weekday === weekday) || { weekday, meals: [] };
+            return `
+            <div class="border border-gray-200 rounded-lg p-3">
+              <div class="font-semibold text-navy-800 text-sm mb-2">${dn}</div>
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                ${['breakfast','lunch','dinner'].map(mt => {
+                  const m = day.meals.find(x => x.meal_type === mt) || { meal_type: mt, is_open: 0 };
+                  return `
+                  <div class="bg-gray-50 rounded p-2 text-xs">
+                    <div class="flex items-center justify-between mb-1.5">
+                      <span class="font-medium">${mealLabels[mt]}</span>
+                      <label class="flex items-center gap-1 text-[10px]">
+                        <input type="checkbox" ${m.is_open ? 'checked' : ''} onchange="updateTplField(${weekday}, '${mt}', 'is_open', this.checked ? 1 : 0)">
+                        Ouvert
+                      </label>
+                    </div>
+                    <div class="grid grid-cols-3 gap-1">
+                      <input type="time" value="${m.open_time || ''}" onchange="updateTplField(${weekday}, '${mt}', 'open_time', this.value || null)" class="px-1 py-1 border rounded text-[11px]">
+                      <input type="time" value="${m.close_time || ''}" onchange="updateTplField(${weekday}, '${mt}', 'close_time', this.value || null)" class="px-1 py-1 border rounded text-[11px]">
+                      <input type="number" min="0" value="${m.capacity || 0}" onchange="updateTplField(${weekday}, '${mt}', 'capacity', parseInt(this.value)||0)" class="px-1 py-1 border rounded text-[11px]">
+                    </div>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        <div class="flex justify-end gap-2 pt-2 sticky bottom-0 bg-white">
+          <button onclick="closeModal()" class="px-4 py-2 text-sm text-gray-600 rounded hover:bg-gray-100">Annuler</button>
+          <button onclick="saveRestaurantTemplate()" class="px-4 py-2 text-sm bg-brand-400 hover:bg-brand-500 text-white rounded font-semibold"><i class="fas fa-save mr-1"></i>Enregistrer</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+}
+
+function updateTplField(weekday, meal_type, field, value) {
+  const t = state.editingTemplate;
+  if (!t) return;
+  let day = t.days.find(d => d.weekday === weekday);
+  if (!day) { day = { weekday, meals: [] }; t.days.push(day); }
+  let meal = day.meals.find(m => m.meal_type === meal_type);
+  if (!meal) { meal = { meal_type, is_open: 0 }; day.meals.push(meal); }
+  meal[field] = value;
+}
+
+async function saveRestaurantTemplate() {
+  const t = state.editingTemplate;
+  if (!t) return;
+  const name = document.getElementById('tpl_name').value.trim();
+  const description = document.getElementById('tpl_desc').value.trim();
+  if (!name) { showToast('Nom requis', 'error'); return; }
+  // S'assurer qu'on a bien 7 jours, chacun avec 3 repas
+  const completeDays = [0,1,2,3,4,5,6].map(weekday => {
+    const day = t.days.find(d => d.weekday === weekday) || { weekday, meals: [] };
+    const meals = ['breakfast','lunch','dinner'].map(mt => {
+      const m = day.meals.find(x => x.meal_type === mt);
+      return m || { meal_type: mt, is_open: 0, open_time: null, close_time: null, capacity: 0 };
+    });
+    return { weekday, meals };
+  });
+  const body = JSON.stringify({ name, description, days: completeDays });
+  const result = t.id
+    ? await api(`/restaurant/templates/${t.id}`, { method: 'PUT', body })
+    : await api('/restaurant/templates', { method: 'POST', body });
+  if (result) {
+    showToast(t.id ? 'Modèle mis à jour' : 'Modèle créé', 'success');
+    closeModal();
+    // Recharger uniquement les templates
+    const tpls = await api('/restaurant/templates');
+    if (tpls) state.restaurantTemplates = tpls.templates || [];
+    state.editingTemplate = null;
+    render();
+  }
+}
+
 function renderRestaurantExceptions() {
   const exc = state.restaurantExceptions || [];
   const mealLabels = { breakfast: 'Petit-déj', lunch: 'Déjeuner', dinner: 'Dîner' };
@@ -6406,224 +6626,17 @@ async function cancelStaffReservation(id) {
 }
 
 // ============================================
-// VIEW: HOTEL SETTINGS — Identité, Contact, Séjour, Wifi
+// VIEW: HOTEL SETTINGS — bloc supprimé volontairement.
+// Le code client (login_code), capacités & horaires resto sont gérés
+// directement depuis la page Restaurant (templates de semaine).
 // ============================================
-async function loadHotelSettings() {
-  const id = state.user.hotel_id;
-  if (!id) return;
-  const data = await api(`/hotels/${id}/settings`);
-  if (data) state.hotelSettings = data.hotel;
-}
-
-function renderHotelSettingsView() {
-  if (!state._hotelSettingsLoaded) {
-    state._hotelSettingsLoaded = true;
-    loadHotelSettings().then(() => render());
-    return `<div class="text-center py-12 text-gray-500"><i class="fas fa-spinner fa-spin text-2xl mb-2"></i><p>Chargement...</p></div>`;
-  }
-  if (!userCanEditSettings() && state.user.role !== 'super_admin') {
-    return `<div class="bg-yellow-50 border border-yellow-200 rounded-lg p-4 text-yellow-800"><i class="fas fa-lock mr-2"></i>Tu n'as pas la permission de modifier les paramètres. Demande à un administrateur de t'activer le droit "Paramètres hôtel".</div>`;
-  }
-  const h = state.hotelSettings || {};
-  const tab = state.settingsTab || 'identity';
-  const tabs = [
-    { id: 'identity', label: 'Identité',  icon: 'fa-hotel' },
-    { id: 'contact',  label: 'Contact',   icon: 'fa-address-book' },
-    { id: 'stay',     label: 'Séjour',    icon: 'fa-suitcase' },
-    { id: 'wifi',     label: 'Wifi',      icon: 'fa-wifi' },
-  ];
-
-  return `
-  <div class="mb-5">
-    <h2 class="text-xl sm:text-2xl font-bold text-navy-800"><i class="fas fa-gear text-brand-400 mr-2"></i>Paramètres de l'hôtel</h2>
-    <p class="text-sm text-gray-500 mt-1">${escapeHtml(h.name || '')}</p>
-  </div>
-
-  <!-- Onglets -->
-  <div class="bg-white rounded-xl shadow-sm border border-gray-100 mb-5 overflow-hidden">
-    <div class="flex overflow-x-auto">
-      ${tabs.map(t => `
-        <button onclick="state.settingsTab='${t.id}'; render()"
-          class="flex-1 min-w-[120px] flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors whitespace-nowrap
-            ${tab === t.id ? 'bg-brand-50 text-brand-600 border-b-2 border-brand-400' : 'text-navy-500 hover:bg-gray-50 border-b-2 border-transparent'}">
-          <i class="fas ${t.icon}"></i>${t.label}
-        </button>
-      `).join('')}
-    </div>
-  </div>
-
-  <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-5 sm:p-6 max-w-3xl">
-    ${tab === 'identity' ? renderSettingsIdentity(h) : ''}
-    ${tab === 'contact'  ? renderSettingsContact(h)  : ''}
-    ${tab === 'stay'     ? renderSettingsStay(h)     : ''}
-    ${tab === 'wifi'     ? renderSettingsWifi(h)     : ''}
-  </div>`;
-}
-
-function settingsField(id, label, value, opts = {}) {
-  const type = opts.type || 'text';
-  const placeholder = opts.placeholder || '';
-  const help = opts.help || '';
-  const inputClass = `w-full px-3 py-2 border border-gray-200 rounded-lg form-input-mobile text-sm ${opts.inputExtra || ''}`;
-  if (type === 'textarea') {
-    return `
-      <div>
-        <label class="block text-xs font-semibold text-navy-700 mb-1">${label}</label>
-        ${help ? `<p class="text-[11px] text-gray-500 mb-1.5">${help}</p>` : ''}
-        <textarea id="${id}" rows="${opts.rows || 3}" placeholder="${escapeHtml(placeholder)}" class="${inputClass}">${escapeHtml(value || '')}</textarea>
-      </div>`;
-  }
-  return `
-    <div>
-      <label class="block text-xs font-semibold text-navy-700 mb-1">${label}</label>
-      ${help ? `<p class="text-[11px] text-gray-500 mb-1.5">${help}</p>` : ''}
-      <input id="${id}" type="${type}" value="${escapeHtml(value || '')}" placeholder="${escapeHtml(placeholder)}" class="${inputClass}">
-    </div>`;
-}
-
-function renderSettingsIdentity(h) {
-  return `
-    <h3 class="text-base font-bold text-navy-800 mb-4"><i class="fas fa-hotel text-brand-400 mr-2"></i>Identité de l'hôtel</h3>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      ${settingsField('s_name', "Nom de l'hôtel", h.name, { placeholder: 'Grand Hôtel des Lecques' })}
-      ${settingsField('s_brand_color', 'Couleur de marque', h.brand_color || '#f59e0b', { type: 'color', inputExtra: 'h-10 cursor-pointer' })}
-      <div class="sm:col-span-2">
-        ${settingsField('s_description', 'Description', h.description, { type: 'textarea', rows: 3, placeholder: "Quelques lignes pour présenter l'hôtel.", help: 'Affiché dans le portail client (Front Wikot).' })}
-      </div>
-      ${settingsField('s_logo_url', 'URL du logo', h.logo_url, { placeholder: 'https://...' })}
-      ${settingsField('s_currency', 'Devise', h.currency || 'EUR', { placeholder: 'EUR' })}
-      ${settingsField('s_timezone', 'Fuseau horaire', h.timezone || 'Europe/Paris', { placeholder: 'Europe/Paris' })}
-      ${settingsField('s_language', 'Langue', h.language || 'fr', { placeholder: 'fr' })}
-    </div>
-    <div class="mt-5 flex justify-end">
-      <button onclick="saveHotelSettings(['name','brand_color','description','logo_url','currency','timezone','language'])" class="bg-brand-400 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-sm font-semibold">
-        <i class="fas fa-save mr-1"></i>Enregistrer
-      </button>
-    </div>`;
-}
-
-function renderSettingsContact(h) {
-  return `
-    <h3 class="text-base font-bold text-navy-800 mb-4"><i class="fas fa-address-book text-brand-400 mr-2"></i>Contact &amp; réseaux</h3>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      <div class="sm:col-span-2">
-        ${settingsField('s_address', 'Adresse', h.address, { type: 'textarea', rows: 2, placeholder: '12 rue de la Mer, 83270 Saint-Cyr-sur-Mer' })}
-      </div>
-      ${settingsField('s_phone', 'Téléphone', h.phone, { placeholder: '+33 4 94 ...' })}
-      ${settingsField('s_email', 'Email', h.email, { type: 'email', placeholder: 'contact@hotel.com' })}
-      <div class="sm:col-span-2">
-        ${settingsField('s_website', 'Site web', h.website, { placeholder: 'https://...' })}
-      </div>
-      ${settingsField('s_instagram_url', 'Instagram', h.instagram_url, { placeholder: 'https://instagram.com/...' })}
-      ${settingsField('s_facebook_url', 'Facebook', h.facebook_url, { placeholder: 'https://facebook.com/...' })}
-      ${settingsField('s_tripadvisor_url', 'TripAdvisor', h.tripadvisor_url, { placeholder: 'https://tripadvisor.com/...' })}
-      ${settingsField('s_booking_url', 'Booking.com', h.booking_url, { placeholder: 'https://booking.com/...' })}
-    </div>
-    <div class="mt-5 flex justify-end">
-      <button onclick="saveHotelSettings(['address','phone','email','website','instagram_url','facebook_url','tripadvisor_url','booking_url'])" class="bg-brand-400 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-sm font-semibold">
-        <i class="fas fa-save mr-1"></i>Enregistrer
-      </button>
-    </div>`;
-}
-
-function renderSettingsStay(h) {
-  return `
-    <h3 class="text-base font-bold text-navy-800 mb-4"><i class="fas fa-suitcase text-brand-400 mr-2"></i>Séjour &amp; restaurant</h3>
-
-    <!-- Code client -->
-    <div class="bg-brand-50 border border-brand-100 rounded-lg p-4 mb-5">
-      <label class="block text-sm font-semibold text-navy-700 mb-1">🔑 Code de connexion client</label>
-      <p class="text-xs text-gray-600 mb-2">Code court (3-16 caractères) que vos clients tapent pour se connecter. Sera imprimé sur les fiches plastifiées des chambres.</p>
-      <div class="flex gap-2">
-        <input id="s_client_login_code" type="text" value="${escapeHtml(h.client_login_code || '')}" placeholder="GRDPARIS"
-          style="text-transform: uppercase; letter-spacing: 2px;"
-          class="flex-1 px-3 py-2 border border-gray-200 rounded-lg form-input-mobile font-mono font-bold text-brand-600">
-        <button onclick="saveHotelSettings(['client_login_code'])" class="bg-brand-400 hover:bg-brand-500 text-white px-4 py-2 rounded-lg text-sm font-semibold whitespace-nowrap"><i class="fas fa-save mr-1"></i>Sauver</button>
-      </div>
-    </div>
-
-    <!-- Heures check-in / check-out -->
-    <div class="grid grid-cols-2 gap-4 mb-5">
-      ${settingsField('s_checkin_time', '🛬 Check-in', h.checkin_time || '15:00', { type: 'time' })}
-      ${settingsField('s_checkout_time', '🛫 Check-out', h.checkout_time || '12:00', { type: 'time', help: 'Le client doit rendre la chambre à cette heure.' })}
-    </div>
-
-    <!-- Politique d'annulation + message d'accueil -->
-    <div class="space-y-4 mb-5">
-      ${settingsField('s_cancellation_policy', "Politique d'annulation", h.cancellation_policy, { type: 'textarea', rows: 2, placeholder: "Annulation gratuite jusqu'à 18h la veille..." })}
-      ${settingsField('s_welcome_message', 'Message de bienvenue (Front Wikot)', h.welcome_message, { type: 'textarea', rows: 3, placeholder: 'Bienvenue au Grand Hôtel des Lecques ! Profitez de votre séjour...', help: 'Affiché aux clients après leur connexion.' })}
-    </div>
-
-    <!-- Capacités restaurant -->
-    <div class="border-t border-gray-100 pt-4 mb-2">
-      <h4 class="font-semibold text-navy-700 mb-1">🍽️ Capacités restaurant par défaut</h4>
-      <p class="text-xs text-gray-500 mb-3">Base utilisée pour le planning hebdo (modifiable jour par jour dans Restaurant → Planning).</p>
-      <div class="grid grid-cols-3 gap-3">
-        <div>
-          <label class="block text-xs text-gray-600 mb-1">☕ Petit-déj</label>
-          <input id="s_breakfast_capacity" type="number" min="0" max="500" value="${h.breakfast_capacity || 30}" class="w-full px-2 py-1.5 border border-gray-200 rounded form-input-mobile text-sm">
-        </div>
-        <div>
-          <label class="block text-xs text-gray-600 mb-1">🍽️ Déjeuner</label>
-          <input id="s_lunch_capacity" type="number" min="0" max="500" value="${h.lunch_capacity || 30}" class="w-full px-2 py-1.5 border border-gray-200 rounded form-input-mobile text-sm">
-        </div>
-        <div>
-          <label class="block text-xs text-gray-600 mb-1">🍷 Dîner</label>
-          <input id="s_dinner_capacity" type="number" min="0" max="500" value="${h.dinner_capacity || 30}" class="w-full px-2 py-1.5 border border-gray-200 rounded form-input-mobile text-sm">
-        </div>
-      </div>
-    </div>
-
-    <div class="mt-5 flex justify-end">
-      <button onclick="saveHotelSettings(['checkin_time','checkout_time','cancellation_policy','welcome_message','breakfast_capacity','lunch_capacity','dinner_capacity'])" class="bg-brand-400 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-sm font-semibold">
-        <i class="fas fa-save mr-1"></i>Enregistrer les horaires &amp; capacités
-      </button>
-    </div>`;
-}
-
-function renderSettingsWifi(h) {
-  return `
-    <h3 class="text-base font-bold text-navy-800 mb-4"><i class="fas fa-wifi text-brand-400 mr-2"></i>Wifi de l'hôtel</h3>
-    <p class="text-xs text-gray-600 mb-4">Ces informations seront affichées au client dans son espace Front Wikot.</p>
-    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-      ${settingsField('s_wifi_ssid', 'Nom du réseau (SSID)', h.wifi_ssid, { placeholder: 'Hotel-Lecques-Guest' })}
-      ${settingsField('s_wifi_password', 'Mot de passe wifi', h.wifi_password, { placeholder: 'mot-de-passe' })}
-      <div class="sm:col-span-2">
-        ${settingsField('s_wifi_instructions', 'Instructions complémentaires', h.wifi_instructions, { type: 'textarea', rows: 3, placeholder: 'Acceptez les conditions sur le portail captif après connexion.', help: 'Optionnel — instructions à afficher sous le SSID.' })}
-      </div>
-    </div>
-    <div class="mt-5 flex justify-end">
-      <button onclick="saveHotelSettings(['wifi_ssid','wifi_password','wifi_instructions'])" class="bg-brand-400 hover:bg-brand-500 text-white px-5 py-2 rounded-lg text-sm font-semibold">
-        <i class="fas fa-save mr-1"></i>Enregistrer
-      </button>
-    </div>`;
-}
-
-// Sauvegarde générique : prend un tableau de clés, lit les valeurs des inputs s_<key>
-async function saveHotelSettings(keys) {
-  const body = {};
-  for (const k of keys) {
-    const el = document.getElementById('s_' + k);
-    if (!el) continue;
-    let v = el.value;
-    if (k === 'client_login_code') v = String(v).trim().toUpperCase();
-    body[k] = v;
-  }
-  const data = await api(`/hotels/${state.user.hotel_id}/settings`, { method: 'PUT', body: JSON.stringify(body) });
-  if (data) {
-    showToast('Paramètres enregistrés', 'success');
-    state._hotelSettingsLoaded = false;
-    await loadHotelSettings();
-    render();
-  }
-}
 
 // ============================================
 // CLIENT APP — Front Wikot (espace client en chambre)
 // ============================================
 function renderClientApp() {
   const c = state.client || {};
-  const view = state.clientView || 'home';
+  const view = state.clientView || 'wikot';
   return `
   <div class="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 flex flex-col">
     <!-- Header -->
@@ -6644,20 +6657,18 @@ function renderClientApp() {
       </div>
     </header>
 
-    <!-- Tabs -->
+    <!-- Tabs : Front Wikot (par défaut) · Restaurant · Infos -->
     <nav class="bg-white border-b border-gray-100 flex">
-      <button onclick="state.clientView='home'; render()" class="flex-1 py-3 text-sm font-semibold ${view === 'home' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-house mr-1"></i> Accueil</button>
-      <button onclick="state.clientView='wikot'; render(); ensureClientWikotLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'wikot' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-comments mr-1"></i> Wikot</button>
+      <button onclick="state.clientView='wikot'; render(); ensureClientWikotLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'wikot' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-comments mr-1"></i> Front Wikot</button>
       <button onclick="state.clientView='restaurant'; render(); ensureClientRestaurantLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'restaurant' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-utensils mr-1"></i> Restaurant</button>
       <button onclick="state.clientView='info'; render(); ensureClientInfoLoaded()" class="flex-1 py-3 text-sm font-semibold ${view === 'info' ? 'text-brand-500 border-b-2 border-brand-400' : 'text-gray-500'}"><i class="fas fa-circle-info mr-1"></i> Infos</button>
     </nav>
 
     <!-- Content -->
     <main class="flex-1 overflow-y-auto p-4 max-w-3xl mx-auto w-full">
-      ${view === 'home' ? renderClientHome()
-        : view === 'wikot' ? renderClientWikot()
-        : view === 'restaurant' ? renderClientRestaurant()
-        : renderClientInfo()}
+      ${view === 'restaurant' ? renderClientRestaurant()
+        : view === 'info' ? renderClientInfo()
+        : renderClientWikot()}
     </main>
   </div>`;
 }
@@ -6711,13 +6722,16 @@ async function ensureClientWikotLoaded() {
   render();
 }
 
+// ============================================
+// FRONT WIKOT — rendu (info-cards + reservation-cards)
+// ============================================
 function renderClientWikot() {
   const messages = state.clientWikotMessages || [];
   return `
   <div class="bg-white rounded-2xl shadow-sm flex flex-col" style="height: calc(100vh - 180px); min-height: 400px;">
     <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
       <div>
-        <h2 class="font-bold text-navy-800"><i class="fas fa-robot text-brand-400 mr-2"></i>Wikot</h2>
+        <h2 class="font-bold text-navy-800"><i class="fas fa-robot text-brand-400 mr-2"></i>Front Wikot</h2>
         <p class="text-[11px] text-gray-500">Votre concierge virtuel</p>
       </div>
       <button onclick="newClientWikotConversation()" class="text-xs text-gray-500 hover:text-brand-500"><i class="fas fa-rotate-right mr-1"></i>Nouvelle</button>
@@ -6726,19 +6740,15 @@ function renderClientWikot() {
       ${messages.length === 0 ? `
         <div class="text-center py-8 text-gray-400">
           <i class="fas fa-comments text-3xl mb-2"></i>
-          <p class="text-sm">Posez-moi une question sur votre séjour !</p>
+          <p class="text-sm">Posez-moi une question ou demandez à réserver !</p>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4 max-w-md mx-auto">
             <button onclick="sendClientWikotMessage('À quelle heure est servi le petit-déjeuner ?')" class="text-left bg-amber-50 hover:bg-amber-100 px-3 py-2 rounded-lg text-xs text-amber-800">À quelle heure est servi le petit-déjeuner ?</button>
-            <button onclick="sendClientWikotMessage('Où se trouve la piscine ?')" class="text-left bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded-lg text-xs text-blue-800">Où se trouve la piscine ?</button>
-            <button onclick="sendClientWikotMessage('Y a-t-il un parking ?')" class="text-left bg-green-50 hover:bg-green-100 px-3 py-2 rounded-lg text-xs text-green-800">Y a-t-il un parking ?</button>
-            <button onclick="sendClientWikotMessage('Quelles activités proposez-vous ?')" class="text-left bg-purple-50 hover:bg-purple-100 px-3 py-2 rounded-lg text-xs text-purple-800">Quelles activités proposez-vous ?</button>
+            <button onclick="sendClientWikotMessage('Je voudrais réserver une table pour le dîner')" class="text-left bg-rose-50 hover:bg-rose-100 px-3 py-2 rounded-lg text-xs text-rose-800">Réserver une table pour ce soir</button>
+            <button onclick="sendClientWikotMessage('Quel est le code wifi ?')" class="text-left bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded-lg text-xs text-blue-800">Quel est le code wifi ?</button>
+            <button onclick="sendClientWikotMessage('Réserver le petit-déjeuner')" class="text-left bg-green-50 hover:bg-green-100 px-3 py-2 rounded-lg text-xs text-green-800">Réserver le petit-déjeuner</button>
           </div>
-        </div>` : messages.map(m => `
-          <div class="flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}">
-            <div class="max-w-[80%] ${m.role === 'user' ? 'bg-brand-400 text-white' : 'bg-gray-100 text-navy-800'} rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap">${escapeHtml(m.content || '')}</div>
-          </div>
-        `).join('')}
-      ${state.clientWikotSending ? '<div class="flex justify-start"><div class="bg-gray-100 rounded-2xl px-4 py-2 text-sm text-gray-500"><i class="fas fa-circle-notch fa-spin mr-1"></i> Wikot réfléchit...</div></div>' : ''}
+        </div>` : messages.map(m => renderFrontWikotMessage(m)).join('')}
+      ${state.clientWikotSending ? '<div class="flex justify-start"><div class="bg-gray-100 rounded-2xl px-4 py-2 text-sm text-gray-500"><i class="fas fa-circle-notch fa-spin mr-1"></i> Front Wikot réfléchit...</div></div>' : ''}
     </div>
     <div class="border-t border-gray-100 p-3 flex gap-2">
       <input id="client_wikot_input" type="text" placeholder="Posez votre question..."
@@ -6748,6 +6758,107 @@ function renderClientWikot() {
         class="bg-brand-400 hover:bg-brand-500 text-white w-10 h-10 rounded-full flex items-center justify-center"><i class="fas fa-paper-plane"></i></button>
     </div>
   </div>`;
+}
+
+// Rendu d'un message Front Wikot (user simple OU assistant avec carte structurée)
+function renderFrontWikotMessage(m) {
+  if (m.role === 'user') {
+    return `
+      <div class="flex justify-end">
+        <div class="max-w-[80%] bg-brand-400 text-white rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap">${escapeHtml(m.content || '')}</div>
+      </div>`;
+  }
+  // Assistant : on lit references_json pour afficher la carte
+  let ref = null;
+  try { ref = m.references_json ? (typeof m.references_json === 'string' ? JSON.parse(m.references_json) : m.references_json) : null; } catch {}
+
+  if (ref?.kind === 'info_card' && ref.item) {
+    const it = ref.item;
+    return `
+      <div class="flex justify-start">
+        <div class="max-w-[90%] bg-white border-2 border-blue-200 rounded-2xl shadow-sm overflow-hidden">
+          <div class="bg-blue-50 px-4 py-2 border-b border-blue-100 flex items-center gap-2">
+            <i class="fas fa-circle-info text-blue-600"></i>
+            <div class="text-[10px] uppercase tracking-wide text-blue-700 font-semibold">${escapeHtml(it.category || 'Info')}</div>
+          </div>
+          <div class="px-4 py-3">
+            <h4 class="font-bold text-navy-800 mb-1.5">${escapeHtml(it.title || '')}</h4>
+            <div class="text-sm text-gray-700 whitespace-pre-wrap">${escapeHtml(it.content || '')}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  if (ref?.kind === 'reservation_card') {
+    // ⚠️ Classes Tailwind écrites en littéral (pas de concaténation dynamique : sinon Tailwind CDN ne les détecte pas)
+    const styles = {
+      breakfast: {
+        icon: 'fa-mug-hot',
+        wrap: 'border-amber-200',
+        head: 'bg-amber-50 border-amber-100',
+        chip: 'text-amber-600',
+        label: 'text-amber-700',
+        btn: 'bg-amber-500 hover:bg-amber-600'
+      },
+      lunch: {
+        icon: 'fa-utensils',
+        wrap: 'border-orange-200',
+        head: 'bg-orange-50 border-orange-100',
+        chip: 'text-orange-600',
+        label: 'text-orange-700',
+        btn: 'bg-orange-500 hover:bg-orange-600'
+      },
+      dinner: {
+        icon: 'fa-wine-glass',
+        wrap: 'border-rose-200',
+        head: 'bg-rose-50 border-rose-100',
+        chip: 'text-rose-600',
+        label: 'text-rose-700',
+        btn: 'bg-rose-500 hover:bg-rose-600'
+      }
+    };
+    const s = styles[ref.meal_type] || styles.dinner;
+    return `
+      <div class="flex justify-start">
+        <div class="max-w-[90%] bg-white border-2 ${s.wrap} rounded-2xl shadow-sm overflow-hidden">
+          <div class="${s.head} px-4 py-2 border-b flex items-center gap-2">
+            <i class="fas ${s.icon} ${s.chip}"></i>
+            <div class="text-[10px] uppercase tracking-wide ${s.label} font-semibold">Réservation restaurant</div>
+          </div>
+          <div class="px-4 py-3">
+            <h4 class="font-bold text-navy-800 mb-1">Réserver : ${escapeHtml(ref.meal_label || ref.meal_type)}</h4>
+            <p class="text-xs text-gray-600 mb-3">Choisissez la date, l'heure et le nombre de couverts.</p>
+            <button onclick="openClientReservationFromWikot('${ref.meal_type}')"
+              class="w-full ${s.btn} text-white py-2 rounded-lg text-sm font-semibold transition-colors">
+              <i class="fas fa-calendar-plus mr-1"></i> Réserver maintenant
+            </button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  if (ref?.kind === 'fallback') {
+    return `
+      <div class="flex justify-start">
+        <div class="max-w-[80%] bg-yellow-50 border border-yellow-200 rounded-2xl px-4 py-2 text-sm text-yellow-900">
+          <i class="fas fa-info-circle mr-1"></i>${escapeHtml(ref.message || '')}
+        </div>
+      </div>`;
+  }
+
+  // Compat ancien format (texte libre legacy)
+  return `
+    <div class="flex justify-start">
+      <div class="max-w-[80%] bg-gray-100 text-navy-800 rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap">${escapeHtml(m.content || '')}</div>
+    </div>`;
+}
+
+// Action depuis carte Wikot → bascule sur l'onglet Restaurant en pré-sélectionnant le repas
+function openClientReservationFromWikot(mealType) {
+  state.clientView = 'restaurant';
+  state.clientPrefilledMeal = mealType;
+  ensureClientRestaurantLoaded();
+  render();
 }
 
 async function sendClientWikotMessage(text) {
@@ -6802,6 +6913,18 @@ async function loadClientRestaurant() {
   if (avail) state.clientRestaurantAvailability = avail;
   if (mine) state.clientRestaurantReservations = mine.reservations || [];
   render();
+  // Si on arrive depuis Front Wikot avec un repas pré-sélectionné → ouvre direct le modal
+  if (state.clientPrefilledMeal && avail) {
+    const m = state.clientPrefilledMeal;
+    state.clientPrefilledMeal = null;
+    const mealLabels = { breakfast: 'Petit-déjeuner', lunch: 'Déjeuner', dinner: 'Dîner' };
+    const a = avail[m] || {};
+    if (a.is_open && a.slots_left > 0) {
+      setTimeout(() => showClientReservationModal(m, mealLabels[m] || m), 200);
+    } else {
+      showToast(a.is_open ? 'Service complet pour cette date' : 'Service fermé à cette date', 'warning');
+    }
+  }
 }
 
 function renderClientRestaurant() {

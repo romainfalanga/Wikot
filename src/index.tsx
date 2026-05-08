@@ -69,12 +69,15 @@ app.use('*', async (c, next) => {
 // ============================================
 // CRYPTO HELPERS — PBKDF2-SHA256 (Web Crypto API, compatible Workers)
 // Argon2 n'est pas dispo nativement sur l'edge runtime (pas de WASM crypto + fs).
-// On utilise PBKDF2-SHA256 600k iter (recommandation OWASP 2023) — équivalent sécurité.
-// Le champ `algo` versionne le hash : on supporte la rotation transparente v1 (100k) → v2 (600k).
+// IMPORTANT : Cloudflare Workers limite le CPU à 30 ms (free) / 50 ms (paid).
+// 600k itérations dépassent cette limite et font crasher login/verify (HTTP 500/401).
+// On revient à 100k iter — résiste encore au cracking offline pour des MDP non-triviaux.
+// Migration future possible vers Argon2-WASM si besoin de 2023+ strict.
+// Le champ `algo` reste versionné pour permettre une future rotation propre.
 // ============================================
-const PBKDF2_ITER_V1 = 100_000          // legacy (pré-2026)
-const PBKDF2_ITER_CURRENT = 600_000     // OWASP 2023+ — actuel
-const PBKDF2_ALGO_CURRENT = 'pbkdf2-sha256-600k'
+const PBKDF2_ITER_V1 = 100_000          // legacy (pré-2026) — toujours supporté
+const PBKDF2_ITER_CURRENT = 100_000     // edge-compatible (sous la limite CPU Workers)
+const PBKDF2_ALGO_CURRENT = 'pbkdf2-sha256-100k'
 const PBKDF2_ALGO_LEGACY = 'pbkdf2-sha256-100k'
 
 function bytesToHex(arr: Uint8Array): string {

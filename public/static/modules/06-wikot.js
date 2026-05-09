@@ -779,6 +779,48 @@ const BACK_WIKOT_WORKFLOWS = {
     permissionKey: 'can_edit_info',
     needsTarget: true,
     description: 'Choisis une information existante puis ajuste-la avec Back Wikot.'
+  },
+  // ======== NOUVEAUX WORKFLOWS (Phase 4) ========
+  // 3 modes "lite" (conseil/structure) + 1 mode complet "Codes Wikot" (édition)
+  gerer_conversations: {
+    label: 'Conversations (gérer)',
+    icon: 'fa-comments',
+    color: 'sky',
+    targetKind: null,
+    permissionKey: null, // dispo pour tout user qui a accès Back Wikot
+    needsTarget: false,
+    isLite: true,
+    description: "Structure tes salons et channels avec Back Wikot avant de les créer dans l'onglet Discussion."
+  },
+  chercher_conversations: {
+    label: 'Conversations (chercher)',
+    icon: 'fa-magnifying-glass',
+    color: 'indigo',
+    targetKind: null,
+    permissionKey: null,
+    needsTarget: false,
+    isLite: true,
+    description: "Reformule ta recherche pour trouver une info dans l'historique des messages."
+  },
+  gerer_taches: {
+    label: 'Tâches',
+    icon: 'fa-list-check',
+    color: 'emerald',
+    targetKind: null,
+    permissionKey: null,
+    needsTarget: false,
+    isLite: true,
+    description: "Cadre une tâche prête à enregistrer dans l'onglet Tâches (récurrence, priorité, assignés)."
+  },
+  gerer_codes_wikot: {
+    label: 'Codes Wikot',
+    icon: 'fa-key',
+    color: 'gold',
+    targetKind: null,
+    permissionKey: 'admin_only', // restriction renforcée côté UI + backend
+    needsTarget: false,
+    isLite: false, // mode complet avec tools
+    description: "Modifie le code hôtel, renomme une chambre, mets à jour le client courant."
   }
 };
 
@@ -786,7 +828,15 @@ function userCanRunBackWikotWorkflow(workflowMode) {
   const wf = BACK_WIKOT_WORKFLOWS[workflowMode];
   if (!wf) return false;
   if (!state.user) return false;
+  // Workflow réservé strictement à l'admin de l'hôtel (ex: Codes Wikot)
+  if (wf.permissionKey === 'admin_only') {
+    return state.user.role === 'admin' || state.user.role === 'super_admin';
+  }
+  // Admin / super_admin : accès à tous les workflows non restreints
   if (state.user.role === 'admin' || state.user.role === 'super_admin') return true;
+  // Workflow ouvert à tous (pas de permission spécifique requise)
+  if (!wf.permissionKey) return true;
+  // Sinon : on vérifie le flag de permission précis
   return state.user[wf.permissionKey] === 1;
 }
 
@@ -899,11 +949,39 @@ async function enterBackWikotWorkflow(workflowMode) {
       await loadBackWikotInfo();
     }
     render();
+  } else if (BACK_WIKOT_WORKFLOWS[workflowMode] && BACK_WIKOT_WORKFLOWS[workflowMode].targetKind === null) {
+    // NOUVEAUX WORKFLOWS (Phase 4) : pas de formulaire, juste un chat conseil/édition.
+    // On crée la conversation côté backend et on bascule directement sur la vue chat-only.
+    state.backWikotForm = null;
+    await openBackWikotChatOnly();
   } else {
     // Création directe : on entre dans l'atelier avec un form vierge
     state.backWikotForm = emptyBackWikotForm(workflowMode);
     await openBackWikotWorkshop();
   }
+}
+
+// Variante de openBackWikotWorkshop pour les workflows sans formulaire (lite + Codes Wikot).
+// On crée juste la conversation côté backend, on bascule en step='chat-only'.
+async function openBackWikotChatOnly() {
+  const body = {
+    mode: 'max',
+    workflow_mode: state.backWikotWorkflowMode,
+    target_kind: null,
+    target_id: null
+  };
+  const data = await api('/wikot/conversations', { method: 'POST', body: JSON.stringify(body) });
+  if (!data) return;
+  const s = wikotState('max');
+  s.currentConvId = data.id;
+  s.messages = [];
+  s.actions = [];
+  state.backWikotStep = 'chat-only';
+  render();
+  setTimeout(() => {
+    const input = document.getElementById('wikot-max-input');
+    if (input) input.focus();
+  }, 120);
 }
 
 // Charge toutes les procédures + sous-procédures pour la sélection cible
@@ -1313,30 +1391,50 @@ function renderBackWikotView() {
   const step = state.backWikotStep || 'home';
   if (step === 'select-target') return renderBackWikotSelectTarget();
   if (step === 'workshop') return renderBackWikotWorkshop();
+  if (step === 'chat-only') return renderBackWikotChatOnly();
   return renderBackWikotHome();
 }
 
 // --------------------------------------------
-// VUE 1 : HOME (4 gros boutons — stateless, plus d'historique)
+// VUE 1 : HOME (8 boutons d'entonnoir — 2 sections : Contenu + Pilotage)
 // --------------------------------------------
 function renderBackWikotHome() {
   // Mapping action → tag visuel (petit eyebrow + accent)
   const actionMeta = {
-    create_procedure: { tag: 'Créer', accent: 'create' },
-    update_procedure: { tag: 'Modifier', accent: 'update' },
-    create_info:      { tag: 'Créer', accent: 'create' },
-    update_info:      { tag: 'Modifier', accent: 'update' }
+    create_procedure:       { tag: 'Créer',    accent: 'create' },
+    update_procedure:       { tag: 'Modifier', accent: 'update' },
+    create_info:            { tag: 'Créer',    accent: 'create' },
+    update_info:            { tag: 'Modifier', accent: 'update' },
+    gerer_conversations:    { tag: 'Conseil',  accent: 'lite'   },
+    chercher_conversations: { tag: 'Conseil',  accent: 'lite'   },
+    gerer_taches:           { tag: 'Conseil',  accent: 'lite'   },
+    gerer_codes_wikot:      { tag: 'Édition',  accent: 'admin'  }
   };
 
   const buttonHtml = (key) => {
     const wf = BACK_WIKOT_WORKFLOWS[key];
+    if (!wf) return '';
     const enabled = userCanRunBackWikotWorkflow(key);
     const meta = actionMeta[key] || { tag: '', accent: 'create' };
-    // Accent : create = or palace, update = navy profond
-    const isCreate = meta.accent === 'create';
-    const iconBg = enabled ? (isCreate ? 'var(--c-gold)' : 'var(--c-navy)') : 'var(--c-cream-deep)';
-    const iconColor = enabled ? (isCreate ? 'var(--c-navy)' : 'var(--c-gold)') : 'rgba(15,27,40,0.3)';
-    const tagColor = isCreate ? 'var(--c-gold-deep)' : 'rgba(15,27,40,0.55)';
+    // Accent : create=or palace, update=navy, lite=cream-deep, admin=navy+gold
+    let iconBg, iconColor, tagColor;
+    if (!enabled) {
+      iconBg = 'var(--c-cream-deep)';
+      iconColor = 'rgba(15,27,40,0.3)';
+      tagColor = 'rgba(15,27,40,0.4)';
+    } else if (meta.accent === 'create') {
+      iconBg = 'var(--c-gold)'; iconColor = 'var(--c-navy)'; tagColor = 'var(--c-gold-deep)';
+    } else if (meta.accent === 'update') {
+      iconBg = 'var(--c-navy)'; iconColor = 'var(--c-gold)'; tagColor = 'rgba(15,27,40,0.55)';
+    } else if (meta.accent === 'lite') {
+      iconBg = 'var(--c-cream-deep)'; iconColor = 'var(--c-navy)'; tagColor = 'rgba(15,27,40,0.55)';
+    } else {
+      // admin → fond navy bordé d'or
+      iconBg = 'var(--c-navy)'; iconColor = 'var(--c-gold)'; tagColor = 'var(--c-gold-deep)';
+    }
+    const liteBadge = wf.isLite
+      ? `<span class="text-[9px] uppercase tracking-wider font-semibold ml-1.5 px-1.5 py-0.5 rounded" style="background: rgba(15,27,40,0.06); color: rgba(15,27,40,0.55);">Lite</span>`
+      : '';
 
     return `
       <button ${enabled ? `onclick="enterBackWikotWorkflow('${key}')"` : 'disabled'}
@@ -1346,7 +1444,9 @@ function renderBackWikotHome() {
           <i class="fas ${wf.icon} text-base sm:text-lg"></i>
         </div>
         <div class="min-w-0 flex-1">
-          <div class="text-[10px] uppercase tracking-[0.16em] font-semibold mb-0.5" style="color: ${tagColor};">${meta.tag}</div>
+          <div class="text-[10px] uppercase tracking-[0.16em] font-semibold mb-0.5 flex items-center" style="color: ${tagColor};">
+            ${meta.tag}${liteBadge}
+          </div>
           <div class="font-display text-sm sm:text-base font-semibold leading-tight" style="color: var(--c-navy);">${escapeHtml(wf.label)}</div>
           <div class="text-xs mt-1 leading-snug" style="color: rgba(15,27,40,0.55);">${escapeHtml(wf.description)}</div>
           ${!enabled ? '<div class="text-[11px] italic mt-1.5" style="color: #C84C3F;"><i class="fas fa-triangle-exclamation mr-1"></i>Permission requise</div>' : ''}
@@ -1356,6 +1456,15 @@ function renderBackWikotHome() {
     `;
   };
 
+  // Section eyebrow réutilisable
+  const sectionTitle = (eyebrow, title, subtitle) => `
+    <div class="mt-1">
+      <p class="section-eyebrow">${escapeHtml(eyebrow)}</p>
+      <h2 class="font-display text-base sm:text-lg font-semibold" style="color: var(--c-navy);">${escapeHtml(title)}</h2>
+      ${subtitle ? `<p class="text-xs mt-0.5" style="color: rgba(15,27,40,0.55);">${escapeHtml(subtitle)}</p>` : ''}
+    </div>
+  `;
+
   return `
     <div class="fade-in space-y-5 sm:space-y-6">
       <!-- Header premium -->
@@ -1364,19 +1473,29 @@ function renderBackWikotHome() {
           <i class="fas fa-pen-ruler text-base sm:text-lg"></i>
         </div>
         <div class="min-w-0">
-          <p class="section-eyebrow">Atelier de rédaction</p>
+          <p class="section-eyebrow">Atelier de rédaction et pilotage</p>
           <h1 class="font-display text-xl sm:text-2xl font-semibold" style="color: var(--c-navy);">Back Wikot</h1>
         </div>
       </div>
 
-      <p class="text-sm" style="color: rgba(15,27,40,0.6);">Choisis une action. Back Wikot te guide pour la rédiger pas à pas.</p>
+      <p class="text-sm" style="color: rgba(15,27,40,0.6);">Choisis une action. Back Wikot te guide pas à pas selon le contexte.</p>
 
-      <!-- Grille 4 actions premium (compactes, élégantes, cohérentes avec la DA palace) -->
+      <!-- Section 1 : Contenu (procédures + informations) -->
+      ${sectionTitle('Contenu', 'Procédures & informations', 'Rédige ou modifie le savoir-faire de ton hôtel.')}
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         ${buttonHtml('create_procedure')}
         ${buttonHtml('update_procedure')}
         ${buttonHtml('create_info')}
         ${buttonHtml('update_info')}
+      </div>
+
+      <!-- Section 2 : Pilotage (4 nouveaux modes) -->
+      ${sectionTitle('Pilotage', 'Discussion, tâches & accès', 'Conseils de structuration et édition directe des Codes Wikot.')}
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        ${buttonHtml('gerer_conversations')}
+        ${buttonHtml('chercher_conversations')}
+        ${buttonHtml('gerer_taches')}
+        ${buttonHtml('gerer_codes_wikot')}
       </div>
     </div>
   `;
@@ -1694,6 +1813,129 @@ function renderBackWikotWorkshop() {
 
 // STATELESS : plus d'historique. Stub conservé au cas où un onclick résiduel l'appelle.
 function toggleBackWikotHistorySidebar() { /* no-op */ }
+
+// --------------------------------------------
+// VUE 3 BIS : CHAT-ONLY (workflows lite + Codes Wikot, sans formulaire)
+// 4 workflows concernés :
+//  - gerer_conversations (lite, conseil)
+//  - chercher_conversations (lite, conseil)
+//  - gerer_taches (lite, conseil)
+//  - gerer_codes_wikot (édition directe via tools backend)
+// --------------------------------------------
+function renderBackWikotChatOnly() {
+  const wfMode = state.backWikotWorkflowMode;
+  const wf = BACK_WIKOT_WORKFLOWS[wfMode];
+  if (!wf) {
+    state.backWikotStep = 'home';
+    return renderBackWikotHome();
+  }
+  const s = wikotState('max');
+  const messages = s.messages || [];
+  const isLoading = s.loading;
+  const isSending = s.sending;
+
+  // Placeholder + intro adaptés au workflow
+  let placeholder = 'Décris ton besoin…';
+  let introTitle = 'Décris ton besoin';
+  let introText = 'Back Wikot va te répondre selon ce mode.';
+  let modeBadge = wf.isLite ? 'Mode conseil' : 'Édition directe';
+
+  if (wfMode === 'gerer_conversations') {
+    placeholder = 'Ex : « Je veux organiser un salon Réception avec 3 channels »';
+    introTitle = 'Organisons tes salons et channels';
+    introText = "Décris ton équipe et tes besoins de communication. Back Wikot te propose une structure prête à appliquer dans l'onglet Discussion.";
+  } else if (wfMode === 'chercher_conversations') {
+    placeholder = 'Ex : « Je cherche le message où Marie a parlé de la chaudière »';
+    introTitle = 'Affinons ta recherche';
+    introText = "Dis-moi ce que tu cherches dans l'historique. Back Wikot reformule en mots-clés efficaces à utiliser dans la barre de recherche.";
+  } else if (wfMode === 'gerer_taches') {
+    placeholder = 'Ex : « Tâche quotidienne : vérifier les minibars chaque matin »';
+    introTitle = 'Cadrons ta tâche';
+    introText = "Décris la tâche. Back Wikot te livre une fiche prête à recopier dans l'onglet Tâches (titre, récurrence, priorité, assignés).";
+  } else if (wfMode === 'gerer_codes_wikot') {
+    placeholder = 'Ex : « Mets le client Martin en chambre 12, départ le 15 mai »';
+    introTitle = 'Que veux-tu modifier ?';
+    introText = "Code hôtel, numéro de chambre, ou client courant : décris l'opération. Back Wikot l'effectue directement.";
+  }
+
+  // Couleur d'accent du header selon le mode
+  const isAdminEdit = wfMode === 'gerer_codes_wikot';
+  const headerIconBg = isAdminEdit ? 'var(--c-navy)' : 'var(--c-cream-deep)';
+  const headerIconColor = isAdminEdit ? 'var(--c-gold)' : 'var(--c-navy)';
+
+  return `
+    <div class="fade-in flex flex-col" style="height: calc(100vh - 8rem); max-height: calc(100vh - 8rem);">
+      <!-- Header -->
+      <div class="flex items-center justify-between mb-3 shrink-0 gap-2">
+        <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button onclick="backToBackWikotHome()" class="w-9 h-9 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 text-navy-600 flex items-center justify-center shrink-0">
+            <i class="fas fa-arrow-left"></i>
+          </button>
+          <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm" style="background:${headerIconBg}; color:${headerIconColor};">
+            <i class="fas ${wf.icon}"></i>
+          </div>
+          <div class="min-w-0">
+            <h1 class="font-display text-base sm:text-lg font-semibold truncate" style="color:var(--c-navy);">${escapeHtml(wf.label)}</h1>
+            <p class="text-[11px] truncate" style="color:rgba(15,27,40,0.55);">
+              <span class="inline-block px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-semibold mr-1" style="background:rgba(15,27,40,0.06);color:rgba(15,27,40,0.55);">${escapeHtml(modeBadge)}</span>
+              ${escapeHtml(wf.description)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Conteneur chat plein écran (pas de form à gauche) -->
+      <div class="flex-1 bg-white border border-gray-200 rounded-xl flex flex-col min-h-0 overflow-hidden">
+        <div id="wikot-max-messages" class="flex-1 overflow-y-auto p-4">
+          ${messages.length === 0 && !isLoading ? `
+            <div class="text-center py-10 max-w-md mx-auto">
+              <div class="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-xl mb-3 shadow-sm" style="background:${headerIconBg}; color:${headerIconColor};">
+                <i class="fas ${wf.icon}"></i>
+              </div>
+              <p class="font-display text-base font-semibold mb-1.5" style="color:var(--c-navy);">${escapeHtml(introTitle)}</p>
+              <p class="text-xs leading-relaxed" style="color:rgba(15,27,40,0.6);">${escapeHtml(introText)}</p>
+            </div>
+          ` : ''}
+          ${isLoading ? '<div class="flex justify-center items-center h-full text-navy-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement…</div>' : ''}
+          ${messages.map(m => renderWikotMessage(m, 'max')).join('')}
+          ${isSending ? `
+            <div class="flex justify-start mb-4">
+              <div class="flex gap-2">
+                <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs" style="background:${headerIconBg}; color:${headerIconColor};">
+                  <i class="fas ${wf.icon}"></i>
+                </div>
+                <div class="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                  <div class="flex gap-1">
+                    <div class="w-2 h-2 rounded-full animate-bounce" style="background:var(--c-gold);animation-delay: 0ms"></div>
+                    <div class="w-2 h-2 rounded-full animate-bounce" style="background:var(--c-gold);animation-delay: 150ms"></div>
+                    <div class="w-2 h-2 rounded-full animate-bounce" style="background:var(--c-gold);animation-delay: 300ms"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+        <div class="border-t border-gray-200 bg-white p-2 shrink-0">
+          <div class="flex items-end gap-2">
+            <textarea id="wikot-max-input" rows="1"
+              placeholder="${escapeHtml(placeholder)}"
+              oninput="autoResizeTextarea(this)"
+              onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('max');}"
+              ${isSending ? 'disabled' : ''}
+              class="form-input-mobile flex-1 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 resize-none max-h-32 text-sm"
+              style="--tw-ring-color:var(--c-gold);"></textarea>
+            ${renderVoiceWidget('staff', 'max')}
+            <button onclick="sendWikotMessage('max')" ${isSending ? 'disabled' : ''}
+              class="w-10 h-10 rounded-xl text-white flex items-center justify-center shrink-0 transition-colors disabled:bg-gray-300"
+              style="background:var(--c-navy);" title="Envoyer">
+              <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
 
 // Form procédure : titre, déclencheur, description, catégorie, étapes
 // Helper : retourne les classes CSS pour le highlight d'un champ récemment modifié par l'IA

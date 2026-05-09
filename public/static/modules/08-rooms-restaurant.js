@@ -1838,9 +1838,18 @@ function renderRestaurantView() {
   </div>`;
 }
 
+// Configuration centralisée des repas (icône, couleur, label) — réutilisée par dashboard + planning
+const MEAL_CONFIG = {
+  breakfast: { icon: 'fa-mug-hot',   label: 'Petit-déjeuner', short: 'Petit-déj', color: '#D4A056', bg: 'rgba(212,160,86,0.10)', border: 'rgba(212,160,86,0.30)' },
+  lunch:     { icon: 'fa-utensils',  label: 'Déjeuner',       short: 'Déjeuner',  color: '#C9A961', bg: 'rgba(201,169,97,0.12)', border: 'rgba(201,169,97,0.32)' },
+  dinner:    { icon: 'fa-wine-glass', label: 'Dîner',         short: 'Dîner',     color: '#8B5A8C', bg: 'rgba(139,90,140,0.10)', border: 'rgba(139,90,140,0.28)' }
+};
+const WEEKDAY_LABELS_FR = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+const WEEKDAY_SHORT_FR  = ['Dim',      'Lun',   'Mar',   'Mer',      'Jeu',   'Ven',      'Sam'];
+
 function renderRestaurantDashboard() {
   const d = state.restaurantDashboard;
-  if (!d) return '<div class="text-gray-500">Chargement...</div>';
+  if (!d) return `<div class="text-center py-12" style="color: rgba(15,27,40,0.55);"><i class="fas fa-spinner fa-spin text-2xl mb-2" style="color: var(--c-gold);"></i><p>Chargement...</p></div>`;
   const stats = d.stats || [];
   const cap = d.capacityMap || {};
   // Construire la liste de jours
@@ -1851,56 +1860,137 @@ function renderRestaurantDashboard() {
     days.push(dt.toISOString().slice(0, 10));
   }
   const meals = ['breakfast', 'lunch', 'dinner'];
-  const mealLabels = { breakfast: '☕ Petit-déj', lunch: '🍽️ Déjeuner', dinner: '🍷 Dîner' };
-  const mealColors = { breakfast: 'bg-amber-400', lunch: 'bg-orange-400', dinner: 'bg-rose-400' };
   // Index stats
   const statsMap = {};
   for (const s of stats) statsMap[`${s.reservation_date}|${s.meal_type}`] = s;
-  // Totaux
+  // Totaux & ratios globaux
   const totalGuests = stats.reduce((acc, s) => acc + parseInt(s.total_guests || 0), 0);
   const totalBookings = stats.reduce((acc, s) => acc + parseInt(s.bookings || 0), 0);
+  const totalCapacity = days.reduce((acc, day) => meals.reduce((a, m) => a + (cap[`${day}|${m}`] || 0), acc), 0);
+  const fillRate = totalCapacity > 0 ? Math.round((totalGuests / totalCapacity) * 100) : 0;
+  const avgPerBooking = totalBookings > 0 ? (totalGuests / totalBookings).toFixed(1) : '—';
+
+  // Top jour (le plus rempli en %)
+  let bestDay = null, bestRatio = -1;
+  for (const day of days) {
+    let g = 0, c = 0;
+    for (const m of meals) { g += parseInt(statsMap[`${day}|${m}`]?.total_guests || 0); c += cap[`${day}|${m}`] || 0; }
+    if (c > 0 && g / c > bestRatio) { bestRatio = g / c; bestDay = day; }
+  }
+  const bestDayLabel = bestDay
+    ? new Date(bestDay + 'T00:00:00Z').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })
+    : '—';
+
+  // Format période avec icônes
+  const fromLabel = new Date(d.from + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const toLabel = new Date(d.to + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 
   return `
-  <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-    <div class="card-premium p-4" style="border-left: 3px solid var(--c-gold);">
-      <div class="section-eyebrow">Période</div>
-      <div class="font-display text-sm font-semibold mt-1" style="color: var(--c-navy);">${d.from} → ${d.to}</div>
+  <!-- KPI cards premium : 4 stats principales en hero -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+    <div class="rounded-xl p-4 relative overflow-hidden" style="background: linear-gradient(135deg, var(--c-navy) 0%, #1a2b45 100%); color: #fff;">
+      <div class="absolute top-2 right-2 opacity-20"><i class="fas fa-calendar-week text-3xl"></i></div>
+      <div class="text-[10px] uppercase tracking-[0.18em] opacity-70 mb-1">Période</div>
+      <div class="font-display text-base sm:text-lg font-semibold leading-tight">${fromLabel}<span class="opacity-50 mx-1">→</span>${toLabel}</div>
+      <div class="text-[11px] mt-1" style="color: var(--c-gold);">${days.length} jours</div>
     </div>
-    <div class="card-premium p-4" style="border-left: 3px solid var(--c-navy);">
-      <div class="section-eyebrow">Réservations</div>
-      <div class="font-display text-2xl font-bold mt-1" style="color: var(--c-navy);">${totalBookings}</div>
+    <div class="rounded-xl p-4 relative overflow-hidden" style="background: #fff; border: 1px solid var(--c-line-strong); box-shadow: 0 1px 3px rgba(10,22,40,0.04);">
+      <div class="absolute top-2 right-2" style="color: rgba(201,169,97,0.18);"><i class="fas fa-clipboard-list text-3xl"></i></div>
+      <div class="text-[10px] uppercase tracking-[0.18em] mb-1" style="color: rgba(15,27,40,0.5);">Réservations</div>
+      <div class="font-display text-3xl font-bold" style="color: var(--c-navy);">${totalBookings}</div>
+      <div class="text-[11px] mt-1" style="color: rgba(15,27,40,0.5);">${avgPerBooking} couverts/rés.</div>
     </div>
-    <div class="card-premium p-4" style="border-left: 3px solid var(--c-gold-deep);">
-      <div class="section-eyebrow">Couverts totaux</div>
-      <div class="font-display text-2xl font-bold mt-1" style="color: var(--c-navy);">${totalGuests}</div>
+    <div class="rounded-xl p-4 relative overflow-hidden" style="background: #fff; border: 1px solid var(--c-line-strong); box-shadow: 0 1px 3px rgba(10,22,40,0.04);">
+      <div class="absolute top-2 right-2" style="color: rgba(201,169,97,0.18);"><i class="fas fa-users text-3xl"></i></div>
+      <div class="text-[10px] uppercase tracking-[0.18em] mb-1" style="color: rgba(15,27,40,0.5);">Couverts</div>
+      <div class="font-display text-3xl font-bold" style="color: var(--c-navy);">${totalGuests}</div>
+      <div class="text-[11px] mt-1" style="color: rgba(15,27,40,0.5);">sur ${totalCapacity || '—'} places</div>
+    </div>
+    <div class="rounded-xl p-4 relative overflow-hidden" style="background: linear-gradient(135deg, rgba(201,169,97,0.10) 0%, rgba(201,169,97,0.03) 100%); border: 1px solid var(--c-gold);">
+      <div class="absolute top-2 right-2" style="color: rgba(201,169,97,0.30);"><i class="fas fa-chart-pie text-3xl"></i></div>
+      <div class="text-[10px] uppercase tracking-[0.18em] mb-1" style="color: var(--c-gold-deep);">Remplissage</div>
+      <div class="font-display text-3xl font-bold" style="color: var(--c-navy);">${fillRate}<span class="text-base font-medium" style="color: rgba(15,27,40,0.45);">%</span></div>
+      ${bestDay ? `<div class="text-[11px] mt-1 truncate" style="color: rgba(15,27,40,0.5);" title="Meilleur jour : ${bestDayLabel}"><i class="fas fa-trophy text-[9px] mr-1" style="color: var(--c-gold);"></i>${bestDayLabel}</div>` : '<div class="text-[11px] mt-1" style="color: rgba(15,27,40,0.4);">—</div>'}
     </div>
   </div>
-  <div class="space-y-3">
+
+  <!-- Légende des repas -->
+  <div class="flex flex-wrap items-center gap-2 mb-4">
+    ${meals.map(m => {
+      const c = MEAL_CONFIG[m];
+      return `<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium" style="background: ${c.bg}; color: ${c.color}; border: 1px solid ${c.border};">
+        <i class="fas ${c.icon} text-[10px]"></i>${c.short}
+      </span>`;
+    }).join('')}
+  </div>
+
+  <!-- Grille jour par jour : carte premium par jour avec 3 repas en colonnes -->
+  <div class="space-y-2.5">
     ${days.map(day => {
-      const dayName = new Date(day + 'T00:00:00Z').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+      const date = new Date(day + 'T00:00:00Z');
+      const weekday = WEEKDAY_LABELS_FR[date.getUTCDay()];
+      const dayNum = date.getUTCDate();
+      const monthShort = date.toLocaleDateString('fr-FR', { month: 'short', timeZone: 'UTC' });
+      const isToday = day === todayIsoStr();
+      // Total du jour
+      let dayGuests = 0, dayCap = 0, openCount = 0;
+      for (const m of meals) {
+        dayGuests += parseInt(statsMap[`${day}|${m}`]?.total_guests || 0);
+        const c = cap[`${day}|${m}`] || 0;
+        dayCap += c;
+        if (c > 0) openCount++;
+      }
+      const dayRatio = dayCap > 0 ? Math.round((dayGuests / dayCap) * 100) : 0;
       return `
-      <div class="border border-gray-200 rounded-lg p-3">
-        <div class="font-semibold text-navy-800 text-sm mb-2">${dayName}</div>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+      <div class="rounded-xl overflow-hidden transition-all hover:shadow-md" style="background: #fff; border: 1px solid ${isToday ? 'var(--c-gold)' : 'var(--c-line)'}; ${isToday ? 'box-shadow: 0 0 0 2px rgba(201,169,97,0.15);' : ''}">
+        <!-- Header jour -->
+        <div class="flex items-center justify-between gap-3 px-4 py-2.5" style="background: ${isToday ? 'rgba(201,169,97,0.06)' : 'var(--c-cream)'}; border-bottom: 1px solid var(--c-line);">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-11 h-11 rounded-lg flex flex-col items-center justify-center shrink-0" style="background: ${isToday ? 'var(--c-gold)' : 'var(--c-navy)'}; color: ${isToday ? 'var(--c-navy)' : 'var(--c-gold)'};">
+              <span class="text-[9px] uppercase tracking-wider font-semibold leading-none">${WEEKDAY_SHORT_FR[date.getUTCDay()]}</span>
+              <span class="font-display text-base font-bold leading-tight">${dayNum}</span>
+            </div>
+            <div class="min-w-0">
+              <div class="font-display font-semibold text-sm sm:text-base truncate" style="color: var(--c-navy);">${weekday} ${dayNum} ${monthShort}${isToday ? ' <span class="text-[10px] uppercase tracking-wider font-bold ml-1" style="color: var(--c-gold-deep);">aujourd\\'hui</span>' : ''}</div>
+              <div class="text-[11px]" style="color: rgba(15,27,40,0.55);">${openCount}/3 services ouverts</div>
+            </div>
+          </div>
+          <div class="text-right shrink-0">
+            <div class="font-display text-lg font-bold leading-tight" style="color: var(--c-navy);">${dayGuests}<span class="text-xs font-normal" style="color: rgba(15,27,40,0.4);">/${dayCap || '—'}</span></div>
+            <div class="text-[10px] uppercase tracking-wider" style="color: ${dayRatio >= 80 ? '#5C8A6E' : dayRatio >= 50 ? 'var(--c-gold-deep)' : 'rgba(15,27,40,0.45)'};">${dayCap > 0 ? dayRatio + '%' : 'fermé'}</div>
+          </div>
+        </div>
+        <!-- 3 repas en colonnes -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x" style="border-color: var(--c-line);">
           ${meals.map(m => {
+            const cfg = MEAL_CONFIG[m];
             const k = `${day}|${m}`;
             const s = statsMap[k];
             const guests = s ? parseInt(s.total_guests) : 0;
+            const bookings = s ? parseInt(s.bookings) : 0;
             const capacity = cap[k] || 0;
             const ratio = capacity > 0 ? Math.min(100, (guests / capacity) * 100) : 0;
             const isClosed = capacity === 0;
+            const ratioColor = ratio >= 80 ? '#5C8A6E' : ratio >= 50 ? cfg.color : 'rgba(15,27,40,0.35)';
             return `
-            <div class="rounded p-2.5 ${isClosed ? 'opacity-50' : ''}" style="background: var(--c-cream-deep);">
-              <div class="flex items-center justify-between text-xs">
-                <span class="font-medium" style="color: var(--c-navy);">${mealLabels[m]}</span>
-                <span style="color: rgba(15,27,40,0.6);">${guests}/${capacity || '—'}</span>
+            <div class="p-3 ${isClosed ? 'opacity-60' : ''}">
+              <div class="flex items-center justify-between mb-2">
+                <span class="inline-flex items-center gap-1.5 text-xs font-semibold" style="color: ${cfg.color};">
+                  <i class="fas ${cfg.icon} text-[11px]"></i>${cfg.short}
+                </span>
+                ${isClosed
+                  ? '<span class="text-[10px] uppercase tracking-wider font-medium" style="color: rgba(15,27,40,0.4);">Fermé</span>'
+                  : `<span class="text-[11px] font-semibold" style="color: var(--c-navy);">${guests}<span class="font-normal" style="color: rgba(15,27,40,0.4);">/${capacity}</span></span>`}
               </div>
-              ${isClosed ? '<div class="text-[10px] italic mt-1" style="color: rgba(15,27,40,0.4);">Fermé</div>' : `
-              <div class="w-full rounded-full h-1.5 mt-1.5" style="background: rgba(15,27,40,0.10);">
-                <div class="h-1.5 rounded-full transition-all" style="width: ${ratio}%; background: var(--c-gold);"></div>
-              </div>
-              <div class="text-[10px] mt-0.5" style="color: rgba(15,27,40,0.5);">${Math.round(ratio)}% rempli</div>
-              `}
+              ${!isClosed ? `
+                <div class="w-full rounded-full h-1.5 overflow-hidden" style="background: rgba(15,27,40,0.06);">
+                  <div class="h-full rounded-full transition-all" style="width: ${ratio}%; background: ${ratioColor};"></div>
+                </div>
+                <div class="flex items-center justify-between mt-1.5 text-[10px]" style="color: rgba(15,27,40,0.5);">
+                  <span><i class="fas fa-clipboard-check text-[9px] mr-1"></i>${bookings} rés.</span>
+                  <span style="color: ${ratioColor}; font-weight: 600;">${Math.round(ratio)}%</span>
+                </div>
+              ` : '<div class="text-[10px] italic mt-1" style="color: rgba(15,27,40,0.35);">Service non programmé</div>'}
             </div>`;
           }).join('')}
         </div>
@@ -1957,41 +2047,145 @@ function renderRestaurantReservations() {
 
 function renderRestaurantSchedule() {
   const sched = state.restaurantSchedule || [];
-  const days = ['Dim.', 'Lun.', 'Mar.', 'Mer.', 'Jeu.', 'Ven.', 'Sam.'];
-  const mealLabels = { breakfast: '☕ Petit-déj', lunch: '🍽️ Déjeuner', dinner: '🍷 Dîner' };
   const meals = ['breakfast', 'lunch', 'dinner'];
+  // Réorganisation : Lun-Dim au lieu de Dim-Sam (cohérence FR)
+  const orderedDays = [1, 2, 3, 4, 5, 6, 0];
   const map = {};
   for (const s of sched) map[`${s.weekday}|${s.meal_type}`] = s;
   const canEdit = userCanEditRestaurant();
+
+  // Stats rapides : nb services ouverts par jour, capacité totale semaine
+  let totalServicesOpen = 0;
+  let totalCapacity = 0;
+  for (const wd of orderedDays) {
+    for (const m of meals) {
+      const s = map[`${wd}|${m}`];
+      if (s && s.is_open) { totalServicesOpen++; totalCapacity += parseInt(s.capacity || 0); }
+    }
+  }
+
   return `
-  <p class="text-sm text-gray-500 mb-3">Planning hebdomadaire — ouverture, horaires et capacités par défaut.</p>
-  <div class="space-y-3">
-    ${days.map((dayName, weekday) => `
-      <div class="border border-gray-200 rounded-lg p-3">
-        <div class="font-semibold text-navy-800 text-sm mb-2">${dayName}</div>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+  <!-- Header explicatif premium -->
+  <div class="rounded-xl p-4 mb-5 flex items-start gap-3" style="background: linear-gradient(135deg, rgba(201,169,97,0.06) 0%, rgba(201,169,97,0.02) 100%); border: 1px solid var(--c-line);">
+    <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style="background: var(--c-gold); color: var(--c-navy);">
+      <i class="fas fa-calendar-week text-sm"></i>
+    </div>
+    <div class="flex-1 min-w-0">
+      <p class="font-display text-sm font-semibold mb-0.5" style="color: var(--c-navy);">Planning hebdomadaire par défaut</p>
+      <p class="text-xs leading-snug" style="color: rgba(15,27,40,0.6);">Définis ici les horaires &amp; capacités de chaque service. Pour des changements ponctuels (jour férié, événement), utilise l'onglet <strong>Exceptions</strong>.</p>
+    </div>
+    <div class="hidden sm:flex items-center gap-3 shrink-0">
+      <div class="text-right">
+        <div class="text-[9px] uppercase tracking-wider font-semibold" style="color: rgba(15,27,40,0.5);">Services ouverts</div>
+        <div class="font-display text-lg font-bold" style="color: var(--c-navy);">${totalServicesOpen}<span class="text-xs font-normal" style="color: rgba(15,27,40,0.4);">/21</span></div>
+      </div>
+      <div class="w-px h-10" style="background: var(--c-line);"></div>
+      <div class="text-right">
+        <div class="text-[9px] uppercase tracking-wider font-semibold" style="color: rgba(15,27,40,0.5);">Capacité semaine</div>
+        <div class="font-display text-lg font-bold" style="color: var(--c-gold-deep);">${totalCapacity}<span class="text-xs font-normal" style="color: rgba(15,27,40,0.4);"> pl.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Légende des repas -->
+  <div class="flex flex-wrap items-center gap-2 mb-4">
+    ${meals.map(m => {
+      const c = MEAL_CONFIG[m];
+      return `<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium" style="background: ${c.bg}; color: ${c.color}; border: 1px solid ${c.border};">
+        <i class="fas ${c.icon} text-[10px]"></i>${c.short}
+      </span>`;
+    }).join('')}
+  </div>
+
+  <!-- Grille planning premium -->
+  <div class="space-y-2.5">
+    ${orderedDays.map(weekday => {
+      const dayName = WEEKDAY_LABELS_FR[weekday];
+      const dayShort = WEEKDAY_SHORT_FR[weekday];
+      // Compteur des services ouverts ce jour
+      let openMeals = 0;
+      for (const m of meals) if (map[`${weekday}|${m}`]?.is_open) openMeals++;
+      const allClosed = openMeals === 0;
+      return `
+      <div class="rounded-xl overflow-hidden ${allClosed ? '' : 'transition-all hover:shadow-md'}" style="background: #fff; border: 1px solid var(--c-line);">
+        <!-- Header jour -->
+        <div class="flex items-center justify-between gap-3 px-4 py-2.5" style="background: var(--c-cream); border-bottom: 1px solid var(--c-line);">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style="background: ${allClosed ? 'rgba(15,27,40,0.06)' : 'var(--c-navy)'}; color: ${allClosed ? 'rgba(15,27,40,0.4)' : 'var(--c-gold)'};">
+              <span class="text-[11px] uppercase tracking-wider font-bold">${dayShort}</span>
+            </div>
+            <div class="min-w-0">
+              <div class="font-display font-semibold text-sm sm:text-base" style="color: var(--c-navy);">${dayName}</div>
+              <div class="text-[11px]" style="color: ${allClosed ? '#C84C3F' : 'rgba(15,27,40,0.55)'};">
+                ${allClosed ? '<i class="fas fa-circle-xmark mr-1"></i>Fermé toute la journée' : `${openMeals}/3 service${openMeals > 1 ? 's' : ''} ouvert${openMeals > 1 ? 's' : ''}`}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3 repas en colonnes -->
+        <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x" style="border-color: var(--c-line);">
           ${meals.map(m => {
+            const cfg = MEAL_CONFIG[m];
             const s = map[`${weekday}|${m}`];
-            if (!s) return `<div class="bg-gray-50 rounded p-2 text-xs text-gray-400">${mealLabels[m]} — non configuré</div>`;
+            if (!s) return `
+              <div class="p-3.5 text-center" style="background: rgba(15,27,40,0.02);">
+                <div class="inline-flex items-center gap-1.5 text-xs mb-1" style="color: rgba(15,27,40,0.45);">
+                  <i class="fas ${cfg.icon} text-[11px]"></i>${cfg.short}
+                </div>
+                <div class="text-[11px] italic" style="color: rgba(15,27,40,0.35);">Non configuré</div>
+              </div>`;
+            const isOpen = !!s.is_open;
             return `
-            <div class="bg-gray-50 rounded p-3">
-              <div class="flex items-center justify-between text-xs font-medium mb-2">
-                <span>${mealLabels[m]}</span>
-                <label class="flex items-center gap-1 text-[10px]">
-                  <input type="checkbox" ${s.is_open ? 'checked' : ''} ${canEdit ? '' : 'disabled'} onchange="updateScheduleField(${s.id}, 'is_open', this.checked ? 1 : 0)">
-                  Ouvert
+            <div class="p-3.5 ${isOpen ? '' : 'opacity-60'}">
+              <!-- Tête : repas + toggle ouvert/fermé -->
+              <div class="flex items-center justify-between mb-3">
+                <span class="inline-flex items-center gap-1.5 text-sm font-semibold" style="color: ${cfg.color};">
+                  <i class="fas ${cfg.icon} text-xs"></i>${cfg.short}
+                </span>
+                <label class="inline-flex items-center cursor-pointer ${canEdit ? '' : 'pointer-events-none opacity-50'}" title="${isOpen ? 'Service ouvert' : 'Service fermé'}">
+                  <input type="checkbox" ${isOpen ? 'checked' : ''} ${canEdit ? '' : 'disabled'} class="sr-only peer" onchange="updateScheduleField(${s.id}, 'is_open', this.checked ? 1 : 0); render();">
+                  <div class="relative w-9 h-5 rounded-full transition-colors" style="background: ${isOpen ? cfg.color : 'rgba(15,27,40,0.20)'};">
+                    <div class="absolute top-0.5 ${isOpen ? 'left-[18px]' : 'left-0.5'} w-4 h-4 bg-white rounded-full shadow-sm transition-all"></div>
+                  </div>
                 </label>
               </div>
-              <div class="grid grid-cols-3 gap-1 text-xs">
-                <input type="time" value="${s.open_time || ''}" ${canEdit ? '' : 'disabled'} onchange="updateScheduleField(${s.id}, 'open_time', this.value)" class="px-1 py-1 border rounded text-[11px]" placeholder="Début">
-                <input type="time" value="${s.close_time || ''}" ${canEdit ? '' : 'disabled'} onchange="updateScheduleField(${s.id}, 'close_time', this.value)" class="px-1 py-1 border rounded text-[11px]" placeholder="Fin">
-                <input type="number" min="0" value="${s.capacity || 0}" ${canEdit ? '' : 'disabled'} onchange="updateScheduleField(${s.id}, 'capacity', parseInt(this.value)||0)" class="px-1 py-1 border rounded text-[11px]" placeholder="Cap.">
+
+              <!-- Horaires : 2 inputs côte à côte avec icône -->
+              <div class="grid grid-cols-2 gap-2 mb-2">
+                <div class="relative">
+                  <label class="block text-[9px] uppercase tracking-wider font-semibold mb-0.5" style="color: rgba(15,27,40,0.5);">Ouverture</label>
+                  <input type="time" value="${s.open_time || ''}" ${canEdit && isOpen ? '' : 'disabled'}
+                    onchange="updateScheduleField(${s.id}, 'open_time', this.value)"
+                    class="w-full px-2 py-1.5 rounded-lg text-xs font-mono outline-none transition-all"
+                    style="background: ${isOpen ? '#fff' : 'rgba(15,27,40,0.03)'}; border: 1px solid var(--c-line-strong); color: var(--c-navy);">
+                </div>
+                <div>
+                  <label class="block text-[9px] uppercase tracking-wider font-semibold mb-0.5" style="color: rgba(15,27,40,0.5);">Fermeture</label>
+                  <input type="time" value="${s.close_time || ''}" ${canEdit && isOpen ? '' : 'disabled'}
+                    onchange="updateScheduleField(${s.id}, 'close_time', this.value)"
+                    class="w-full px-2 py-1.5 rounded-lg text-xs font-mono outline-none transition-all"
+                    style="background: ${isOpen ? '#fff' : 'rgba(15,27,40,0.03)'}; border: 1px solid var(--c-line-strong); color: var(--c-navy);">
+                </div>
+              </div>
+
+              <!-- Capacité avec icône users -->
+              <div>
+                <label class="block text-[9px] uppercase tracking-wider font-semibold mb-0.5" style="color: rgba(15,27,40,0.5);">Capacité</label>
+                <div class="relative">
+                  <i class="fas fa-users absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px]" style="color: rgba(15,27,40,0.35);"></i>
+                  <input type="number" min="0" value="${s.capacity || 0}" ${canEdit && isOpen ? '' : 'disabled'}
+                    onchange="updateScheduleField(${s.id}, 'capacity', parseInt(this.value)||0)"
+                    class="w-full pl-7 pr-2 py-1.5 rounded-lg text-xs font-semibold outline-none transition-all"
+                    style="background: ${isOpen ? '#fff' : 'rgba(15,27,40,0.03)'}; border: 1px solid var(--c-line-strong); color: var(--c-navy);">
+                  <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[10px]" style="color: rgba(15,27,40,0.4);">places</span>
+                </div>
               </div>
             </div>`;
           }).join('')}
         </div>
-      </div>
-    `).join('')}
+      </div>`;
+    }).join('')}
   </div>`;
 }
 

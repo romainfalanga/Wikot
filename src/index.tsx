@@ -2395,18 +2395,167 @@ Rappel : tu modifies le formulaire en temps réel via update_form. L'utilisateur
   }
 
   // ============================================
+  // NOUVEAU WORKFLOW : GÉRER LES CONVERSATIONS (mode lite, conseil)
+  // ============================================
+  if (workflowMode === 'gerer_conversations') {
+    return `Tu es **Back Wikot**, conseiller pour la **gestion des espaces de discussion** du **${hotelName}**.
+
+## Ta mission UNIQUE pour cette session
+Aider l'utilisateur à organiser les salons et channels de l'application Wikot de l'hôtel : décider quels salons créer, comment les structurer, comment les nommer, qui doit y avoir accès.
+
+## Comment tu agis
+- Tu **conseilles** et tu **clarifies**. Tu ne crées pas directement les salons (l'utilisateur le fera ensuite manuellement dans l'onglet Discussion).
+- Tu poses 1 ou 2 questions ciblées : équipes concernées (réception, restaurant, housekeeping…), volume d'échanges attendu, sujets séparés ou regroupés.
+- Tu proposes une **structure concrète** : nom de salon, channels internes, qui y a accès, exemple de premier message.
+- Si l'utilisateur veut renommer ou réorganiser un salon existant, tu suggères une nouvelle arborescence claire.
+
+## Style de réponse
+- Bullet points serrés, formats prêts à copier (ex: "Salon : « Réception » → channels : #planning, #consignes, #incidents").
+- Phrases courtes. Aucune introduction pompeuse.
+- À la fin, tu rappelles à l'utilisateur que la création concrète se fait dans l'onglet **Discussion** de l'application.
+
+${styleRules}
+
+## Arborescence actuelle de l'hôtel (pour comprendre la taille de l'équipe)
+${arborescence}
+${formContextStr}
+
+Rappel : tu es un conseiller en organisation. Tu ne crées rien en base. Tu donnes une structure claire que l'utilisateur appliquera en 2 clics.`
+  }
+
+  // ============================================
+  // NOUVEAU WORKFLOW : CHERCHER DANS LES CONVERSATIONS (mode lite)
+  // ============================================
+  if (workflowMode === 'chercher_conversations') {
+    return `Tu es **Back Wikot**, assistant de **recherche dans l'historique des messages** du **${hotelName}**.
+
+## Ta mission UNIQUE pour cette session
+Aider l'utilisateur à formuler une recherche précise dans l'historique des conversations de l'application Wikot, et à interpréter ce qu'il pourrait y trouver.
+
+## Comment tu agis
+- Pour l'instant, tu n'as **pas accès direct** à l'historique des messages (la fonctionnalité est en cours de branchement).
+- Tu **reformules** la recherche de l'utilisateur en mots-clés efficaces : qui, quoi, quand, dans quel salon.
+- Tu **proposes plusieurs angles** : recherche par auteur, par date, par mot-clé métier, par salon.
+- Tu rappelles ensuite à l'utilisateur d'aller utiliser la **barre de recherche dans l'onglet Discussion** avec les mots-clés que tu lui as suggérés.
+
+## Style de réponse
+- Une liste numérotée de mots-clés ou requêtes prêtes à coller.
+- Une phrase courte par option pour expliquer ce qu'elle ramènera.
+- Pas de baratin.
+
+${styleRules}
+${formContextStr}
+
+Rappel : tu es un coach de recherche, pas un moteur de recherche. Donne des requêtes propres et oriente vers la barre de recherche.`
+  }
+
+  // ============================================
+  // NOUVEAU WORKFLOW : GÉRER LES TÂCHES (mode lite, conseil)
+  // ============================================
+  if (workflowMode === 'gerer_taches') {
+    return `Tu es **Back Wikot**, conseiller pour la **gestion des tâches** du **${hotelName}**.
+
+## Ta mission UNIQUE pour cette session
+Aider l'utilisateur à formuler, structurer et planifier des tâches : qui fait quoi, quand, à quelle fréquence, avec quelle priorité. Le but est qu'il aille ensuite créer ces tâches dans l'onglet **Tâches** de l'application.
+
+## Comment tu agis
+- Tu poses 1 ou 2 questions ciblées : nature de la tâche (ponctuelle, quotidienne, hebdomadaire, mensuelle), équipe concernée, durée estimée, priorité.
+- Tu proposes une **fiche tâche prête à copier** :
+  • Titre court (verbe à l'impératif + complément)
+  • Description en 1 ou 2 phrases concrètes
+  • Récurrence (aucune / quotidienne / hebdomadaire jour X / mensuelle jour X)
+  • Priorité (basse / normale / haute)
+  • Durée estimée (en minutes)
+  • Assignés (rôles métier : réception, serveur, housekeeping, etc.)
+- Si l'utilisateur veut décomposer une grosse tâche, tu proposes plusieurs sous-tâches courtes.
+
+## Style de réponse
+- Format fiche structuré, scannable, prêt à recopier dans le formulaire Tâche.
+- Aucune introduction pompeuse.
+- À la fin, tu rappelles que la création concrète se fait dans l'onglet **Tâches**.
+
+${styleRules}
+${formContextStr}
+
+Rappel : tu es un coach d'organisation. Tu produis une fiche tâche propre que l'utilisateur enregistrera lui-même dans l'onglet Tâches.`
+  }
+
+  // ============================================
+  // NOUVEAU WORKFLOW : CODES WIKOT (mode complet avec tools)
+  // → Modifier nom de chambres, clients dans chaque chambre, code hôtel
+  // ============================================
+  if (workflowMode === 'gerer_codes_wikot') {
+    // Récupère un état lisible des Codes Wikot pour donner du contexte au modèle
+    let codesState = ''
+    try {
+      const hotelRow = await db.prepare('SELECT id, name, client_login_code FROM hotels WHERE id = ?').bind(user.hotel_id).first<any>()
+      const roomsRows = await db.prepare(`
+        SELECT r.id, r.room_number, r.floor, r.capacity,
+               ca.guest_name, ca.checkout_date, ca.is_active as client_active
+        FROM rooms r
+        LEFT JOIN client_accounts ca ON ca.room_id = r.id
+        WHERE r.hotel_id = ? AND r.is_active = 1
+        ORDER BY r.sort_order, r.room_number
+        LIMIT 100
+      `).bind(user.hotel_id).all()
+      const codeStr = hotelRow?.client_login_code ? String(hotelRow.client_login_code) : '(non défini)'
+      codesState = `\n## Codes Wikot actuels\n- **Code hôtel client** : ${codeStr}\n- **Chambres actives** (${(roomsRows.results as any[]).length}) :\n`
+      for (const r of (roomsRows.results as any[])) {
+        const guest = r.guest_name ? `« ${r.guest_name} »` : '(libre)'
+        codesState += `  • Chambre #${r.id} n° ${r.room_number}${r.floor ? ` (étage ${r.floor})` : ''} : ${guest}${r.checkout_date ? ` jusqu'au ${r.checkout_date}` : ''}\n`
+      }
+    } catch {}
+
+    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **gestion des Codes Wikot** du **${hotelName}**.
+
+## Ta mission UNIQUE pour cette session
+Aider l'utilisateur à modifier les éléments qui contrôlent l'accès client à l'application :
+1. Le **code hôtel client** (utilisé par les clients pour se connecter à leur chambre).
+2. Les **numéros de chambre** (renommage).
+3. Le **client courant** dans une chambre (nom du client, date de checkout) ou libérer une chambre.
+
+## Comment tu agis
+- Tu utilises les tools dédiés (\`set_hotel_code\`, \`rename_room\`, \`set_room_guest\`, \`clear_room_guest\`).
+- Tu confirmes TOUJOURS l'intention avant d'appeler un tool. Si l'utilisateur dit "renomme la 12 en 14", tu vérifies qu'il n'y a pas déjà une chambre 14, sinon tu lui demandes ce qu'il veut faire.
+- Pour le **code hôtel** : il doit faire entre 4 et 12 caractères, lettres+chiffres+majuscules. Tu le mets automatiquement en majuscules.
+- Pour le **nom du client** : tu prends ce que dit l'utilisateur tel quel, sans inventer. Si la date de checkout est absente, tu la demandes (format JJ/MM/AAAA, tu la convertis en YYYY-MM-DD).
+- Pour **renommer une chambre** : tu vérifies que le nouveau numéro n'existe pas déjà.
+
+## Tu ne fais QUE ça
+- Tu ne crées pas de nouvelle chambre (c'est l'onglet Codes Wikot qui le fait).
+- Tu ne supprimes pas de chambre.
+- Tu ne réponds pas aux questions générales.
+
+## Style de réponse
+- 1 phrase courte pour confirmer ce que tu vas faire.
+- Tu appelles le tool.
+- 1 phrase courte après le tool pour confirmer ce qui est fait.
+- Aucune introduction pompeuse, aucun récap inutile.
+
+${styleRules}
+${codesState}
+${formContextStr}
+
+Rappel : tu écris en base directement via les tools. Confirme l'intention si elle est ambiguë avant d'agir.`
+  }
+
+  // ============================================
   // FALLBACK : pas de workflow_mode (entrée Back Wikot sans workflow choisi)
-  // → Demander à l'utilisateur de choisir un des 4 boutons d'entonnoir
+  // → Demander à l'utilisateur de choisir un des boutons d'entonnoir
   // ============================================
   return `Tu es **Back Wikot**, agent de rédaction et d'édition pour le **${hotelName}**.
 
-Tu fais EXACTEMENT 4 choses, et rien d'autre :
+Tu fais EXACTEMENT ces choses, et rien d'autre :
 1. Créer une procédure
 2. Modifier une procédure
 3. Créer une information
 4. Modifier une information
+5. Conseiller sur la gestion des conversations
+6. Conseiller sur la recherche dans les conversations
+7. Conseiller sur la création/gestion des tâches
+8. Modifier les Codes Wikot (code hôtel, chambres, clients)
 
-Si l'utilisateur t'écrit sans avoir choisi un de ces 4 workflows, demande-lui poliment de cliquer sur l'un des 4 boutons d'entonnoir affichés à l'écran ("Créer une procédure", "Modifier une procédure", "Créer une information", "Modifier une information"). Reste très bref.
+Si l'utilisateur t'écrit sans avoir choisi un workflow, demande-lui poliment de cliquer sur l'un des boutons d'entonnoir affichés à l'écran. Reste très bref.
 
 ${styleRules}`
 }
@@ -2601,6 +2750,73 @@ RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond pl
             content: { type: 'string', description: 'Contenu structuré, factuel, scannable. Listes à puces avec •, gras avec **. Pas d\'introduction ni de conclusion.' },
             category_id: { type: 'integer', description: 'ID de la catégorie d\'information' }
           }
+        }
+      }
+    })
+  }
+
+  // ============================================
+  // WORKFLOW : CODES WIKOT (édition directe en base)
+  // Tools : set_hotel_code, rename_room, set_room_guest, clear_room_guest
+  // Permission : admin du hôtel uniquement (vérifié côté exécution)
+  // ============================================
+  if (workflowMode === 'gerer_codes_wikot') {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'set_hotel_code',
+        description: 'Modifie le code hôtel utilisé par les clients pour se connecter à leur chambre. Le code est automatiquement mis en majuscules. Doit faire entre 4 et 12 caractères alphanumériques.',
+        parameters: {
+          type: 'object',
+          properties: {
+            code: { type: 'string', description: 'Nouveau code hôtel (4 à 12 caractères alphanumériques)' }
+          },
+          required: ['code']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'rename_room',
+        description: 'Renomme une chambre (change son numéro). Échoue si une autre chambre porte déjà ce numéro.',
+        parameters: {
+          type: 'object',
+          properties: {
+            room_id: { type: 'integer', description: 'ID interne de la chambre à renommer' },
+            new_room_number: { type: 'string', description: 'Nouveau numéro de chambre (string, peut contenir des lettres : ex 102B)' }
+          },
+          required: ['room_id', 'new_room_number']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'set_room_guest',
+        description: 'Définit le client courant d\'une chambre : son nom (qui sert de mot de passe quotidien) et la date de checkout. Active le compte client.',
+        parameters: {
+          type: 'object',
+          properties: {
+            room_id: { type: 'integer', description: 'ID interne de la chambre' },
+            guest_name: { type: 'string', description: 'Nom du client (ex: "Martin")' },
+            checkout_date: { type: 'string', description: 'Date de départ au format YYYY-MM-DD (ex: 2026-05-12)' }
+          },
+          required: ['room_id', 'guest_name', 'checkout_date']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'clear_room_guest',
+        description: 'Libère une chambre : efface le nom du client et la date de checkout, désactive le compte client.',
+        parameters: {
+          type: 'object',
+          properties: {
+            room_id: { type: 'integer', description: 'ID interne de la chambre à libérer' }
+          },
+          required: ['room_id']
         }
       }
     })
@@ -2869,8 +3085,11 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   if (mode === 'max' && !userCanUseMaxMode(user)) {
     return c.json({ error: 'Back Wikot nécessite des droits d\'édition (procédures ou informations)' }, 403)
   }
-  // Workflow mode (Back Wikot uniquement) : create_procedure / update_procedure / create_info / update_info
-  const allowedWorkflows = ['create_procedure', 'update_procedure', 'create_info', 'update_info']
+  // Workflow mode (Back Wikot uniquement) : 4 workflows historiques + 4 nouveaux workflows
+  const allowedWorkflows = [
+    'create_procedure', 'update_procedure', 'create_info', 'update_info',
+    'gerer_conversations', 'chercher_conversations', 'gerer_taches', 'gerer_codes_wikot'
+  ]
   const workflowMode = (mode === 'max' && allowedWorkflows.includes(body.workflow_mode)) ? body.workflow_mode : null
   // Normalisation : le frontend peut envoyer 'info' ou 'info_item' → on stocke 'info_item' pour cohérence
   let rawTargetKind = body.target_kind
@@ -2884,6 +3103,10 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   else if (workflowMode === 'update_procedure') defaultTitle = 'Modification procédure'
   else if (workflowMode === 'create_info') defaultTitle = 'Création information'
   else if (workflowMode === 'update_info') defaultTitle = 'Modification information'
+  else if (workflowMode === 'gerer_conversations') defaultTitle = 'Conversations (gérer)'
+  else if (workflowMode === 'chercher_conversations') defaultTitle = 'Conversations (chercher)'
+  else if (workflowMode === 'gerer_taches') defaultTitle = 'Tâches'
+  else if (workflowMode === 'gerer_codes_wikot') defaultTitle = 'Codes Wikot'
 
   const r = await c.env.DB.prepare(`
     INSERT INTO wikot_conversations (hotel_id, user_id, title, mode, workflow_mode, target_kind, target_id)
@@ -3143,6 +3366,89 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
       else if (fnName.startsWith('propose_')) {
         proposalsCollected.push({ tool_name: fnName, args: fnArgs })
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, message: 'Proposition enregistrée, l\'utilisateur va voir un diff et pouvoir valider.' }) })
+      }
+      // === WORKFLOW CODES WIKOT : édition directe en base ===
+      // set_hotel_code / rename_room / set_room_guest / clear_room_guest
+      // Permission : admin de l'hôtel uniquement (super_admin ne joue pas de rôle hôtel ici)
+      else if (workflowMode === 'gerer_codes_wikot' && ['set_hotel_code', 'rename_room', 'set_room_guest', 'clear_room_guest'].includes(fnName)) {
+        const isAdminHotel = user.role === 'admin' && !!user.hotel_id
+        if (!isAdminHotel) {
+          oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: 'Permission refusée : seul l\'administrateur de l\'hôtel peut modifier les Codes Wikot.' }) })
+        } else {
+          let toolResult: any = { ok: false, error: 'Tool inconnu' }
+          try {
+            if (fnName === 'set_hotel_code') {
+              const code = String(fnArgs.code || '').trim().toUpperCase()
+              if (!/^[A-Z0-9]{4,12}$/.test(code)) {
+                toolResult = { ok: false, error: 'Code invalide (4 à 12 caractères alphanumériques en majuscules).' }
+              } else {
+                // Unicité globale du code client_login_code (un code par hôtel)
+                const dupe = await c.env.DB.prepare('SELECT id FROM hotels WHERE client_login_code = ? AND id <> ?').bind(code, user.hotel_id).first<any>()
+                if (dupe) {
+                  toolResult = { ok: false, error: 'Ce code est déjà utilisé par un autre hôtel.' }
+                } else {
+                  await c.env.DB.prepare('UPDATE hotels SET client_login_code = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(code, user.hotel_id).run()
+                  toolResult = { ok: true, hotel_code: code }
+                }
+              }
+            } else if (fnName === 'rename_room') {
+              const roomId = parseInt(String(fnArgs.room_id))
+              const newNumber = String(fnArgs.new_room_number || '').trim()
+              if (!roomId || !newNumber) {
+                toolResult = { ok: false, error: 'room_id et new_room_number requis.' }
+              } else {
+                const room = await c.env.DB.prepare('SELECT id, hotel_id, room_number FROM rooms WHERE id = ?').bind(roomId).first<any>()
+                if (!room || room.hotel_id !== user.hotel_id) {
+                  toolResult = { ok: false, error: 'Chambre introuvable dans cet hôtel.' }
+                } else {
+                  const dupe = await c.env.DB.prepare('SELECT id FROM rooms WHERE hotel_id = ? AND room_number = ? AND id <> ?').bind(user.hotel_id, newNumber, roomId).first<any>()
+                  if (dupe) {
+                    toolResult = { ok: false, error: `Une autre chambre porte déjà le numéro « ${newNumber} ».` }
+                  } else {
+                    await c.env.DB.prepare('UPDATE rooms SET room_number = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(newNumber, roomId).run()
+                    toolResult = { ok: true, room_id: roomId, old_number: room.room_number, new_number: newNumber }
+                  }
+                }
+              }
+            } else if (fnName === 'set_room_guest') {
+              const roomId = parseInt(String(fnArgs.room_id))
+              const guestName = String(fnArgs.guest_name || '').trim()
+              const checkout = String(fnArgs.checkout_date || '').trim()
+              if (!roomId || !guestName || !/^\d{4}-\d{2}-\d{2}$/.test(checkout)) {
+                toolResult = { ok: false, error: 'room_id, guest_name et checkout_date (YYYY-MM-DD) requis.' }
+              } else {
+                const room = await c.env.DB.prepare('SELECT id, hotel_id, room_number FROM rooms WHERE id = ?').bind(roomId).first<any>()
+                if (!room || room.hotel_id !== user.hotel_id) {
+                  toolResult = { ok: false, error: 'Chambre introuvable dans cet hôtel.' }
+                } else {
+                  const acc = await c.env.DB.prepare('SELECT id FROM client_accounts WHERE room_id = ?').bind(roomId).first<any>()
+                  if (acc) {
+                    await c.env.DB.prepare('UPDATE client_accounts SET guest_name = ?, checkout_date = ?, is_active = 1 WHERE id = ?').bind(guestName, checkout, acc.id).run()
+                  } else {
+                    await c.env.DB.prepare('INSERT INTO client_accounts (hotel_id, room_id, guest_name, checkout_date, is_active) VALUES (?, ?, ?, ?, 1)').bind(user.hotel_id, roomId, guestName, checkout).run()
+                  }
+                  toolResult = { ok: true, room_number: room.room_number, guest_name: guestName, checkout_date: checkout }
+                }
+              }
+            } else if (fnName === 'clear_room_guest') {
+              const roomId = parseInt(String(fnArgs.room_id))
+              if (!roomId) {
+                toolResult = { ok: false, error: 'room_id requis.' }
+              } else {
+                const room = await c.env.DB.prepare('SELECT id, hotel_id, room_number FROM rooms WHERE id = ?').bind(roomId).first<any>()
+                if (!room || room.hotel_id !== user.hotel_id) {
+                  toolResult = { ok: false, error: 'Chambre introuvable dans cet hôtel.' }
+                } else {
+                  await c.env.DB.prepare('UPDATE client_accounts SET guest_name = NULL, checkout_date = NULL, is_active = 0 WHERE room_id = ?').bind(roomId).run()
+                  toolResult = { ok: true, room_number: room.room_number, cleared: true }
+                }
+              }
+            }
+          } catch (e: any) {
+            toolResult = { ok: false, error: e?.message || 'Erreur serveur.' }
+          }
+          oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(toolResult) })
+        }
       }
       else {
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: 'Tool non reconnu' }) })

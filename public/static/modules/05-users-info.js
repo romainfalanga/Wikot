@@ -99,7 +99,12 @@ function renderUsersView() {
                 </div>
               </td>
               ${isSuperAdmin ? `<td class="py-3.5 px-5 text-sm" style="color: rgba(15,27,40,0.65);">${u.hotel_name ? escapeHtml(u.hotel_name) : '<span style="color: rgba(15,27,40,0.3);" class="italic">—</span>'}</td>` : ''}
-              <td class="py-3.5 px-5">${rolePill(u.role)}</td>
+              <td class="py-3.5 px-5">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  ${rolePill(u.role)}
+                  ${u.job_role ? `<span class="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1" style="background: rgba(201,169,97,0.12); color: var(--c-gold-deep); border: 1px solid rgba(201,169,97,0.25);"><i class="fas ${jobRoleIcon(u.job_role)} text-[9px]"></i>${jobRoleLabel(u.job_role) || u.job_role}</span>` : ''}
+                </div>
+              </td>
               <td class="py-3.5 px-5 text-xs" style="color: rgba(15,27,40,0.5);">${u.last_login ? formatDate(u.last_login) : 'Jamais'}</td>
               <td class="py-3.5 px-5">
                 <span class="w-2 h-2 rounded-full inline-block" style="background: ${u.is_active ? '#5C8A6E' : '#C84C3F'};"></span>
@@ -110,13 +115,19 @@ function renderUsersView() {
                 ${isEmployee ? permissionCheckboxes(u) : `<span class="text-xs italic" style="color: rgba(15,27,40,0.35);">${u.role === 'admin' ? 'Droits admin (complets)' : '—'}</span>`}
               </td>` : ''}
               <td class="py-3.5 px-5">
-                ${isSelf ? '<span class="text-xs italic" style="color: rgba(15,27,40,0.3);">—</span>' : `
+                <div class="flex items-center gap-1">
+                  <button onclick="showUserForm(${u.id})"
+                    class="w-8 h-8 rounded-lg flex items-center justify-center transition-all" style="color: rgba(15,27,40,0.4);" onmouseover="this.style.background='rgba(201,169,97,0.12)'; this.style.color='var(--c-gold-deep)';" onmouseout="this.style.background='transparent'; this.style.color='rgba(15,27,40,0.4)';"
+                    title="Modifier ${u.name.replace(/'/g, "\\'")}">
+                    <i class="fas fa-pen text-xs"></i>
+                  </button>
+                  ${isSelf ? '' : `
                   <button onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')"
                     class="w-8 h-8 rounded-lg flex items-center justify-center transition-all" style="color: rgba(15,27,40,0.4);" onmouseover="this.style.background='rgba(226,125,110,0.12)'; this.style.color='#C84C3F';" onmouseout="this.style.background='transparent'; this.style.color='rgba(15,27,40,0.4)';"
                     title="Supprimer ${u.name.replace(/'/g, "\\'")}">
                     <i class="fas fa-trash text-xs"></i>
-                  </button>
-                `}
+                  </button>`}
+                </div>
               </td>
             </tr>`;
           }).join('')}
@@ -146,14 +157,21 @@ function renderUsersView() {
                 ${isSuperAdmin && u.hotel_name ? `<p class="text-xs mt-0.5" style="color: var(--c-gold-deep);"><i class="fas fa-hotel mr-1"></i>${escapeHtml(u.hotel_name)}</p>` : ''}
               </div>
             </div>
-            ${isSelf ? '' : `
-            <button onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')"
-              class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(226,125,110,0.10); color: #C84C3F;">
-              <i class="fas fa-trash text-xs"></i>
-            </button>`}
+            <div class="flex items-center gap-1 shrink-0">
+              <button onclick="showUserForm(${u.id})"
+                class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(201,169,97,0.12); color: var(--c-gold-deep);">
+                <i class="fas fa-pen text-xs"></i>
+              </button>
+              ${isSelf ? '' : `
+              <button onclick="deleteUser(${u.id}, '${u.name.replace(/'/g, "\\'")}')"
+                class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(226,125,110,0.10); color: #C84C3F;">
+                <i class="fas fa-trash text-xs"></i>
+              </button>`}
+            </div>
           </div>
           <div class="flex flex-wrap items-center gap-2 mt-3 pt-3" style="border-top: 1px solid var(--c-line);">
             ${rolePill(u.role)}
+            ${u.job_role ? `<span class="text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1" style="background: rgba(201,169,97,0.12); color: var(--c-gold-deep); border: 1px solid rgba(201,169,97,0.25);"><i class="fas ${jobRoleIcon(u.job_role)} text-[9px]"></i>${jobRoleLabel(u.job_role) || u.job_role}</span>` : ''}
             <span class="flex items-center gap-1.5 text-xs" style="color: rgba(15,27,40,0.55);">
               <span class="w-1.5 h-1.5 rounded-full" style="background: ${u.is_active ? '#5C8A6E' : '#C84C3F'};"></span>
               ${u.is_active ? 'Actif' : 'Inactif'}

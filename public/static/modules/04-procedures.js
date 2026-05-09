@@ -387,7 +387,7 @@ async function togglePermission(userId, permKey, newValue) {
     can_edit_procedures: 'modifier les procédures',
     can_edit_info: 'modifier les informations',
     can_manage_chat: 'gérer les salons et conversations',
-    can_edit_clients: 'gérer les chambres et le Code Wikot',
+    can_edit_clients: 'gérer les chambres et les Codes Wikot',
     can_edit_restaurant: 'gérer le restaurant',
     can_create_tasks: 'créer et modifier des tâches',
     can_assign_tasks: 'attribuer des tâches aux employés'
@@ -419,7 +419,7 @@ function permissionCheckboxes(u, compact = false) {
     { key: 'can_edit_procedures',  label: 'Procédures',          icon: 'fa-sitemap' },
     { key: 'can_edit_info',        label: 'Informations',        icon: 'fa-circle-info' },
     { key: 'can_manage_chat',      label: 'Salons / chat',       icon: 'fa-comments' },
-    { key: 'can_edit_clients',     label: 'Chambres & Code Wikot', icon: 'fa-door-closed' },
+    { key: 'can_edit_clients',     label: 'Chambres & Codes Wikot', icon: 'fa-door-closed' },
     { key: 'can_edit_restaurant',  label: 'Restaurant',          icon: 'fa-utensils' },
     { key: 'can_create_tasks',     label: 'Créer des tâches',    icon: 'fa-list-check' },
     { key: 'can_assign_tasks',     label: 'Attribuer des tâches',icon: 'fa-user-tag' }

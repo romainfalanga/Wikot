@@ -1129,15 +1129,61 @@ async function submitSuggestion(procedureId) {
 }
 
 // User Form
-function showUserForm() {
-  const isSuperAdmin = state.user.role === 'super_admin';
+// Rôles métier (différents du rôle système). Synchronisé avec backend ALLOWED_JOB_ROLES.
+const JOB_ROLES = [
+  { v: '',             label: '— Non défini —',  icon: 'fa-circle-question' },
+  { v: 'reception',    label: 'Réception',        icon: 'fa-bell-concierge' },
+  { v: 'serveur',      label: 'Serveur',          icon: 'fa-utensils' },
+  { v: 'cuisinier',    label: 'Cuisinier',        icon: 'fa-kitchen-set' },
+  { v: 'housekeeping', label: 'Housekeeping',     icon: 'fa-broom' },
+  { v: 'maintenance',  label: 'Maintenance',      icon: 'fa-wrench' },
+  { v: 'manager',      label: 'Manager',          icon: 'fa-user-tie' },
+  { v: 'autre',        label: 'Autre',            icon: 'fa-user-gear' }
+];
+function jobRoleLabel(v) {
+  if (!v) return null;
+  const j = JOB_ROLES.find(j => j.v === v);
+  return j ? j.label : null;
+}
+function jobRoleIcon(v) {
+  if (!v) return 'fa-circle-question';
+  const j = JOB_ROLES.find(j => j.v === v);
+  return j ? j.icon : 'fa-circle-question';
+}
 
-  // Super admin : sélection hôtel obligatoire, rôle forcé à "admin"
-  // Admin hôtel : crée des employés (ou admins) pour son hôtel
+// Modal unifiée création / édition utilisateur
+// userId === null  → création (avec mot de passe)
+// userId === number → édition (sans mot de passe, on peut juste modifier nom/email/rôle/job_role)
+function showUserForm(userId = null) {
+  const isSuperAdmin = state.user.role === 'super_admin';
+  const isEditing = userId !== null;
+  const target = isEditing ? (state.users || []).find(u => u.id === userId) : null;
+  if (isEditing && !target) { showToast('Utilisateur introuvable', 'error'); return; }
+
+  // Admin ne peut pas modifier un super_admin
+  if (isEditing && state.user.role === 'admin' && target.role === 'super_admin') {
+    showToast('Non autorisé', 'error'); return;
+  }
+
+  const currentJobRole = isEditing ? (target.job_role || '') : '';
+  const currentRole    = isEditing ? target.role : (isSuperAdmin ? 'admin' : 'employee');
+  const isSelf = isEditing && Number(target.id) === Number(state.user.id);
+
+  const jobRoleSelect = `
+    <div>
+      <label class="block text-sm font-medium text-navy-600 mb-1">
+        <i class="fas fa-id-badge mr-1 text-navy-400"></i>Rôle métier
+      </label>
+      <select id="user-job-role" class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        ${JOB_ROLES.map(j => `<option value="${j.v}" ${j.v === currentJobRole ? 'selected' : ''}>${j.label}</option>`).join('')}
+      </select>
+      <p class="text-[11px] text-navy-400 mt-1">Permet de filtrer & assigner les tâches selon le poste.</p>
+    </div>`;
+
   const content = `
-  <form onsubmit="event.preventDefault(); createUser()">
+  <form onsubmit="event.preventDefault(); ${isEditing ? `submitUserEdit(${userId})` : 'createUser()'}">
     <div class="space-y-4">
-      ${isSuperAdmin ? `
+      ${isSuperAdmin && !isEditing ? `
       <div class="bg-blue-50 rounded-lg px-4 py-3 text-xs text-blue-700 flex items-center gap-2 mb-2">
         <i class="fas fa-circle-info"></i>
         En tant que Super Admin, vous créez uniquement des comptes administrateurs d'hôtel.
@@ -1151,36 +1197,44 @@ function showUserForm() {
       </div>` : ''}
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Nom complet *</label>
-        <input id="user-name" type="text" required placeholder="Prénom Nom"
+        <input id="user-name" type="text" required placeholder="Prénom Nom" value="${isEditing ? (target.name || '').replace(/"/g, '&quot;') : ''}"
           class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
       </div>
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Email *</label>
-        <input id="user-email" type="email" required placeholder="email@hotel.com"
+        <input id="user-email" type="email" required placeholder="email@hotel.com" value="${isEditing ? (target.email || '') : ''}"
           class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+        <p class="text-[11px] text-navy-400 mt-1">L'email est insensible à la casse — pas besoin de respecter les majuscules à la connexion.</p>
       </div>
+      ${!isEditing ? `
       <div>
         <label class="block text-sm font-medium text-navy-600 mb-1">Mot de passe *</label>
-        <input id="user-password" type="password" required placeholder="••••••••"
+        <input id="user-password" type="password" required placeholder="•••••••• (8 caractères min.)" minlength="8"
           class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
-      </div>
-      ${!isSuperAdmin ? `
+      </div>` : ''}
+      ${(!isSuperAdmin || isEditing) ? `
       <div>
-        <label class="block text-sm font-medium text-navy-600 mb-1">Rôle *</label>
-        <select id="user-role" class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
-          <option value="employee">Employé</option>
-          <option value="admin">Administrateur</option>
+        <label class="block text-sm font-medium text-navy-600 mb-1">Rôle système *</label>
+        <select id="user-role" ${isSelf ? 'disabled' : ''} class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
+          <option value="employee" ${currentRole === 'employee' ? 'selected' : ''}>Employé</option>
+          <option value="admin"    ${currentRole === 'admin' ? 'selected' : ''}>Administrateur</option>
+          ${isSuperAdmin ? `<option value="super_admin" ${currentRole === 'super_admin' ? 'selected' : ''}>Super Admin</option>` : ''}
         </select>
+        ${isSelf ? '<p class="text-[11px] text-amber-600 mt-1"><i class="fas fa-lock mr-1"></i>Impossible de modifier votre propre rôle.</p>' : ''}
       </div>` : '<input type="hidden" id="user-role" value="admin">'}
+      ${jobRoleSelect}
       <div class="flex justify-end gap-3 pt-4 border-t border-gray-100">
         <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Annuler</button>
         <button type="submit" class="btn-premium-navy text-white px-6 py-2 rounded-lg text-sm font-medium transition-colors">
-          <i class="fas fa-user-plus mr-1.5"></i>Créer le compte
+          <i class="fas ${isEditing ? 'fa-floppy-disk' : 'fa-user-plus'} mr-1.5"></i>${isEditing ? 'Enregistrer' : 'Créer le compte'}
         </button>
       </div>
     </div>
   </form>`;
-  showModal(isSuperAdmin ? 'Nouvel administrateur d\'hôtel' : 'Nouvel utilisateur', content);
+  const title = isEditing
+    ? `Modifier ${target.name || 'l\'utilisateur'}`
+    : (isSuperAdmin ? 'Nouvel administrateur d\'hôtel' : 'Nouvel utilisateur');
+  showModal(title, content);
 }
 
 async function createUser() {
@@ -1189,7 +1243,8 @@ async function createUser() {
     name: document.getElementById('user-name').value.trim(),
     email: document.getElementById('user-email').value.trim(),
     password: document.getElementById('user-password').value,
-    role: document.getElementById('user-role').value
+    role: document.getElementById('user-role').value,
+    job_role: document.getElementById('user-job-role')?.value || null
   };
   const result = await api('/users', { method: 'POST', body: JSON.stringify(data) });
   if (result) {
@@ -1197,6 +1252,24 @@ async function createUser() {
     await loadData();
     render();
     showToast('Utilisateur créé', 'success');
+  }
+}
+
+async function submitUserEdit(userId) {
+  const payload = {
+    name: document.getElementById('user-name').value.trim(),
+    email: document.getElementById('user-email').value.trim(),
+    job_role: document.getElementById('user-job-role')?.value || null
+  };
+  const roleEl = document.getElementById('user-role');
+  if (roleEl && !roleEl.disabled) payload.role = roleEl.value;
+
+  const result = await api(`/users/${userId}`, { method: 'PUT', body: JSON.stringify(payload) });
+  if (result) {
+    closeModal();
+    await loadData();
+    render();
+    showToast('Utilisateur mis à jour', 'success');
   }
 }
 

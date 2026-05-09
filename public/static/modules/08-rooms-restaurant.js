@@ -319,7 +319,7 @@ async function seedLecquesRooms() {
 }
 
 // ============================================
-// VIEW: OCCUPANCY — Code Wikot (saisie 12h00 + import IA doc clients)
+// VIEW: OCCUPANCY — Codes Wikot (saisie 12h00 + import IA doc clients)
 // ============================================
 async function loadOccupancy() {
   const data = await api('/occupancy/today');
@@ -361,7 +361,7 @@ function renderOccupancyView() {
     <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-6">
       <div>
         <p class="section-eyebrow mb-2">Saisie quotidienne</p>
-        <h2 class="section-title-premium text-2xl sm:text-3xl">Code Wikot</h2>
+        <h2 class="section-title-premium text-2xl sm:text-3xl">Codes Wikot</h2>
         <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.55);">${occupied}/${rooms.length} chambre(s) occupée(s) · à valider à 12h00</p>
         <p class="text-xs mt-1" style="color: rgba(15,27,40,0.45);">Date : <span class="font-mono">${today}</span> · Code hôtel : <button onclick="showHotelCodeEditModal()" class="font-mono font-bold underline-offset-2 hover:underline transition-colors" style="color: var(--c-gold-deep); cursor: pointer;" title="Modifier le code hôtel">${hotel.client_login_code || '— (à définir)'}</button></p>
       </div>
@@ -533,7 +533,7 @@ async function updateHotelCode(rawCode) {
 }
 
 // ============================================
-// MODAL : Importer un document clients (Code Wikot — Gemini Vision)
+// MODAL : Importer un document clients (Codes Wikot — Gemini Vision)
 // ============================================
 function showOccupancyImportModal() {
   if (!userCanEditClients()) {
@@ -561,7 +561,7 @@ function showRestaurantImportModal() {
 }
 
 // ============================================
-// CONTENU MODAL IMPORT IA — partagé entre Code Wikot et Restaurant
+// CONTENU MODAL IMPORT IA — partagé entre Codes Wikot et Restaurant
 // ============================================
 function renderAiImportModalContent(kind) {
   // kind = 'occupancy' | 'restaurant'

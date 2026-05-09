@@ -26,7 +26,6 @@ function renderLoginPage() {
           </div>
         </div>
         <div class="max-w-md">
-          <p class="text-xs uppercase tracking-[0.2em] mb-4" style="color: var(--c-gold);">L'excellence hôtelière</p>
           <h2 class="font-display text-4xl xl:text-5xl font-medium text-white leading-tight">
             Chaque détail<br/>
             <span style="color: var(--c-gold);">soigneusement orchestré.</span>
@@ -166,21 +165,21 @@ function renderMainLayout() {
     ];
   } else if (isAdmin) {
     // Admin hôtel : accès complet à toutes les pages opérationnelles
-    // NOTE: 'Chambres' retiré du menu — accessible désormais depuis Code Wikot
+    // NOTE: 'Chambres' retiré du menu — accessible désormais depuis Codes Wikot
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
       { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
-      { id: 'occupancy', icon: 'fa-id-card', label: 'Code Wikot' },
+      { id: 'occupancy', icon: 'fa-id-card', label: 'Codes Wikot' },
       { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' },
       { id: 'tasks', icon: 'fa-list-check', label: 'À faire', badge: state.myTasksPendingCount },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
     // Employé : Wikot pour tous + items conditionnels selon permissions granulaires
-    // NOTE: 'Chambres' retiré du menu — accessible désormais depuis Code Wikot
+    // NOTE: 'Chambres' retiré du menu — accessible désormais depuis Codes Wikot
     const canUseMax = userCanEditProcedures() || userCanEditInfo();
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
@@ -189,7 +188,7 @@ function renderMainLayout() {
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       ...(userCanEditClients() ? [
-        { id: 'occupancy', icon: 'fa-id-card', label: 'Code Wikot' }
+        { id: 'occupancy', icon: 'fa-id-card', label: 'Codes Wikot' }
       ] : []),
       ...(userCanEditRestaurant() ? [
         { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' }
@@ -214,7 +213,7 @@ function renderMainLayout() {
     hotels: 'Hôtels',
     templates: 'Modèles',
     rooms: 'Chambres',
-    occupancy: 'Code Wikot',
+    occupancy: 'Codes Wikot',
     restaurant: 'Restaurant',
     tasks: 'À faire',
   };
@@ -252,7 +251,6 @@ function renderMainLayout() {
             </div>
             <div>
               <h1 class="font-display text-xl font-semibold tracking-tight" style="color: #fff;">Wikot</h1>
-              <p class="text-[10px] uppercase tracking-[0.2em]" style="color: var(--c-gold);">L'excellence hôtelière</p>
             </div>
           </div>
           <button onclick="closeSidebar()" class="lg:hidden p-1" style="color: rgba(255,255,255,0.5);">

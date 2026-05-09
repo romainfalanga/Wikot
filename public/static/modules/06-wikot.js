@@ -1246,16 +1246,6 @@ function renderWikotView(mode) {
           <p class="text-xs truncate uppercase tracking-wider" style="color: var(--c-gold-deep);">${cfg.subtitle}</p>
         </div>
       </div>
-      <button onclick="resetWikotChat('${mode}')" class="btn-premium px-4 py-2.5 rounded-lg text-sm font-semibold inline-flex items-center gap-2 shrink-0" style="background: var(--c-navy); color: #fff;" title="Réinitialiser le chat">
-        <i class="fas fa-rotate-right text-xs"></i><span>Effacer</span>
-      </button>
-    </div>
-
-    <!-- Barre d'action mobile compacte : juste le bouton Effacer aligné à droite -->
-    <div class="lg:hidden flex items-center justify-end mb-2 shrink-0">
-      <button onclick="resetWikotChat('${mode}')" class="px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition-all" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);" title="Réinitialiser le chat">
-        <i class="fas fa-rotate-right text-[10px]"></i><span>Effacer</span>
-      </button>
     </div>
 
     <!-- Layout chat sans sidebar (stateless) -->
@@ -1651,9 +1641,6 @@ function renderBackWikotWorkshop() {
               <i class="fas fa-pen-ruler"></i>
             </div>
             <span class="text-sm font-semibold text-navy-800">Back Wikot</span>
-            <button onclick="resetWikotChat('max')" class="ml-auto w-7 h-7 rounded hover:bg-orange-50 text-navy-500" title="Effacer le chat">
-              <i class="fas fa-rotate-right text-xs"></i>
-            </button>
           </div>
           <div id="wikot-max-messages" class="flex-1 overflow-y-auto p-3">
             ${messages.length === 0 && !isLoading ? `

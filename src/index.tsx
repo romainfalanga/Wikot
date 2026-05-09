@@ -400,8 +400,8 @@ app.post('/api/auth/login', async (c) => {
            can_edit_clients, can_edit_restaurant, can_edit_settings,
            can_create_tasks, can_assign_tasks,
            password_hash, password_hash_v2, password_salt, password_algo
-    FROM users WHERE email = ? AND is_active = 1
-  `).bind(email).first() as any
+    FROM users WHERE LOWER(email) = ? AND is_active = 1
+  `).bind(emailKey).first() as any
 
   if (!user) return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
 
@@ -791,9 +791,9 @@ app.get('/api/users', authMiddleware, async (c) => {
   let users
   if (user.role === 'super_admin') {
     // PERF: LIMIT 2000 — table globale qui peut grossir avec tous les hôtels
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name LIMIT 2000').all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name LIMIT 2000').all()
   } else if (user.role === 'admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name LIMIT 500').bind(user.hotel_id).all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_clients, u.can_edit_restaurant, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name LIMIT 500').bind(user.hotel_id).all()
   } else {
     return c.json({ error: 'Non autorisé' }, 403)
   }
@@ -841,11 +841,20 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
   return c.json({ success: true })
 })
 
+// Rôles métier (différents du rôle système employee/admin/super_admin)
+// null = non défini ; libre de mettre n'importe lequel de cette whitelist
+const ALLOWED_JOB_ROLES = ['reception', 'serveur', 'cuisinier', 'housekeeping', 'maintenance', 'manager', 'autre'] as const
+function normalizeJobRole(v: any): string | null {
+  if (v === null || v === undefined || v === '') return null
+  const s = String(v).trim().toLowerCase()
+  return (ALLOWED_JOB_ROLES as readonly string[]).includes(s) ? s : null
+}
+
 app.post('/api/users', authMiddleware, async (c) => {
   const currentUser = c.get('user')
   if (currentUser.role !== 'super_admin' && currentUser.role !== 'admin') return c.json({ error: 'Non autorisé' }, 403)
-  const { hotel_id, email, password, name, role } = await c.req.json() as {
-    hotel_id?: number; email?: string; password?: string; name?: string; role?: string
+  const { hotel_id, email, password, name, role, job_role } = await c.req.json() as {
+    hotel_id?: number; email?: string; password?: string; name?: string; role?: string; job_role?: string | null
   }
   if (!email || !password || !name) return c.json({ error: 'Champs manquants' }, 400)
   if (password.length < 8) return c.json({ error: 'Le mot de passe doit faire au moins 8 caractères' }, 400)
@@ -858,6 +867,7 @@ app.post('/api/users', authMiddleware, async (c) => {
   // Rôle whitelist
   const allowedRoles = ['employee', 'admin', 'super_admin']
   const finalRole = allowedRoles.includes(role || '') ? role : 'employee'
+  const finalJobRole = normalizeJobRole(job_role)
 
   const targetHotel = currentUser.role === 'admin' ? currentUser.hotel_id : hotel_id
   if (currentUser.role === 'admin' && finalRole === 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
@@ -871,12 +881,69 @@ app.post('/api/users', authMiddleware, async (c) => {
   const { hash, salt, algo } = await hashPassword(password)
   try {
     const result = await c.env.DB.prepare(`
-      INSERT INTO users (hotel_id, email, password_hash, password_hash_v2, password_salt, password_algo, name, role)
-      VALUES (?, ?, '', ?, ?, ?, ?, ?)
-    `).bind(targetHotel, emailTrim, hash, salt, algo, nameTrim, finalRole).run()
-    return c.json({ id: result.meta.last_row_id, email: emailTrim, name: nameTrim, role: finalRole })
+      INSERT INTO users (hotel_id, email, password_hash, password_hash_v2, password_salt, password_algo, name, role, job_role)
+      VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)
+    `).bind(targetHotel, emailTrim, hash, salt, algo, nameTrim, finalRole, finalJobRole).run()
+    return c.json({ id: result.meta.last_row_id, email: emailTrim, name: nameTrim, role: finalRole, job_role: finalJobRole })
   } catch (e: any) {
     return c.json({ error: 'Cet email est déjà utilisé' }, 400)
+  }
+})
+
+// PUT /api/users/:id — modifier les infos d'un utilisateur (nom, email, rôle, job_role)
+// Admin ne peut modifier que les users de son hôtel ; super_admin peut tout.
+app.put('/api/users/:id', authMiddleware, async (c) => {
+  const currentUser = c.get('user')
+  if (currentUser.role !== 'super_admin' && currentUser.role !== 'admin') return c.json({ error: 'Non autorisé' }, 403)
+  const id = c.req.param('id')
+  const body = await c.req.json() as {
+    name?: any; email?: any; role?: any; job_role?: any; is_active?: any
+  }
+  const target = await c.env.DB.prepare('SELECT id, hotel_id, role FROM users WHERE id = ?').bind(id).first() as any
+  if (!target) return c.json({ error: 'Utilisateur non trouvé' }, 404)
+  // Admin ne peut toucher que son hôtel et pas un super_admin
+  if (currentUser.role === 'admin') {
+    if (String(target.hotel_id) !== String(currentUser.hotel_id)) return c.json({ error: 'Non autorisé' }, 403)
+    if (target.role === 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  }
+
+  const fields: string[] = []
+  const values: any[] = []
+  if (body.name !== undefined) {
+    const n = String(body.name).trim()
+    if (!n || n.length > 100) return c.json({ error: 'Nom invalide' }, 400)
+    fields.push('name = ?'); values.push(n)
+  }
+  if (body.email !== undefined) {
+    const em = String(body.email).trim().toLowerCase()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return c.json({ error: 'Email invalide' }, 400)
+    fields.push('email = ?'); values.push(em)
+  }
+  if (body.role !== undefined) {
+    const allowed = currentUser.role === 'super_admin'
+      ? ['employee', 'admin', 'super_admin']
+      : ['employee', 'admin'] // admin ne peut pas créer un super_admin
+    const r = String(body.role)
+    if (!allowed.includes(r)) return c.json({ error: 'Rôle invalide' }, 400)
+    fields.push('role = ?'); values.push(r)
+  }
+  if (body.job_role !== undefined) {
+    fields.push('job_role = ?'); values.push(normalizeJobRole(body.job_role))
+  }
+  if (body.is_active !== undefined && currentUser.role === 'super_admin') {
+    fields.push('is_active = ?'); values.push(body.is_active ? 1 : 0)
+  }
+  if (fields.length === 0) return c.json({ error: 'Aucun champ à mettre à jour' }, 400)
+
+  values.push(id)
+  try {
+    await c.env.DB.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).bind(...values).run()
+    return c.json({ success: true })
+  } catch (e: any) {
+    if (String(e?.message || '').toLowerCase().includes('unique')) {
+      return c.json({ error: 'Cet email est déjà utilisé' }, 400)
+    }
+    return c.json({ error: 'Erreur serveur' }, 500)
   }
 })
 

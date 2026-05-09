@@ -955,7 +955,7 @@ function renderTasksHeader() {
             <input type="date" value="${dateStr}" onchange="state.tasksDate=this.value; loadTasksForDate(this.value).then(render);" class="px-3 py-2 text-sm font-mono" style="background: #fff; color: var(--c-navy); border: none;" />
             <button onclick="navigateTaskDate(1)" class="px-3 py-2 text-sm" style="background: #fff; color: var(--c-navy); border-left: 1px solid var(--c-line);" title="Jour suivant"><i class="fas fa-chevron-right"></i></button>
           </div>
-          ${dateStr !== today ? `<button onclick="state.tasksDate='${today}'; loadTasksForDate('${today}').then(render);" class="px-3 py-2 rounded-lg text-xs font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);"><i class="fas fa-calendar-day mr-1"></i>Aujourd'hui</button>` : ''}
+          ${dateStr !== today ? `<button onclick="state.tasksDate='${today}'; loadTasksForDate('${today}').then(render);" class="px-3 py-2 rounded-lg text-xs font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);"><i class="fas fa-calendar-day mr-1"></i>Aujourd&rsquo;hui</button>` : ''}
         `}
       </div>
     </div>`;
@@ -1951,7 +1951,7 @@ function renderRestaurantDashboard() {
               <span class="font-display text-base font-bold leading-tight">${dayNum}</span>
             </div>
             <div class="min-w-0">
-              <div class="font-display font-semibold text-sm sm:text-base truncate" style="color: var(--c-navy);">${weekday} ${dayNum} ${monthShort}${isToday ? ' <span class="text-[10px] uppercase tracking-wider font-bold ml-1" style="color: var(--c-gold-deep);">aujourd\\'hui</span>' : ''}</div>
+              <div class="font-display font-semibold text-sm sm:text-base truncate" style="color: var(--c-navy);">${weekday} ${dayNum} ${monthShort}${isToday ? ' <span class="text-[10px] uppercase tracking-wider font-bold ml-1" style="color: var(--c-gold-deep);">aujourd&rsquo;hui</span>' : ''}</div>
               <div class="text-[11px]" style="color: rgba(15,27,40,0.55);">${openCount}/3 services ouverts</div>
             </div>
           </div>

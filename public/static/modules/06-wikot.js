@@ -781,46 +781,43 @@ const BACK_WIKOT_WORKFLOWS = {
     description: 'Choisis une information existante puis ajuste-la avec Back Wikot.'
   },
   // ======== NOUVEAUX WORKFLOWS (Phase 4) ========
-  // 3 modes "lite" (conseil/structure) + 1 mode complet "Codes Wikot" (édition)
+  // Tous calqués exactement sur le pattern create/update procedure/info :
+  // formulaire à gauche (read-only), chat Back Wikot à droite, bouton Enregistrer en haut.
   gerer_conversations: {
     label: 'Conversations (gérer)',
     icon: 'fa-comments',
     color: 'sky',
-    targetKind: null,
-    permissionKey: null, // dispo pour tout user qui a accès Back Wikot
+    targetKind: 'chat_tree',
+    permissionKey: null,
     needsTarget: false,
-    isLite: true,
-    description: "Structure tes salons et channels avec Back Wikot avant de les créer dans l'onglet Discussion."
+    description: "Crée, renomme, déplace ou supprime tes salons et channels avec Back Wikot."
   },
   chercher_conversations: {
     label: 'Conversations (chercher)',
     icon: 'fa-magnifying-glass',
     color: 'indigo',
-    targetKind: null,
+    targetKind: 'chat_search',
     permissionKey: null,
     needsTarget: false,
-    isLite: true,
-    description: "Reformule ta recherche pour trouver une info dans l'historique des messages."
+    description: "Cherche un message dans l'historique. Back Wikot affiche les résultats à gauche."
   },
   gerer_taches: {
     label: 'Tâches',
     icon: 'fa-list-check',
     color: 'emerald',
-    targetKind: null,
+    targetKind: 'task',
     permissionKey: null,
     needsTarget: false,
-    isLite: true,
-    description: "Cadre une tâche prête à enregistrer dans l'onglet Tâches (récurrence, priorité, assignés)."
+    description: "Crée, modifie ou supprime une tâche (récurrence, priorité, assignés) avec Back Wikot."
   },
   gerer_codes_wikot: {
     label: 'Codes Wikot',
     icon: 'fa-key',
     color: 'gold',
-    targetKind: null,
-    permissionKey: 'admin_only', // restriction renforcée côté UI + backend
+    targetKind: 'codes_wikot',
+    permissionKey: 'admin_only',
     needsTarget: false,
-    isLite: false, // mode complet avec tools
-    description: "Modifie le code hôtel, renomme une chambre, mets à jour le client courant."
+    description: "Code hôtel, chambres, client courant : Back Wikot fait toutes les opérations."
   }
 };
 
@@ -862,6 +859,53 @@ function emptyBackWikotForm(workflowMode) {
       category_id: null
     };
   }
+  if (workflowMode === 'gerer_conversations') {
+    // Arborescence : groupes + salons. Back Wikot mute live (pas de batch).
+    return {
+      kind: 'chat_tree',
+      groups: [],          // [{ id, name, icon, is_system, channels: [{id,name,description,icon,group_id}] }]
+      lastAction: null     // { type, label, ts } pour feedback visuel
+    };
+  }
+  if (workflowMode === 'chercher_conversations') {
+    return {
+      kind: 'chat_search',
+      query: '',
+      scope: { channel_id: null, group_id: null, author_id: null, after: null, before: null },
+      results: [],         // [{ message_id, channel_id, channel_name, group_name, author, content, created_at }]
+      total: 0,
+      lastSearchedAt: null
+    };
+  }
+  if (workflowMode === 'gerer_taches') {
+    return {
+      kind: 'task',
+      id: null,
+      task_kind: 'template', // 'template' | 'instance'
+      mode: 'oneoff',         // 'oneoff' | 'recurring'
+      title: '',
+      description: '',
+      category: '',
+      priority: 'normal',     // 'low' | 'normal' | 'high'
+      recurrence_type: null,  // 'daily' | 'weekly' | 'monthly'
+      recurrence_days: 0,     // bitmap (1=Lun, 2=Mar, 4=Mer, 8=Jeu, 16=Ven, 32=Sam, 64=Dim)
+      monthly_day: null,      // 1..31
+      suggested_time: '',     // 'HH:MM'
+      duration_min: null,
+      active_from: null,      // 'YYYY-MM-DD'
+      active_to: null,        // 'YYYY-MM-DD'
+      assignee_ids: []
+    };
+  }
+  if (workflowMode === 'gerer_codes_wikot') {
+    return {
+      kind: 'codes_wikot',
+      hotel_code: '',
+      rooms: [],         // [{ id, room_number, is_active }]
+      entries: {},       // { [room_id]: { guest_name, checkout_date } } (draft batch save)
+      lastAction: null
+    };
+  }
   return null;
 }
 
@@ -879,7 +923,6 @@ function collectBackWikotFormContext() {
 
 // Applique les patches renvoyés par le tool update_form
 // FORMAT BACKEND : tableau d'objets, chaque objet contient les champs modifiés.
-// Ex: [ { title: "Effectuer un check-out", trigger_event: "Quand…", steps: [...] } ]
 // On merge chaque patch dans state.backWikotForm et on tracke les champs touchés
 // pour le feedback visuel (highlight flash 1.5s).
 function applyBackWikotFormUpdates(updates) {
@@ -888,16 +931,31 @@ function applyBackWikotFormUpdates(updates) {
   const touchedFields = new Set();
 
   // Définir les champs autorisés selon le type de form (sécurité côté UI aussi)
-  const allowedKeys = f.kind === 'procedure'
-    ? ['title', 'trigger_event', 'description', 'category_id', 'steps']
-    : ['title', 'content', 'category_id'];
+  let allowedKeys;
+  if (f.kind === 'procedure') {
+    allowedKeys = ['title', 'trigger_event', 'description', 'category_id', 'steps'];
+  } else if (f.kind === 'info_item') {
+    allowedKeys = ['title', 'content', 'category_id'];
+  } else if (f.kind === 'chat_tree') {
+    allowedKeys = ['groups', 'lastAction'];
+  } else if (f.kind === 'chat_search') {
+    allowedKeys = ['query', 'scope', 'results', 'total', 'lastSearchedAt'];
+  } else if (f.kind === 'task') {
+    allowedKeys = ['id','task_kind','mode','title','description','category','priority',
+                   'recurrence_type','recurrence_days','monthly_day','suggested_time',
+                   'duration_min','active_from','active_to','assignee_ids'];
+  } else if (f.kind === 'codes_wikot') {
+    allowedKeys = ['hotel_code','rooms','entries','lastAction'];
+  } else {
+    allowedKeys = [];
+  }
 
   for (const patch of updates) {
     if (!patch || typeof patch !== 'object') continue;
     for (const key of Object.keys(patch)) {
       if (!allowedKeys.includes(key)) continue;
       const value = patch[key];
-      if (key === 'steps' && Array.isArray(value)) {
+      if (f.kind === 'procedure' && key === 'steps' && Array.isArray(value)) {
         f.steps = value.map((s, i) => ({
           step_number: i + 1,
           title: s.title || '',
@@ -949,40 +1007,62 @@ async function enterBackWikotWorkflow(workflowMode) {
       await loadBackWikotInfo();
     }
     render();
-  } else if (BACK_WIKOT_WORKFLOWS[workflowMode] && BACK_WIKOT_WORKFLOWS[workflowMode].targetKind === null) {
-    // NOUVEAUX WORKFLOWS (Phase 4) : pas de formulaire, juste un chat conseil/édition.
-    // On crée la conversation côté backend et on bascule directement sur la vue chat-only.
-    state.backWikotForm = null;
-    await openBackWikotChatOnly();
   } else {
-    // Création directe : on entre dans l'atelier avec un form vierge
+    // Tous les autres modes : on entre direct dans le workshop avec un form vierge.
+    // Pour les modes Phase 4 (chat_tree, codes_wikot), on précharge l'état initial.
     state.backWikotForm = emptyBackWikotForm(workflowMode);
+    if (workflowMode === 'gerer_conversations') {
+      await preloadBackWikotChatTree();
+    } else if (workflowMode === 'gerer_codes_wikot') {
+      await preloadBackWikotCodesState();
+    }
     await openBackWikotWorkshop();
   }
 }
 
-// Variante de openBackWikotWorkshop pour les workflows sans formulaire (lite + Codes Wikot).
-// On crée juste la conversation côté backend, on bascule en step='chat-only'.
-async function openBackWikotChatOnly() {
-  const body = {
-    mode: 'max',
-    workflow_mode: state.backWikotWorkflowMode,
-    target_kind: null,
-    target_id: null
-  };
-  const data = await api('/wikot/conversations', { method: 'POST', body: JSON.stringify(body) });
-  if (!data) return;
-  const s = wikotState('max');
-  s.currentConvId = data.id;
-  s.messages = [];
-  s.actions = [];
-  state.backWikotStep = 'chat-only';
-  render();
-  setTimeout(() => {
-    const input = document.getElementById('wikot-max-input');
-    if (input) input.focus();
-  }, 120);
+// Préchargement de l'arborescence chat dans le formState
+async function preloadBackWikotChatTree() {
+  const data = await api('/chat/groups');
+  if (!data || !state.backWikotForm) return;
+  state.backWikotForm.groups = (data.groups || []).map(g => ({
+    id: g.id,
+    name: g.name,
+    icon: g.icon || 'fa-folder',
+    is_system: g.is_system === 1 || g.is_system === true,
+    channels: (g.channels || []).map(c => ({
+      id: c.id,
+      name: c.name,
+      description: c.description || '',
+      icon: c.icon || 'fa-comment',
+      group_id: g.id
+    }))
+  }));
 }
+
+// Préchargement de l'état Codes Wikot (hotel_code + rooms + occupancy entries du jour)
+async function preloadBackWikotCodesState() {
+  const data = await api('/occupancy/today');
+  if (!data || !state.backWikotForm) return;
+  const hotel = data.hotel || {};
+  const rooms = data.rooms || [];
+  state.backWikotForm.hotel_code = hotel.client_login_code || '';
+  state.backWikotForm.rooms = rooms.map(r => ({
+    id: r.room_id,
+    room_number: r.room_number,
+    is_active: r.is_active === 1 || r.is_active === true
+  }));
+  // Pré-remplir les entries depuis l'état actuel (chambres déjà occupées)
+  const entries = {};
+  for (const r of rooms) {
+    entries[r.room_id] = {
+      guest_name: r.guest_name || '',
+      checkout_date: r.checkout_date || ''
+    };
+  }
+  state.backWikotForm.entries = entries;
+}
+
+// (suppressed) openBackWikotChatOnly — remplacé par le pattern workshop unifié.
 
 // Charge toutes les procédures + sous-procédures pour la sélection cible
 async function loadBackWikotProcedures() {
@@ -1194,82 +1274,187 @@ function updateBackWikotStepField(idx, field, value) {
   // Pas de render() pour ne pas perdre le focus du textarea
 }
 
-// Sauvegarde finale : POST/PUT vers la bonne route selon workflow
+// Sauvegarde finale : route par kind du formulaire
 async function saveBackWikotForm() {
   if (!state.backWikotForm) return;
   if (state.backWikotSaving) return;
   const f = state.backWikotForm;
   const wf = state.backWikotWorkflowMode;
 
-  // Validations basiques
-  if (!f.title || !f.title.trim()) {
-    showToast('Le titre est obligatoire.', 'error');
-    return;
-  }
-  if (f.kind === 'procedure') {
-    if (!f.trigger_event || !f.trigger_event.trim()) {
-      showToast('Le déclencheur (trigger_event) est obligatoire.', 'error');
+  // ====== Procédures + Informations (pattern historique) ======
+  if (f.kind === 'procedure' || f.kind === 'info_item') {
+    if (!f.title || !f.title.trim()) {
+      showToast('Le titre est obligatoire.', 'error');
       return;
     }
-    if (!f.steps || f.steps.length === 0) {
-      showToast('Ajoute au moins une étape.', 'error');
-      return;
+    if (f.kind === 'procedure') {
+      if (!f.trigger_event || !f.trigger_event.trim()) {
+        showToast('Le déclencheur (trigger_event) est obligatoire.', 'error');
+        return;
+      }
+      if (!f.steps || f.steps.length === 0) {
+        showToast('Ajoute au moins une étape.', 'error');
+        return;
+      }
     }
-  }
-  if (f.kind === 'info_item') {
-    if (!f.content || !f.content.trim()) {
-      showToast('Le contenu de l\'information est obligatoire.', 'error');
-      return;
+    if (f.kind === 'info_item') {
+      if (!f.content || !f.content.trim()) {
+        showToast('Le contenu de l\'information est obligatoire.', 'error');
+        return;
+      }
     }
-  }
 
-  state.backWikotSaving = true;
-  render();
-
-  let result = null;
-  try {
-    if (wf === 'create_procedure') {
-      const payload = {
-        title: f.title, trigger_event: f.trigger_event, description: f.description || null,
-        category_id: f.category_id || null,
-        steps: (f.steps || []).map((s, i) => ({
-          step_number: i + 1, title: s.title, content: s.content || null,
-          linked_procedure_id: s.linked_procedure_id || null
-        }))
-      };
-      result = await api('/procedures', { method: 'POST', body: JSON.stringify(payload) });
-    } else if (wf === 'update_procedure') {
-      const payload = {
-        title: f.title, trigger_event: f.trigger_event, description: f.description || null,
-        category_id: f.category_id || null,
-        steps: (f.steps || []).map((s, i) => ({
-          step_number: i + 1, title: s.title, content: s.content || null,
-          linked_procedure_id: s.linked_procedure_id || null
-        }))
-      };
-      result = await api(`/procedures/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) });
-    } else if (wf === 'create_info') {
-      const payload = { title: f.title, content: f.content, category_id: f.category_id || null };
-      result = await api('/hotel-info/items', { method: 'POST', body: JSON.stringify(payload) });
-    } else if (wf === 'update_info') {
-      const payload = { title: f.title, content: f.content, category_id: f.category_id || null };
-      result = await api(`/hotel-info/items/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) });
-    }
-  } finally {
-    state.backWikotSaving = false;
-  }
-
-  if (!result) {
+    state.backWikotSaving = true;
     render();
+
+    let result = null;
+    try {
+      if (wf === 'create_procedure') {
+        const payload = {
+          title: f.title, trigger_event: f.trigger_event, description: f.description || null,
+          category_id: f.category_id || null,
+          steps: (f.steps || []).map((s, i) => ({
+            step_number: i + 1, title: s.title, content: s.content || null,
+            linked_procedure_id: s.linked_procedure_id || null
+          }))
+        };
+        result = await api('/procedures', { method: 'POST', body: JSON.stringify(payload) });
+      } else if (wf === 'update_procedure') {
+        const payload = {
+          title: f.title, trigger_event: f.trigger_event, description: f.description || null,
+          category_id: f.category_id || null,
+          steps: (f.steps || []).map((s, i) => ({
+            step_number: i + 1, title: s.title, content: s.content || null,
+            linked_procedure_id: s.linked_procedure_id || null
+          }))
+        };
+        result = await api(`/procedures/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      } else if (wf === 'create_info') {
+        const payload = { title: f.title, content: f.content, category_id: f.category_id || null };
+        result = await api('/hotel-info/items', { method: 'POST', body: JSON.stringify(payload) });
+      } else if (wf === 'update_info') {
+        const payload = { title: f.title, content: f.content, category_id: f.category_id || null };
+        result = await api(`/hotel-info/items/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      }
+    } finally {
+      state.backWikotSaving = false;
+    }
+
+    if (!result) { render(); return; }
+    showToast(wf.startsWith('create_') ? 'Créé avec succès.' : 'Modifié avec succès.', 'success');
+    state.backWikotFormDirty = false;
+    await loadData();
+    backToBackWikotHome();
     return;
   }
 
-  showToast(wf.startsWith('create_') ? 'Créé avec succès.' : 'Modifié avec succès.', 'success');
-  state.backWikotFormDirty = false;
-  // Recharger les listes pour refléter la modif
-  await loadData();
-  // Retour à l'écran d'accueil Back Wikot
-  backToBackWikotHome();
+  // ====== Conversations (gérer) — mutations déjà faites en live, on refresh + ferme ======
+  if (f.kind === 'chat_tree') {
+    state.backWikotSaving = true; render();
+    try {
+      // Recharger l'arborescence dans state.chatGroups pour la page Discussion
+      const data = await api('/chat/groups');
+      if (data) state.chatGroups = data.groups || [];
+    } finally {
+      state.backWikotSaving = false;
+    }
+    showToast('Salons et channels à jour.', 'success');
+    state.backWikotFormDirty = false;
+    backToBackWikotHome();
+    return;
+  }
+
+  // ====== Conversations (chercher) — pas de save, juste fermer ======
+  if (f.kind === 'chat_search') {
+    backToBackWikotHome();
+    return;
+  }
+
+  // ====== Tâches — POST/PUT selon présence d'id et task_kind ======
+  if (f.kind === 'task') {
+    if (!f.title || !f.title.trim()) {
+      showToast('Le titre est obligatoire.', 'error');
+      return;
+    }
+    if (f.mode === 'recurring' && !f.recurrence_type) {
+      showToast('Choisis un type de récurrence (quotidienne / hebdo / mensuelle).', 'error');
+      return;
+    }
+
+    state.backWikotSaving = true;
+    render();
+
+    let result = null;
+    try {
+      const isInstance = f.task_kind === 'instance';
+      const baseUrl = isInstance ? '/tasks/instances' : '/tasks/templates';
+      const payload = {
+        title: f.title,
+        description: f.description || null,
+        category: f.category || null,
+        priority: f.priority || 'normal',
+        mode: f.mode || 'oneoff',
+        recurrence_type: f.mode === 'recurring' ? (f.recurrence_type || null) : null,
+        recurrence_days: f.mode === 'recurring' ? (f.recurrence_days || 0) : 0,
+        monthly_day: f.mode === 'recurring' && f.recurrence_type === 'monthly' ? (f.monthly_day || null) : null,
+        suggested_time: f.suggested_time || null,
+        duration_min: f.duration_min || null,
+        active_from: f.mode === 'recurring' ? (f.active_from || null) : null,
+        active_to: f.mode === 'recurring' ? (f.active_to || null) : null,
+        assignee_ids: Array.isArray(f.assignee_ids) ? f.assignee_ids : []
+      };
+
+      if (f.id) {
+        result = await api(`${baseUrl}/${f.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      } else {
+        result = await api(baseUrl, { method: 'POST', body: JSON.stringify(payload) });
+      }
+    } finally {
+      state.backWikotSaving = false;
+    }
+
+    if (!result) { render(); return; }
+    showToast(f.id ? 'Tâche modifiée.' : 'Tâche créée.', 'success');
+    state.backWikotFormDirty = false;
+    backToBackWikotHome();
+    return;
+  }
+
+  // ====== Codes Wikot — batch POST /occupancy/day pour les entries ======
+  if (f.kind === 'codes_wikot') {
+    state.backWikotSaving = true;
+    render();
+
+    try {
+      const entries = [];
+      const rooms = f.rooms || [];
+      const draftEntries = f.entries || {};
+      for (const r of rooms) {
+        const e = draftEntries[r.id] || { guest_name: '', checkout_date: '' };
+        const name = (e.guest_name || '').trim();
+        if (name) {
+          entries.push({ room_id: r.id, guest_name: name, checkout_date: e.checkout_date || null, action: 'set' });
+        } else {
+          entries.push({ room_id: r.id, action: 'clear' });
+        }
+      }
+      const data = await api('/occupancy/day', { method: 'POST', body: JSON.stringify({ entries }) });
+      if (data) {
+        showToast('Codes Wikot enregistrés (mots de passe clients à jour).', 'success');
+        state.backWikotFormDirty = false;
+        // Refresh state local avant retour
+        state._occupancyLoaded = false;
+        if (typeof loadOccupancy === 'function') await loadOccupancy();
+        backToBackWikotHome();
+      }
+    } finally {
+      state.backWikotSaving = false;
+    }
+    return;
+  }
+
+  // Kind inconnu
+  showToast('Type de formulaire inconnu.', 'error');
 }
 
 function renderWikotView(mode) {
@@ -1391,24 +1576,23 @@ function renderBackWikotView() {
   const step = state.backWikotStep || 'home';
   if (step === 'select-target') return renderBackWikotSelectTarget();
   if (step === 'workshop') return renderBackWikotWorkshop();
-  if (step === 'chat-only') return renderBackWikotChatOnly();
   return renderBackWikotHome();
 }
 
 // --------------------------------------------
-// VUE 1 : HOME (8 boutons d'entonnoir — 2 sections : Contenu + Pilotage)
+// VUE 1 : HOME (8 boutons identiques — pas de sections, pas de badges)
 // --------------------------------------------
 function renderBackWikotHome() {
-  // Mapping action → tag visuel (petit eyebrow + accent)
+  // Mapping action → tag visuel (Créer / Modifier / Gérer / Chercher)
   const actionMeta = {
     create_procedure:       { tag: 'Créer',    accent: 'create' },
     update_procedure:       { tag: 'Modifier', accent: 'update' },
     create_info:            { tag: 'Créer',    accent: 'create' },
     update_info:            { tag: 'Modifier', accent: 'update' },
-    gerer_conversations:    { tag: 'Conseil',  accent: 'lite'   },
-    chercher_conversations: { tag: 'Conseil',  accent: 'lite'   },
-    gerer_taches:           { tag: 'Conseil',  accent: 'lite'   },
-    gerer_codes_wikot:      { tag: 'Édition',  accent: 'admin'  }
+    gerer_conversations:    { tag: 'Gérer',    accent: 'update' },
+    chercher_conversations: { tag: 'Chercher', accent: 'create' },
+    gerer_taches:           { tag: 'Gérer',    accent: 'update' },
+    gerer_codes_wikot:      { tag: 'Gérer',    accent: 'create' }
   };
 
   const buttonHtml = (key) => {
@@ -1416,7 +1600,6 @@ function renderBackWikotHome() {
     if (!wf) return '';
     const enabled = userCanRunBackWikotWorkflow(key);
     const meta = actionMeta[key] || { tag: '', accent: 'create' };
-    // Accent : create=or palace, update=navy, lite=cream-deep, admin=navy+gold
     let iconBg, iconColor, tagColor;
     if (!enabled) {
       iconBg = 'var(--c-cream-deep)';
@@ -1424,17 +1607,9 @@ function renderBackWikotHome() {
       tagColor = 'rgba(15,27,40,0.4)';
     } else if (meta.accent === 'create') {
       iconBg = 'var(--c-gold)'; iconColor = 'var(--c-navy)'; tagColor = 'var(--c-gold-deep)';
-    } else if (meta.accent === 'update') {
-      iconBg = 'var(--c-navy)'; iconColor = 'var(--c-gold)'; tagColor = 'rgba(15,27,40,0.55)';
-    } else if (meta.accent === 'lite') {
-      iconBg = 'var(--c-cream-deep)'; iconColor = 'var(--c-navy)'; tagColor = 'rgba(15,27,40,0.55)';
     } else {
-      // admin → fond navy bordé d'or
-      iconBg = 'var(--c-navy)'; iconColor = 'var(--c-gold)'; tagColor = 'var(--c-gold-deep)';
+      iconBg = 'var(--c-navy)'; iconColor = 'var(--c-gold)'; tagColor = 'rgba(15,27,40,0.55)';
     }
-    const liteBadge = wf.isLite
-      ? `<span class="text-[9px] uppercase tracking-wider font-semibold ml-1.5 px-1.5 py-0.5 rounded" style="background: rgba(15,27,40,0.06); color: rgba(15,27,40,0.55);">Lite</span>`
-      : '';
 
     return `
       <button ${enabled ? `onclick="enterBackWikotWorkflow('${key}')"` : 'disabled'}
@@ -1444,9 +1619,7 @@ function renderBackWikotHome() {
           <i class="fas ${wf.icon} text-base sm:text-lg"></i>
         </div>
         <div class="min-w-0 flex-1">
-          <div class="text-[10px] uppercase tracking-[0.16em] font-semibold mb-0.5 flex items-center" style="color: ${tagColor};">
-            ${meta.tag}${liteBadge}
-          </div>
+          <div class="text-[10px] uppercase tracking-[0.16em] font-semibold mb-0.5" style="color: ${tagColor};">${meta.tag}</div>
           <div class="font-display text-sm sm:text-base font-semibold leading-tight" style="color: var(--c-navy);">${escapeHtml(wf.label)}</div>
           <div class="text-xs mt-1 leading-snug" style="color: rgba(15,27,40,0.55);">${escapeHtml(wf.description)}</div>
           ${!enabled ? '<div class="text-[11px] italic mt-1.5" style="color: #C84C3F;"><i class="fas fa-triangle-exclamation mr-1"></i>Permission requise</div>' : ''}
@@ -1455,15 +1628,6 @@ function renderBackWikotHome() {
       </button>
     `;
   };
-
-  // Section eyebrow réutilisable
-  const sectionTitle = (eyebrow, title, subtitle) => `
-    <div class="mt-1">
-      <p class="section-eyebrow">${escapeHtml(eyebrow)}</p>
-      <h2 class="font-display text-base sm:text-lg font-semibold" style="color: var(--c-navy);">${escapeHtml(title)}</h2>
-      ${subtitle ? `<p class="text-xs mt-0.5" style="color: rgba(15,27,40,0.55);">${escapeHtml(subtitle)}</p>` : ''}
-    </div>
-  `;
 
   return `
     <div class="fade-in space-y-5 sm:space-y-6">
@@ -1478,20 +1642,14 @@ function renderBackWikotHome() {
         </div>
       </div>
 
-      <p class="text-sm" style="color: rgba(15,27,40,0.6);">Choisis une action. Back Wikot te guide pas à pas selon le contexte.</p>
+      <p class="text-sm" style="color: rgba(15,27,40,0.6);">Choisis une action. Back Wikot remplit le formulaire pour toi puis tu enregistres.</p>
 
-      <!-- Section 1 : Contenu (procédures + informations) -->
-      ${sectionTitle('Contenu', 'Procédures & informations', 'Rédige ou modifie le savoir-faire de ton hôtel.')}
+      <!-- Grille unique de 8 boutons identiques -->
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         ${buttonHtml('create_procedure')}
         ${buttonHtml('update_procedure')}
         ${buttonHtml('create_info')}
         ${buttonHtml('update_info')}
-      </div>
-
-      <!-- Section 2 : Pilotage (4 nouveaux modes) -->
-      ${sectionTitle('Pilotage', 'Discussion, tâches & accès', 'Conseils de structuration et édition directe des Codes Wikot.')}
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         ${buttonHtml('gerer_conversations')}
         ${buttonHtml('chercher_conversations')}
         ${buttonHtml('gerer_taches')}
@@ -1712,7 +1870,30 @@ function renderBackWikotWorkshop() {
 
   // STATELESS : plus de sidebar historique des conversations.
 
-  const formHtml = f.kind === 'procedure' ? renderBackWikotProcedureForm(f) : renderBackWikotInfoForm(f);
+  let formHtml;
+  let formTitle;
+  if (f.kind === 'procedure') {
+    formHtml = renderBackWikotProcedureForm(f);
+    formTitle = 'Formulaire procédure';
+  } else if (f.kind === 'info_item') {
+    formHtml = renderBackWikotInfoForm(f);
+    formTitle = 'Formulaire information';
+  } else if (f.kind === 'chat_tree') {
+    formHtml = renderBackWikotChatTreeForm(f);
+    formTitle = 'Salons & channels';
+  } else if (f.kind === 'chat_search') {
+    formHtml = renderBackWikotChatSearchForm(f);
+    formTitle = 'Résultats de recherche';
+  } else if (f.kind === 'task') {
+    formHtml = renderBackWikotTaskForm(f);
+    formTitle = 'Formulaire tâche';
+  } else if (f.kind === 'codes_wikot') {
+    formHtml = renderBackWikotCodesForm(f);
+    formTitle = 'Codes Wikot';
+  } else {
+    formHtml = '<div class="text-center text-navy-400 py-8">Type de formulaire inconnu.</div>';
+    formTitle = 'Formulaire';
+  }
 
   const cfg = WIKOT_MODE_CONFIG.max;
 
@@ -1745,7 +1926,7 @@ function renderBackWikotWorkshop() {
         <div class="bg-white border border-gray-200 rounded-xl flex flex-col min-h-0 overflow-hidden">
           <div class="px-4 py-2.5 bg-gradient-to-r from-orange-50 to-amber-50 border-b border-orange-100 flex items-center gap-2 shrink-0">
             <i class="fas fa-file-pen text-orange-500"></i>
-            <span class="text-sm font-semibold text-navy-800">Formulaire ${f.kind === 'procedure' ? 'procédure' : 'information'}</span>
+            <span class="text-sm font-semibold text-navy-800">${escapeHtml(formTitle)}</span>
             <span class="ml-auto text-[10px] text-navy-400 italic hidden sm:inline">L'IA peut éditer ces champs en direct</span>
           </div>
           <div class="flex-1 overflow-y-auto p-4">
@@ -1814,128 +1995,8 @@ function renderBackWikotWorkshop() {
 // STATELESS : plus d'historique. Stub conservé au cas où un onclick résiduel l'appelle.
 function toggleBackWikotHistorySidebar() { /* no-op */ }
 
-// --------------------------------------------
-// VUE 3 BIS : CHAT-ONLY (workflows lite + Codes Wikot, sans formulaire)
-// 4 workflows concernés :
-//  - gerer_conversations (lite, conseil)
-//  - chercher_conversations (lite, conseil)
-//  - gerer_taches (lite, conseil)
-//  - gerer_codes_wikot (édition directe via tools backend)
-// --------------------------------------------
-function renderBackWikotChatOnly() {
-  const wfMode = state.backWikotWorkflowMode;
-  const wf = BACK_WIKOT_WORKFLOWS[wfMode];
-  if (!wf) {
-    state.backWikotStep = 'home';
-    return renderBackWikotHome();
-  }
-  const s = wikotState('max');
-  const messages = s.messages || [];
-  const isLoading = s.loading;
-  const isSending = s.sending;
-
-  // Placeholder + intro adaptés au workflow
-  let placeholder = 'Décris ton besoin…';
-  let introTitle = 'Décris ton besoin';
-  let introText = 'Back Wikot va te répondre selon ce mode.';
-  let modeBadge = wf.isLite ? 'Mode conseil' : 'Édition directe';
-
-  if (wfMode === 'gerer_conversations') {
-    placeholder = 'Ex : « Je veux organiser un salon Réception avec 3 channels »';
-    introTitle = 'Organisons tes salons et channels';
-    introText = "Décris ton équipe et tes besoins de communication. Back Wikot te propose une structure prête à appliquer dans l'onglet Discussion.";
-  } else if (wfMode === 'chercher_conversations') {
-    placeholder = 'Ex : « Je cherche le message où Marie a parlé de la chaudière »';
-    introTitle = 'Affinons ta recherche';
-    introText = "Dis-moi ce que tu cherches dans l'historique. Back Wikot reformule en mots-clés efficaces à utiliser dans la barre de recherche.";
-  } else if (wfMode === 'gerer_taches') {
-    placeholder = 'Ex : « Tâche quotidienne : vérifier les minibars chaque matin »';
-    introTitle = 'Cadrons ta tâche';
-    introText = "Décris la tâche. Back Wikot te livre une fiche prête à recopier dans l'onglet Tâches (titre, récurrence, priorité, assignés).";
-  } else if (wfMode === 'gerer_codes_wikot') {
-    placeholder = 'Ex : « Mets le client Martin en chambre 12, départ le 15 mai »';
-    introTitle = 'Que veux-tu modifier ?';
-    introText = "Code hôtel, numéro de chambre, ou client courant : décris l'opération. Back Wikot l'effectue directement.";
-  }
-
-  // Couleur d'accent du header selon le mode
-  const isAdminEdit = wfMode === 'gerer_codes_wikot';
-  const headerIconBg = isAdminEdit ? 'var(--c-navy)' : 'var(--c-cream-deep)';
-  const headerIconColor = isAdminEdit ? 'var(--c-gold)' : 'var(--c-navy)';
-
-  return `
-    <div class="fade-in flex flex-col" style="height: calc(100vh - 8rem); max-height: calc(100vh - 8rem);">
-      <!-- Header -->
-      <div class="flex items-center justify-between mb-3 shrink-0 gap-2">
-        <div class="flex items-center gap-2 sm:gap-3 min-w-0">
-          <button onclick="backToBackWikotHome()" class="w-9 h-9 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 text-navy-600 flex items-center justify-center shrink-0">
-            <i class="fas fa-arrow-left"></i>
-          </button>
-          <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-sm" style="background:${headerIconBg}; color:${headerIconColor};">
-            <i class="fas ${wf.icon}"></i>
-          </div>
-          <div class="min-w-0">
-            <h1 class="font-display text-base sm:text-lg font-semibold truncate" style="color:var(--c-navy);">${escapeHtml(wf.label)}</h1>
-            <p class="text-[11px] truncate" style="color:rgba(15,27,40,0.55);">
-              <span class="inline-block px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider font-semibold mr-1" style="background:rgba(15,27,40,0.06);color:rgba(15,27,40,0.55);">${escapeHtml(modeBadge)}</span>
-              ${escapeHtml(wf.description)}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <!-- Conteneur chat plein écran (pas de form à gauche) -->
-      <div class="flex-1 bg-white border border-gray-200 rounded-xl flex flex-col min-h-0 overflow-hidden">
-        <div id="wikot-max-messages" class="flex-1 overflow-y-auto p-4">
-          ${messages.length === 0 && !isLoading ? `
-            <div class="text-center py-10 max-w-md mx-auto">
-              <div class="w-16 h-16 mx-auto rounded-full flex items-center justify-center text-xl mb-3 shadow-sm" style="background:${headerIconBg}; color:${headerIconColor};">
-                <i class="fas ${wf.icon}"></i>
-              </div>
-              <p class="font-display text-base font-semibold mb-1.5" style="color:var(--c-navy);">${escapeHtml(introTitle)}</p>
-              <p class="text-xs leading-relaxed" style="color:rgba(15,27,40,0.6);">${escapeHtml(introText)}</p>
-            </div>
-          ` : ''}
-          ${isLoading ? '<div class="flex justify-center items-center h-full text-navy-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement…</div>' : ''}
-          ${messages.map(m => renderWikotMessage(m, 'max')).join('')}
-          ${isSending ? `
-            <div class="flex justify-start mb-4">
-              <div class="flex gap-2">
-                <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs" style="background:${headerIconBg}; color:${headerIconColor};">
-                  <i class="fas ${wf.icon}"></i>
-                </div>
-                <div class="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-                  <div class="flex gap-1">
-                    <div class="w-2 h-2 rounded-full animate-bounce" style="background:var(--c-gold);animation-delay: 0ms"></div>
-                    <div class="w-2 h-2 rounded-full animate-bounce" style="background:var(--c-gold);animation-delay: 150ms"></div>
-                    <div class="w-2 h-2 rounded-full animate-bounce" style="background:var(--c-gold);animation-delay: 300ms"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ` : ''}
-        </div>
-        <div class="border-t border-gray-200 bg-white p-2 shrink-0">
-          <div class="flex items-end gap-2">
-            <textarea id="wikot-max-input" rows="1"
-              placeholder="${escapeHtml(placeholder)}"
-              oninput="autoResizeTextarea(this)"
-              onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('max');}"
-              ${isSending ? 'disabled' : ''}
-              class="form-input-mobile flex-1 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 resize-none max-h-32 text-sm"
-              style="--tw-ring-color:var(--c-gold);"></textarea>
-            ${renderVoiceWidget('staff', 'max')}
-            <button onclick="sendWikotMessage('max')" ${isSending ? 'disabled' : ''}
-              class="w-10 h-10 rounded-xl text-white flex items-center justify-center shrink-0 transition-colors disabled:bg-gray-300"
-              style="background:var(--c-navy);" title="Envoyer">
-              <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-}
+// (suppressed) renderBackWikotChatOnly — remplacé par le pattern workshop unifié
+// avec form left + chat right. Les 4 nouveaux modes ont leur propre render*Form ci-dessous.
 
 // Form procédure : titre, déclencheur, description, catégorie, étapes
 // Helper : retourne les classes CSS pour le highlight d'un champ récemment modifié par l'IA
@@ -2059,3 +2120,320 @@ function renderBackWikotInfoForm(f) {
   `;
 }
 
+// ============================================
+// FORM : Conversations (gérer) — arborescence groupes + salons
+// Mutations LIVE (chaque tool call déclenche un POST/PUT/DELETE immédiat).
+// ============================================
+function renderBackWikotChatTreeForm(f) {
+  const groups = f.groups || [];
+  const totalChannels = groups.reduce((s, g) => s + (g.channels || []).length, 0);
+  const last = f.lastAction;
+
+  return `
+    <div class="space-y-4 ${fieldHighlightClass('groups')}">
+      <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center text-navy-600">
+          <i class="fas fa-sitemap text-sm"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs font-semibold text-navy-800">${groups.length} groupe${groups.length > 1 ? 's' : ''} · ${totalChannels} salon${totalChannels > 1 ? 's' : ''}</div>
+          <div class="text-[11px] text-navy-500">Back Wikot peut créer, renommer, déplacer ou supprimer.</div>
+        </div>
+      </div>
+
+      ${last ? `
+        <div class="text-[11px] px-2.5 py-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-1.5">
+          <i class="fas fa-check-circle"></i>${escapeHtml(last.label || '')}
+        </div>
+      ` : ''}
+
+      ${groups.length === 0 ? `
+        <div class="text-center py-8 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">
+          Aucun groupe. Demande à Back Wikot de créer ton premier groupe et tes salons.
+        </div>
+      ` : groups.map(g => `
+        <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
+          <div class="px-3 py-2 flex items-center gap-2" style="background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
+            <i class="fas ${g.icon || 'fa-folder'} text-sm" style="color: var(--c-gold-deep);"></i>
+            <span class="text-sm font-semibold" style="color: var(--c-navy);">${escapeHtml(g.name)}</span>
+            ${g.is_system ? '<span class="text-[9px] uppercase font-bold tracking-wider ml-1" style="color: rgba(15,27,40,0.4);">par défaut</span>' : ''}
+            <span class="ml-auto text-[10px] text-navy-400">${(g.channels || []).length} salon${(g.channels || []).length > 1 ? 's' : ''}</span>
+          </div>
+          <div class="divide-y divide-gray-100">
+            ${(g.channels || []).length === 0 ? `
+              <div class="px-3 py-2 text-[11px] italic text-navy-400">Aucun salon dans ce groupe.</div>
+            ` : (g.channels || []).map(c => `
+              <div class="px-3 py-1.5 flex items-center gap-2 text-xs">
+                <i class="fas ${c.icon || 'fa-comment'} text-[11px] text-navy-400"></i>
+                <span class="font-medium text-navy-800 truncate">${escapeHtml(c.name)}</span>
+                ${c.description ? `<span class="text-navy-400 truncate">— ${escapeHtml(c.description)}</span>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('')}
+
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
+        <i class="fas fa-circle-info mt-0.5"></i>
+        <div>
+          <strong>Mutations live.</strong> Chaque action de Back Wikot s'applique immédiatement. Le bouton <strong>Enregistrer</strong> ferme le workshop et rafraîchit la page Discussion.
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================
+// FORM : Conversations (chercher) — résultats de recherche
+// ============================================
+function renderBackWikotChatSearchForm(f) {
+  const results = f.results || [];
+  return `
+    <div class="space-y-3 ${fieldHighlightClass('results')}">
+      <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
+        <div class="text-[10px] uppercase tracking-wider font-semibold text-navy-500 mb-1">Requête</div>
+        <div class="text-sm text-navy-800 ${fieldHighlightClass('query')}">${f.query ? escapeHtml(f.query) : '<span class="italic text-navy-300">(à formuler par Back Wikot)</span>'}</div>
+        ${f.lastSearchedAt ? `<div class="text-[10px] text-navy-400 mt-1.5">${results.length} résultat${results.length > 1 ? 's' : ''}${f.total > results.length ? ` · ${f.total} au total` : ''} · recherche effectuée</div>` : ''}
+      </div>
+
+      ${results.length === 0 ? `
+        <div class="text-center py-10 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">
+          ${f.lastSearchedAt ? 'Aucun message ne correspond.' : 'Décris ce que tu cherches dans le chat à droite.'}
+        </div>
+      ` : `
+        <div class="space-y-2">
+          ${results.map(r => `
+            <div onclick="openChannel(${r.channel_id})" class="bg-white border border-gray-200 hover:border-amber-300 hover:shadow-sm rounded-xl p-3 cursor-pointer transition-all">
+              <div class="flex items-start gap-2 mb-1">
+                <div class="text-[10px] uppercase tracking-wider font-semibold text-navy-500 truncate flex-1">
+                  <i class="fas fa-folder text-[9px] mr-1"></i>${escapeHtml(r.group_name || '')}
+                  <i class="fas fa-chevron-right text-[8px] mx-1 text-navy-300"></i>
+                  <i class="fas fa-comment text-[9px] mr-1"></i>${escapeHtml(r.channel_name || '')}
+                </div>
+                <div class="text-[10px] text-navy-400 shrink-0">${typeof formatChatTime === 'function' ? formatChatTime(r.created_at) : ''}</div>
+              </div>
+              <div class="text-[11px] font-semibold text-navy-700 mb-1">${escapeHtml(r.author || '')}</div>
+              <div class="text-[12px] text-navy-700 line-clamp-3 leading-relaxed">${escapeHtml((r.content || '').slice(0, 280))}${(r.content || '').length > 280 ? '…' : ''}</div>
+            </div>
+          `).join('')}
+        </div>
+      `}
+
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
+        <i class="fas fa-circle-info mt-0.5"></i>
+        <div>
+          <strong>Recherche pilotée par Back Wikot.</strong> Décris ce que tu cherches dans le chat. Clique sur un résultat pour ouvrir le salon. <strong>Enregistrer</strong> ferme simplement le workshop.
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================
+// FORM : Tâches — formulaire complet (template ou instance)
+// ============================================
+function renderBackWikotTaskForm(f) {
+  const employees = state.employees || [];
+  const assigneeNames = (f.assignee_ids || []).map(id => {
+    const u = employees.find(e => e.id === id);
+    return u ? (u.name || u.email || `#${id}`) : `#${id}`;
+  });
+  const dayLabels = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+  const dayBitmap = f.recurrence_days || 0;
+
+  const priorityLabel = { low: 'Basse', normal: 'Normale', high: 'Haute' }[f.priority || 'normal'];
+  const priorityColor = { low: 'text-navy-500', normal: 'text-navy-700', high: 'text-rose-600 font-bold' }[f.priority || 'normal'];
+
+  return `
+    <div class="space-y-4">
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Type</label>
+          <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 ${fieldHighlightClass('task_kind')}">
+            ${f.task_kind === 'instance' ? '<i class="fas fa-bullseye mr-1.5 text-orange-500"></i>Tâche ponctuelle' : '<i class="fas fa-clipboard-list mr-1.5 text-emerald-500"></i>Modèle de tâche'}
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Mode</label>
+          <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 ${fieldHighlightClass('mode')}">
+            ${f.mode === 'recurring' ? '<i class="fas fa-rotate mr-1.5 text-blue-500"></i>Récurrente' : '<i class="fas fa-calendar-day mr-1.5 text-amber-500"></i>Ponctuelle'}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Titre <span class="text-red-500">*</span></label>
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] ${fieldHighlightClass('title')}">
+          ${f.title ? escapeHtml(f.title) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Description</label>
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] whitespace-pre-wrap ${fieldHighlightClass('description')}">
+          ${f.description ? escapeHtml(f.description) : '<span class="italic text-navy-300">(facultatif)</span>'}
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Catégorie</label>
+          <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 ${fieldHighlightClass('category')}">
+            ${f.category ? escapeHtml(f.category) : '<span class="italic text-navy-400">—</span>'}
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Priorité</label>
+          <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 ${priorityColor} ${fieldHighlightClass('priority')}">
+            ${priorityLabel}
+          </div>
+        </div>
+      </div>
+
+      ${f.mode === 'recurring' ? `
+        <div class="bg-blue-50/40 border border-blue-100 rounded-xl p-3 space-y-3">
+          <div class="text-[10px] uppercase tracking-wider font-semibold text-blue-700">Récurrence</div>
+          <div>
+            <label class="text-xs font-semibold text-navy-700 mb-1 block">Type</label>
+            <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white text-navy-800 ${fieldHighlightClass('recurrence_type')}">
+              ${f.recurrence_type === 'daily' ? 'Quotidienne' : f.recurrence_type === 'weekly' ? 'Hebdomadaire' : f.recurrence_type === 'monthly' ? 'Mensuelle' : '<span class="italic text-navy-300">(non défini)</span>'}
+            </div>
+          </div>
+          ${f.recurrence_type === 'weekly' ? `
+            <div>
+              <label class="text-xs font-semibold text-navy-700 mb-1 block">Jours</label>
+              <div class="flex flex-wrap gap-1 ${fieldHighlightClass('recurrence_days')}">
+                ${dayLabels.map((d, i) => `
+                  <span class="text-[10px] px-2 py-0.5 rounded-full ${(dayBitmap & (1 << i)) ? 'bg-blue-500 text-white font-semibold' : 'bg-gray-100 text-gray-400'}">${d}</span>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+          ${f.recurrence_type === 'monthly' ? `
+            <div>
+              <label class="text-xs font-semibold text-navy-700 mb-1 block">Jour du mois</label>
+              <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white text-navy-800 ${fieldHighlightClass('monthly_day')}">${f.monthly_day || '<span class="italic text-navy-300">(non défini)</span>'}</div>
+            </div>
+          ` : ''}
+        </div>
+      ` : ''}
+
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Heure suggérée</label>
+          <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 ${fieldHighlightClass('suggested_time')}">
+            ${f.suggested_time ? `<i class="fas fa-clock mr-1 text-navy-400"></i>${escapeHtml(f.suggested_time)}` : '<span class="italic text-navy-400">—</span>'}
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Durée (min)</label>
+          <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 ${fieldHighlightClass('duration_min')}">
+            ${f.duration_min ? `${f.duration_min} min` : '<span class="italic text-navy-400">—</span>'}
+          </div>
+        </div>
+      </div>
+
+      ${f.mode === 'recurring' ? `
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-xs font-semibold text-navy-700 mb-1 block">Active du</label>
+            <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 ${fieldHighlightClass('active_from')}">${f.active_from || '<span class="italic text-navy-400">—</span>'}</div>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-navy-700 mb-1 block">Active jusqu'au</label>
+            <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 ${fieldHighlightClass('active_to')}">${f.active_to || '<span class="italic text-navy-400">—</span>'}</div>
+          </div>
+        </div>
+      ` : ''}
+
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Assignés</label>
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] ${fieldHighlightClass('assignee_ids')}">
+          ${assigneeNames.length === 0 ? '<span class="italic text-navy-400">Aucun assigné (= tous les employés)</span>' : assigneeNames.map(n => `<span class="inline-block bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded text-[11px] mr-1 mb-1"><i class="fas fa-user mr-1"></i>${escapeHtml(n)}</span>`).join('')}
+        </div>
+      </div>
+
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
+        <i class="fas fa-circle-info mt-0.5"></i>
+        <div>
+          <strong>Formulaire en lecture seule.</strong> Demande à Back Wikot dans le chat à droite. Clique <strong>Enregistrer</strong> pour persister.
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ============================================
+// FORM : Codes Wikot — code hôtel + chambres + entries occupation
+// Mutations chambres/code = LIVE. Entries occupation = batch sur Enregistrer.
+// ============================================
+function renderBackWikotCodesForm(f) {
+  const rooms = f.rooms || [];
+  const entries = f.entries || {};
+  const occupied = rooms.filter(r => {
+    const e = entries[r.id];
+    return e && (e.guest_name || '').trim();
+  }).length;
+  const last = f.lastAction;
+
+  return `
+    <div class="space-y-4">
+      <div>
+        <label class="text-xs font-semibold text-navy-700 mb-1 block">Code hôtel <span class="text-red-500">*</span></label>
+        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 font-mono uppercase tracking-wide text-navy-800 ${fieldHighlightClass('hotel_code')}">
+          ${f.hotel_code ? escapeHtml(f.hotel_code) : '<span class="italic text-navy-300 normal-case">(à définir)</span>'}
+        </div>
+      </div>
+
+      <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center text-navy-600">
+          <i class="fas fa-door-closed text-sm"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs font-semibold text-navy-800">${rooms.length} chambre${rooms.length > 1 ? 's' : ''} · ${occupied} occupée${occupied > 1 ? 's' : ''}</div>
+          <div class="text-[11px] text-navy-500">Back Wikot peut créer, renommer, supprimer, occuper, libérer.</div>
+        </div>
+      </div>
+
+      ${last ? `
+        <div class="text-[11px] px-2.5 py-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-1.5">
+          <i class="fas fa-check-circle"></i>${escapeHtml(last.label || '')}
+        </div>
+      ` : ''}
+
+      ${rooms.length === 0 ? `
+        <div class="text-center py-6 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300 ${fieldHighlightClass('rooms')}">
+          Aucune chambre. Demande à Back Wikot d'en créer.
+        </div>
+      ` : `
+        <div class="bg-white border border-gray-200 rounded-xl overflow-hidden ${fieldHighlightClass('rooms')} ${fieldHighlightClass('entries')}">
+          <div class="grid items-center gap-2 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-navy-500" style="grid-template-columns: 60px 70px 1fr 110px; background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
+            <div>Chambre</div>
+            <div>Statut</div>
+            <div>Client (= mot de passe)</div>
+            <div>Départ</div>
+          </div>
+          ${rooms.map(r => {
+            const e = entries[r.id] || { guest_name: '', checkout_date: '' };
+            const isOccupied = !!(e.guest_name || '').trim();
+            return `
+              <div class="grid items-center gap-2 px-3 py-1.5 text-xs" style="grid-template-columns: 60px 70px 1fr 110px; background: ${isOccupied ? 'rgba(201,169,97,0.04)' : '#fff'}; border-bottom: 1px solid var(--c-line);">
+                <div class="font-display font-bold text-navy-900">${escapeHtml(r.room_number)}</div>
+                <div>${isOccupied ? '<span class="text-[9px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wider" style="background: var(--c-gold); color: var(--c-navy);">Occupée</span>' : '<span class="text-[9px] px-1.5 py-0.5 rounded-full uppercase tracking-wider" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">Libre</span>'}</div>
+                <div class="truncate text-navy-800">${e.guest_name ? escapeHtml(e.guest_name) : '<span class="italic text-navy-300">—</span>'}</div>
+                <div class="text-navy-600 font-mono text-[11px]">${e.checkout_date || '<span class="italic text-navy-300">—</span>'}</div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `}
+
+      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
+        <i class="fas fa-circle-info mt-0.5"></i>
+        <div>
+          <strong>Code hôtel et chambres = mutations live.</strong> Les entrées d'occupation (client + date départ) sont enregistrées en batch via le bouton <strong>Enregistrer</strong> en haut.
+        </div>
+      </div>
+    </div>
+  `;
+}

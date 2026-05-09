@@ -1604,6 +1604,45 @@ app.get('/api/chat/unread-total', authMiddleware, async (c) => {
   return c.json({ total: fix?.total || 0 })
 })
 
+// GET /api/chat/search — Recherche globale dans les messages de l'hôtel
+// Filtres optionnels : q (mot-clé), channel_id, group_id, author_id, after/before (YYYY-MM-DD), limit (1-50, défaut 20)
+app.get('/api/chat/search', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canAccessChat(user) || !user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+
+  const q = c.req.query('q')
+  const channelId = c.req.query('channel_id')
+  const groupId = c.req.query('group_id')
+  const authorId = c.req.query('author_id')
+  const after = c.req.query('after')
+  const before = c.req.query('before')
+  const limitRaw = parseInt(c.req.query('limit') || '20')
+  const limit = Math.max(1, Math.min(50, isNaN(limitRaw) ? 20 : limitRaw))
+
+  const conds: string[] = ['m.hotel_id = ?']
+  const params: any[] = [user.hotel_id]
+  if (q && q.trim()) { conds.push('m.content LIKE ?'); params.push('%' + q.trim() + '%') }
+  if (channelId) { conds.push('m.channel_id = ?'); params.push(parseInt(channelId)) }
+  if (groupId) { conds.push('ch.group_id = ?'); params.push(parseInt(groupId)) }
+  if (authorId) { conds.push('m.user_id = ?'); params.push(parseInt(authorId)) }
+  if (after && /^\d{4}-\d{2}-\d{2}$/.test(after)) { conds.push('date(m.created_at) >= ?'); params.push(after) }
+  if (before && /^\d{4}-\d{2}-\d{2}$/.test(before)) { conds.push('date(m.created_at) <= ?'); params.push(before) }
+
+  const rows = await c.env.DB.prepare(`
+    SELECT m.id, m.channel_id, m.user_id, m.content, m.created_at,
+           ch.name as channel_name, ch.group_id, g.name as group_name,
+           u.name as author_name
+    FROM chat_messages m
+    JOIN chat_channels ch ON ch.id = m.channel_id
+    JOIN chat_groups g ON g.id = ch.group_id
+    LEFT JOIN users u ON u.id = m.user_id
+    WHERE ${conds.join(' AND ')}
+    ORDER BY m.created_at DESC, m.id DESC
+    LIMIT ?
+  `).bind(...params, limit).all()
+  return c.json({ results: rows.results })
+})
+
 // POST /api/chat/groups — Créer un groupe (admin/éditeur)
 app.post('/api/chat/groups', authMiddleware, async (c) => {
   const user = c.get('user')
@@ -2395,89 +2434,100 @@ Rappel : tu modifies le formulaire en temps réel via update_form. L'utilisateur
   }
 
   // ============================================
-  // NOUVEAU WORKFLOW : GÉRER LES CONVERSATIONS (mode lite, conseil)
+  // WORKFLOW : GÉRER LES CONVERSATIONS (CRUD live salons + channels)
+  // L'IA exécute live via tools. L'arborescence est aussi rendue dans le formulaire.
   // ============================================
   if (workflowMode === 'gerer_conversations') {
-    return `Tu es **Back Wikot**, conseiller pour la **gestion des espaces de discussion** du **${hotelName}**.
+    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **gestion des espaces de discussion** du **${hotelName}**.
 
 ## Ta mission UNIQUE pour cette session
-Aider l'utilisateur à organiser les salons et channels de l'application Wikot de l'hôtel : décider quels salons créer, comment les structurer, comment les nommer, qui doit y avoir accès.
+Modifier directement (en base) l'arborescence des salons et channels de l'application Wikot :
+- Créer / renommer / supprimer un **salon** (groupe).
+- Créer / renommer / déplacer / supprimer un **channel** (sous-salon).
+
+## Outils disponibles
+- \`list_groups\` : liste l'arborescence courante (groupes + channels).
+- \`create_group\` : crée un nouveau salon (groupe).
+- \`rename_group\` : renomme un salon existant.
+- \`delete_group\` : supprime un salon (refuse si système). Supprime aussi tous ses channels et messages.
+- \`create_channel\` : crée un channel dans un salon.
+- \`rename_channel\` : renomme / re-décrit / change l'icône d'un channel.
+- \`move_channel\` : déplace un channel d'un salon à un autre.
+- \`delete_channel\` : supprime un channel (et tous ses messages).
+- \`update_form\` : met à jour le récap visible côté UI (champ \`note\` libre, ex : "Salon Réception ajouté avec 3 channels").
 
 ## Comment tu agis
-- Tu **conseilles** et tu **clarifies**. Tu ne crées pas directement les salons (l'utilisateur le fera ensuite manuellement dans l'onglet Discussion).
-- Tu poses 1 ou 2 questions ciblées : équipes concernées (réception, restaurant, housekeeping…), volume d'échanges attendu, sujets séparés ou regroupés.
-- Tu proposes une **structure concrète** : nom de salon, channels internes, qui y a accès, exemple de premier message.
-- Si l'utilisateur veut renommer ou réorganiser un salon existant, tu suggères une nouvelle arborescence claire.
-
-## Style de réponse
-- Bullet points serrés, formats prêts à copier (ex: "Salon : « Réception » → channels : #planning, #consignes, #incidents").
-- Phrases courtes. Aucune introduction pompeuse.
-- À la fin, tu rappelles à l'utilisateur que la création concrète se fait dans l'onglet **Discussion** de l'application.
+- Tu **commences toujours par un \`list_groups\`** si tu n'as pas encore vu l'arborescence dans cette conversation.
+- Avant toute suppression, tu confirmes l'intention en 1 phrase courte.
+- Pour des batchs de création (ex: "crée 3 channels"), tu chaînes plusieurs tools dans le même tour (1 appel par opération).
+- Après chaque action réussie, tu écris **1 phrase ultra courte** ("Salon Réception créé." / "Channel #planning déplacé.").
+- À la fin d'un batch, tu peux appeler \`update_form\` avec un \`note\` qui résume ce qui a été fait.
+- Tu ne fais **rien d'autre** que CRUD sur salons/channels. Tu n'envoies pas de messages, tu ne modifies pas les permissions.
 
 ${styleRules}
-
-## Arborescence actuelle de l'hôtel (pour comprendre la taille de l'équipe)
-${arborescence}
 ${formContextStr}
 
-Rappel : tu es un conseiller en organisation. Tu ne crées rien en base. Tu donnes une structure claire que l'utilisateur appliquera en 2 clics.`
+Rappel : tes appels de tools écrivent **directement en base**. Confirme toujours avant une suppression de salon ou de channel non vide.`
   }
 
   // ============================================
-  // NOUVEAU WORKFLOW : CHERCHER DANS LES CONVERSATIONS (mode lite)
+  // WORKFLOW : CHERCHER DANS LES CONVERSATIONS (recherche live multi-critères)
   // ============================================
   if (workflowMode === 'chercher_conversations') {
-    return `Tu es **Back Wikot**, assistant de **recherche dans l'historique des messages** du **${hotelName}**.
+    return `Tu es **Back Wikot**, agent de **recherche dans l'historique des messages** du **${hotelName}**.
 
 ## Ta mission UNIQUE pour cette session
-Aider l'utilisateur à formuler une recherche précise dans l'historique des conversations de l'application Wikot, et à interpréter ce qu'il pourrait y trouver.
+Trouver des messages dans l'historique des conversations Wikot. Tu peux filtrer par mot-clé, salon, channel, auteur, période.
+
+## Outils disponibles
+- \`list_groups\` : liste les salons et channels (utile pour mapper un nom → un id).
+- \`list_employees\` : liste les utilisateurs de l'hôtel (utile pour mapper un prénom → un user_id).
+- \`search_messages\` : recherche les messages. Paramètres : \`q\` (mot-clé optionnel), \`channel_id\` (optionnel), \`group_id\` (optionnel, recherche dans tous les channels d'un groupe), \`author_id\` (optionnel), \`after\` / \`before\` (YYYY-MM-DD optionnels), \`limit\` (1-50, défaut 20).
+- \`update_form\` : pousse les résultats dans le formulaire visible. Champs : \`query\` (résumé de la recherche), \`results\` (tableau {id, channel_id, channel_name, group_name, author_name, created_at, content}).
 
 ## Comment tu agis
-- Pour l'instant, tu n'as **pas accès direct** à l'historique des messages (la fonctionnalité est en cours de branchement).
-- Tu **reformules** la recherche de l'utilisateur en mots-clés efficaces : qui, quoi, quand, dans quel salon.
-- Tu **proposes plusieurs angles** : recherche par auteur, par date, par mot-clé métier, par salon.
-- Tu rappelles ensuite à l'utilisateur d'aller utiliser la **barre de recherche dans l'onglet Discussion** avec les mots-clés que tu lui as suggérés.
-
-## Style de réponse
-- Une liste numérotée de mots-clés ou requêtes prêtes à coller.
-- Une phrase courte par option pour expliquer ce qu'elle ramènera.
-- Pas de baratin.
+- Si l'utilisateur dit "dans le salon Réception" ou "par Pierre", tu **résous d'abord les noms en IDs** via \`list_groups\` et/ou \`list_employees\`, **puis** tu appelles \`search_messages\` avec les bons IDs.
+- Tu appelles \`search_messages\` puis tu pousses immédiatement les résultats vers le formulaire avec \`update_form\` (\`query\` + \`results\`).
+- Tu écris 1 phrase courte au-dessus du formulaire pour résumer (ex : "12 messages trouvés contenant « linge » dans #housekeeping.").
+- Si aucun résultat, tu propose 2 ou 3 reformulations possibles, sans rappeler une nouvelle recherche tant que l'utilisateur n'a pas validé.
 
 ${styleRules}
 ${formContextStr}
 
-Rappel : tu es un coach de recherche, pas un moteur de recherche. Donne des requêtes propres et oriente vers la barre de recherche.`
+Rappel : tes recherches sont en lecture seule. Ne modifie jamais un message, ne supprime jamais un message.`
   }
 
   // ============================================
-  // NOUVEAU WORKFLOW : GÉRER LES TÂCHES (mode lite, conseil)
+  // WORKFLOW : GÉRER LES TÂCHES (CRUD live templates + instances)
   // ============================================
   if (workflowMode === 'gerer_taches') {
-    return `Tu es **Back Wikot**, conseiller pour la **gestion des tâches** du **${hotelName}**.
+    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **gestion des tâches** du **${hotelName}**.
 
 ## Ta mission UNIQUE pour cette session
-Aider l'utilisateur à formuler, structurer et planifier des tâches : qui fait quoi, quand, à quelle fréquence, avec quelle priorité. Le but est qu'il aille ensuite créer ces tâches dans l'onglet **Tâches** de l'application.
+Créer / modifier des tâches dans l'application Wikot. Deux types de tâches :
+1. **Tâche récurrente** (\`task_kind=template\`) : se régénère automatiquement (daily / weekly avec jours / monthly avec jour du mois).
+2. **Tâche ponctuelle** (\`task_kind=instance\`) : une seule fois, sur une date précise.
+
+## Outils disponibles
+- \`list_tasks\` : liste les tâches existantes (templates + instances du jour).
+- \`get_task\` : détail d'une tâche (template ou instance) + ses assignés.
+- \`list_employees\` : liste les utilisateurs de l'hôtel (pour les assignations).
+- \`load_task_for_edit\` : charge une tâche existante dans le formulaire (mode update).
+- \`start_new_task\` : initialise un formulaire vierge pour une nouvelle tâche.
+- \`update_form\` : met à jour le formulaire visible. Champs : \`task_kind\` ('template'|'instance'), \`mode\` ('create'|'update'), \`task_id\` (en update), \`title\`, \`description\`, \`category\`, \`priority\` ('normal'|'high'|'urgent'), \`recurrence_type\` ('daily'|'weekly'|'monthly'), \`recurrence_days\` (bitmask 1-127 si weekly), \`monthly_day\` (1-31 ou -1 si monthly), \`suggested_time\` ('HH:MM'), \`duration_min\` (1-1439), \`active_from\` (YYYY-MM-DD), \`active_to\` (YYYY-MM-DD), \`task_date\` (YYYY-MM-DD pour instance), \`assignee_ids\` (tableau d'ints).
 
 ## Comment tu agis
-- Tu poses 1 ou 2 questions ciblées : nature de la tâche (ponctuelle, quotidienne, hebdomadaire, mensuelle), équipe concernée, durée estimée, priorité.
-- Tu proposes une **fiche tâche prête à copier** :
-  • Titre court (verbe à l'impératif + complément)
-  • Description en 1 ou 2 phrases concrètes
-  • Récurrence (aucune / quotidienne / hebdomadaire jour X / mensuelle jour X)
-  • Priorité (basse / normale / haute)
-  • Durée estimée (en minutes)
-  • Assignés (rôles métier : réception, serveur, housekeeping, etc.)
-- Si l'utilisateur veut décomposer une grosse tâche, tu proposes plusieurs sous-tâches courtes.
-
-## Style de réponse
-- Format fiche structuré, scannable, prêt à recopier dans le formulaire Tâche.
-- Aucune introduction pompeuse.
-- À la fin, tu rappelles que la création concrète se fait dans l'onglet **Tâches**.
+- L'utilisateur enregistre lui-même via le bouton "Enregistrer" : tes \`update_form\` ne touchent **pas** la base, ils remplissent le formulaire.
+- Tu commences par 1 question si l'utilisateur est vague : récurrente ou ponctuelle ? quand ? qui ?
+- Tu remplis tous les champs cohérents en 1 ou 2 \`update_form\` consécutifs.
+- Pour les jours de la semaine (\`recurrence_days\`), c'est un bitmask : Lun=1, Mar=2, Mer=4, Jeu=8, Ven=16, Sam=32, Dim=64. "Tous les jours" = 127. "Lun-Ven" = 31. "Week-end" = 96.
+- Pour assigner par nom ("assigne à Pierre"), appelle d'abord \`list_employees\`, trouve l'id, puis push \`assignee_ids: [id]\` via \`update_form\`.
+- Pour modifier une tâche existante, appelle \`load_task_for_edit\` qui charge le formulaire, puis applique les changements via \`update_form\`.
 
 ${styleRules}
 ${formContextStr}
 
-Rappel : tu es un coach d'organisation. Tu produis une fiche tâche propre que l'utilisateur enregistrera lui-même dans l'onglet Tâches.`
+Rappel : tes \`update_form\` remplissent le formulaire. L'utilisateur clique "Enregistrer" pour persister. Sois ultra-précis sur les ids et bitmasks.`
   }
 
   // ============================================
@@ -2509,34 +2559,41 @@ Rappel : tu es un coach d'organisation. Tu produis une fiche tâche propre que l
     return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **gestion des Codes Wikot** du **${hotelName}**.
 
 ## Ta mission UNIQUE pour cette session
-Aider l'utilisateur à modifier les éléments qui contrôlent l'accès client à l'application :
+Modifier ce qui contrôle l'accès client à l'application :
 1. Le **code hôtel client** (utilisé par les clients pour se connecter à leur chambre).
-2. Les **numéros de chambre** (renommage).
-3. Le **client courant** dans une chambre (nom du client, date de checkout) ou libérer une chambre.
+2. Les **chambres** : créer / renommer / supprimer.
+3. L'**occupation du jour** : qui dort dans chaque chambre + date de checkout, ou libérer la chambre.
+
+## Deux familles de tools
+**A. Live (écrivent en base immédiatement)** :
+- \`set_hotel_code\` : modifie le code hôtel client (4-12 caractères alphanumériques majuscules).
+- \`rename_room\` : change le numéro d'une chambre.
+- \`create_room\` : crée une nouvelle chambre.
+- \`bulk_create_rooms\` : crée plusieurs chambres d'un coup (idempotent, skip les numéros existants).
+- \`delete_room\` : supprime une chambre (et son compte client + sessions).
+- \`clear_room_now\` : libère immédiatement une chambre (kill sessions).
+
+**B. Form-driven (remplissent le formulaire, l'utilisateur valide)** :
+- \`get_state\` : récupère l'état courant (code hôtel + chambres + occupants). À appeler en premier.
+- \`set_room_guest\` : pré-remplit dans le formulaire le nom du client + checkout pour une chambre. Pas live.
+- \`clear_room_guest\` : pré-remplit dans le formulaire la libération d'une chambre. Pas live.
+- \`update_form\` : champs libres (\`hotel_code\`, \`note\`).
 
 ## Comment tu agis
-- Tu utilises les tools dédiés (\`set_hotel_code\`, \`rename_room\`, \`set_room_guest\`, \`clear_room_guest\`).
-- Tu confirmes TOUJOURS l'intention avant d'appeler un tool. Si l'utilisateur dit "renomme la 12 en 14", tu vérifies qu'il n'y a pas déjà une chambre 14, sinon tu lui demandes ce qu'il veut faire.
-- Pour le **code hôtel** : il doit faire entre 4 et 12 caractères, lettres+chiffres+majuscules. Tu le mets automatiquement en majuscules.
-- Pour le **nom du client** : tu prends ce que dit l'utilisateur tel quel, sans inventer. Si la date de checkout est absente, tu la demandes (format JJ/MM/AAAA, tu la convertis en YYYY-MM-DD).
-- Pour **renommer une chambre** : tu vérifies que le nouveau numéro n'existe pas déjà.
+- Tu **commences par \`get_state\`** si tu n'as pas vu l'état courant.
+- Pour **set_room_guest** et **clear_room_guest**, tu ne touches PAS la base : tu remplis le formulaire et l'utilisateur clique "Enregistrer" en haut à droite pour persister tout en batch.
+- Pour le **code hôtel**, **rename_room**, **create_room**, **bulk_create_rooms**, **delete_room**, **clear_room_now** : c'est live. Confirme en 1 phrase avant tout delete/clear_now.
+- Date checkout : convertis JJ/MM/AAAA → YYYY-MM-DD. Si absente, défaut = demain.
+- Pour assigner plusieurs clients d'un coup ("liste des arrivées du jour"), enchaîne plusieurs \`set_room_guest\` puis dis "Pré-rempli, clique Enregistrer pour valider."
 
-## Tu ne fais QUE ça
-- Tu ne crées pas de nouvelle chambre (c'est l'onglet Codes Wikot qui le fait).
-- Tu ne supprimes pas de chambre.
-- Tu ne réponds pas aux questions générales.
-
-## Style de réponse
-- 1 phrase courte pour confirmer ce que tu vas faire.
-- Tu appelles le tool.
-- 1 phrase courte après le tool pour confirmer ce qui est fait.
-- Aucune introduction pompeuse, aucun récap inutile.
+## Style
+- 1 phrase courte avant le batch de tools, 1 phrase courte après. Pas de baratin.
 
 ${styleRules}
 ${codesState}
 ${formContextStr}
 
-Rappel : tu écris en base directement via les tools. Confirme l'intention si elle est ambiguë avant d'agir.`
+Rappel : distingue bien live vs form-driven. Confirme avant tout delete.`
   }
 
   // ============================================
@@ -2756,21 +2813,329 @@ RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond pl
   }
 
   // ============================================
-  // WORKFLOW : CODES WIKOT (édition directe en base)
-  // Tools : set_hotel_code, rename_room, set_room_guest, clear_room_guest
+  // WORKFLOW : GÉRER LES CONVERSATIONS (CRUD live salons + channels)
+  // ============================================
+  if (workflowMode === 'gerer_conversations') {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'list_groups',
+        description: 'Liste tous les salons (groupes) et leurs channels de l\'hôtel. À appeler en début de conversation pour voir l\'arborescence. Retourne {groups: [{id, name, icon, color, is_system, channels: [{id, name, description, icon}]}]}.',
+        parameters: { type: 'object', properties: {} }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'create_group',
+        description: 'Crée un nouveau salon (groupe).',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Nom du salon (1-60 chars)' },
+            icon: { type: 'string', description: 'Icône Font Awesome (ex: fa-folder, fa-utensils)' },
+            color: { type: 'string', description: 'Couleur hex (ex: #3B82F6)' }
+          },
+          required: ['name']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'rename_group',
+        description: 'Renomme un salon existant et/ou change son icône/couleur.',
+        parameters: {
+          type: 'object',
+          properties: {
+            group_id: { type: 'integer' },
+            name: { type: 'string' },
+            icon: { type: 'string' },
+            color: { type: 'string' }
+          },
+          required: ['group_id', 'name']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'delete_group',
+        description: 'Supprime un salon et tous ses channels + messages. Refusé si le salon est système.',
+        parameters: {
+          type: 'object',
+          properties: { group_id: { type: 'integer' } },
+          required: ['group_id']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'create_channel',
+        description: 'Crée un channel dans un salon donné.',
+        parameters: {
+          type: 'object',
+          properties: {
+            group_id: { type: 'integer' },
+            name: { type: 'string', description: 'Nom du channel (1-80 chars, sans #)' },
+            description: { type: 'string' },
+            icon: { type: 'string', description: 'Icône Font Awesome (défaut fa-hashtag)' }
+          },
+          required: ['group_id', 'name']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'rename_channel',
+        description: 'Renomme un channel et/ou modifie sa description ou son icône.',
+        parameters: {
+          type: 'object',
+          properties: {
+            channel_id: { type: 'integer' },
+            name: { type: 'string' },
+            description: { type: 'string' },
+            icon: { type: 'string' }
+          },
+          required: ['channel_id']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'move_channel',
+        description: 'Déplace un channel d\'un salon à un autre.',
+        parameters: {
+          type: 'object',
+          properties: {
+            channel_id: { type: 'integer' },
+            new_group_id: { type: 'integer' }
+          },
+          required: ['channel_id', 'new_group_id']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'delete_channel',
+        description: 'Supprime un channel et tous ses messages.',
+        parameters: {
+          type: 'object',
+          properties: { channel_id: { type: 'integer' } },
+          required: ['channel_id']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'update_form',
+        description: 'Met à jour le récap visible côté UI. Champ note libre pour résumer ce qui a été fait dans la session.',
+        parameters: {
+          type: 'object',
+          properties: {
+            note: { type: 'string', description: 'Texte court de récap visible dans le formulaire' }
+          }
+        }
+      }
+    })
+  }
+
+  // ============================================
+  // WORKFLOW : CHERCHER DANS LES CONVERSATIONS (read-only)
+  // ============================================
+  if (workflowMode === 'chercher_conversations') {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'list_groups',
+        description: 'Liste les salons et channels de l\'hôtel pour résoudre les noms en IDs. Retourne {groups: [{id, name, channels: [{id, name}]}]}.',
+        parameters: { type: 'object', properties: {} }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'list_employees',
+        description: 'Liste les utilisateurs (admin + employés) de l\'hôtel pour résoudre les prénoms en user_ids. Retourne [{id, name, role}].',
+        parameters: { type: 'object', properties: {} }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'search_messages',
+        description: 'Recherche des messages dans l\'historique. Au moins un critère parmi q, channel_id, group_id, author_id, after, before est requis. Retourne {results: [{id, channel_id, channel_name, group_name, author_name, created_at, content}]}.',
+        parameters: {
+          type: 'object',
+          properties: {
+            q: { type: 'string', description: 'Mot-clé recherché dans le contenu (LIKE %q%)' },
+            channel_id: { type: 'integer', description: 'Restreindre à un channel précis' },
+            group_id: { type: 'integer', description: 'Restreindre à un salon (tous ses channels)' },
+            author_id: { type: 'integer', description: 'Restreindre à un auteur (user_id)' },
+            after: { type: 'string', description: 'Date min YYYY-MM-DD (incluse)' },
+            before: { type: 'string', description: 'Date max YYYY-MM-DD (incluse)' },
+            limit: { type: 'integer', description: '1-50, défaut 20' }
+          }
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'update_form',
+        description: 'Pousse les résultats de recherche dans le formulaire visible.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Résumé textuel de la recherche faite' },
+            results: {
+              type: 'array',
+              description: 'Tableau de messages à afficher',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'integer' },
+                  channel_id: { type: 'integer' },
+                  channel_name: { type: 'string' },
+                  group_name: { type: 'string' },
+                  author_name: { type: 'string' },
+                  created_at: { type: 'string' },
+                  content: { type: 'string' }
+                }
+              }
+            }
+          }
+        }
+      }
+    })
+  }
+
+  // ============================================
+  // WORKFLOW : GÉRER LES TÂCHES (form-driven create/update)
+  // ============================================
+  if (workflowMode === 'gerer_taches') {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'list_tasks',
+        description: 'Liste les tâches existantes : templates récurrents + instances ponctuelles du jour. Retourne {templates: [{id, title, recurrence_type, recurrence_days, monthly_day, priority, is_active}], instances: [{id, title, task_date, suggested_time, priority, status}]}.',
+        parameters: { type: 'object', properties: {} }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'get_task',
+        description: 'Récupère le détail complet d\'une tâche par son id et son type (template ou instance).',
+        parameters: {
+          type: 'object',
+          properties: {
+            task_kind: { type: 'string', enum: ['template', 'instance'] },
+            task_id: { type: 'integer' }
+          },
+          required: ['task_kind', 'task_id']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'list_employees',
+        description: 'Liste les employés assignables (admin + employees) de l\'hôtel. Retourne [{id, name, role, job_role}].',
+        parameters: { type: 'object', properties: {} }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'start_new_task',
+        description: 'Initialise un formulaire vierge pour une nouvelle tâche. Précise le type.',
+        parameters: {
+          type: 'object',
+          properties: {
+            task_kind: { type: 'string', enum: ['template', 'instance'], description: 'template = récurrente, instance = ponctuelle' }
+          },
+          required: ['task_kind']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'load_task_for_edit',
+        description: 'Charge une tâche existante dans le formulaire en mode "update". Le formulaire est pré-rempli avec les données actuelles.',
+        parameters: {
+          type: 'object',
+          properties: {
+            task_kind: { type: 'string', enum: ['template', 'instance'] },
+            task_id: { type: 'integer' }
+          },
+          required: ['task_kind', 'task_id']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'update_form',
+        description: 'Met à jour le formulaire de tâche visible. Tous les champs sont optionnels et n\'écrasent que ce qui est passé. recurrence_days est un bitmask : Lun=1 Mar=2 Mer=4 Jeu=8 Ven=16 Sam=32 Dim=64 (tous=127, lun-ven=31, weekend=96).',
+        parameters: {
+          type: 'object',
+          properties: {
+            task_kind: { type: 'string', enum: ['template', 'instance'] },
+            mode: { type: 'string', enum: ['create', 'update'] },
+            task_id: { type: 'integer', description: 'Requis en mode update' },
+            title: { type: 'string' },
+            description: { type: 'string' },
+            category: { type: 'string' },
+            priority: { type: 'string', enum: ['normal', 'high', 'urgent'] },
+            recurrence_type: { type: 'string', enum: ['daily', 'weekly', 'monthly'], description: 'Templates uniquement' },
+            recurrence_days: { type: 'integer', description: 'Bitmask 0-127 si weekly' },
+            monthly_day: { type: 'integer', description: '1-31 ou -1 (dernier jour) si monthly' },
+            suggested_time: { type: 'string', description: 'Format HH:MM' },
+            duration_min: { type: 'integer', description: '1-1439' },
+            active_from: { type: 'string', description: 'YYYY-MM-DD (templates)' },
+            active_to: { type: 'string', description: 'YYYY-MM-DD (templates)' },
+            task_date: { type: 'string', description: 'YYYY-MM-DD (instance ponctuelle)' },
+            assignee_ids: {
+              type: 'array',
+              items: { type: 'integer' },
+              description: 'Liste des user_ids assignés (utilise list_employees pour résoudre les noms)'
+            }
+          }
+        }
+      }
+    })
+  }
+
+  // ============================================
+  // WORKFLOW : CODES WIKOT (mix live + form-driven)
   // Permission : admin du hôtel uniquement (vérifié côté exécution)
   // ============================================
   if (workflowMode === 'gerer_codes_wikot') {
+    // ----- LECTURE -----
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'get_state',
+        description: 'Récupère l\'état courant : code hôtel + liste des chambres avec leurs occupants courants. Retourne {hotel_code, rooms: [{id, room_number, floor, capacity, guest_name, checkout_date, is_active}]}.',
+        parameters: { type: 'object', properties: {} }
+      }
+    })
+    // ----- LIVE (écrivent en base) -----
     tools.push({
       type: 'function',
       function: {
         name: 'set_hotel_code',
-        description: 'Modifie le code hôtel utilisé par les clients pour se connecter à leur chambre. Le code est automatiquement mis en majuscules. Doit faire entre 4 et 12 caractères alphanumériques.',
+        description: '[LIVE] Modifie le code hôtel utilisé par les clients. 4-12 caractères alphanumériques majuscules. Mis en majuscules automatiquement.',
         parameters: {
           type: 'object',
-          properties: {
-            code: { type: 'string', description: 'Nouveau code hôtel (4 à 12 caractères alphanumériques)' }
-          },
+          properties: { code: { type: 'string' } },
           required: ['code']
         }
       }
@@ -2779,12 +3144,12 @@ RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond pl
       type: 'function',
       function: {
         name: 'rename_room',
-        description: 'Renomme une chambre (change son numéro). Échoue si une autre chambre porte déjà ce numéro.',
+        description: '[LIVE] Renomme une chambre. Échoue si une autre chambre porte déjà ce numéro.',
         parameters: {
           type: 'object',
           properties: {
-            room_id: { type: 'integer', description: 'ID interne de la chambre à renommer' },
-            new_room_number: { type: 'string', description: 'Nouveau numéro de chambre (string, peut contenir des lettres : ex 102B)' }
+            room_id: { type: 'integer' },
+            new_room_number: { type: 'string' }
           },
           required: ['room_id', 'new_room_number']
         }
@@ -2793,14 +3158,80 @@ RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond pl
     tools.push({
       type: 'function',
       function: {
-        name: 'set_room_guest',
-        description: 'Définit le client courant d\'une chambre : son nom (qui sert de mot de passe quotidien) et la date de checkout. Active le compte client.',
+        name: 'create_room',
+        description: '[LIVE] Crée une nouvelle chambre.',
         parameters: {
           type: 'object',
           properties: {
-            room_id: { type: 'integer', description: 'ID interne de la chambre' },
-            guest_name: { type: 'string', description: 'Nom du client (ex: "Martin")' },
-            checkout_date: { type: 'string', description: 'Date de départ au format YYYY-MM-DD (ex: 2026-05-12)' }
+            room_number: { type: 'string' },
+            floor: { type: 'string' },
+            capacity: { type: 'integer', description: '1-20, défaut 2' }
+          },
+          required: ['room_number']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'bulk_create_rooms',
+        description: '[LIVE] Crée plusieurs chambres d\'un coup. Idempotent : skip silencieusement les numéros existants.',
+        parameters: {
+          type: 'object',
+          properties: {
+            rooms: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  room_number: { type: 'string' },
+                  floor: { type: 'string' },
+                  capacity: { type: 'integer' }
+                },
+                required: ['room_number']
+              }
+            }
+          },
+          required: ['rooms']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'delete_room',
+        description: '[LIVE] Supprime une chambre (et son compte client + sessions). Confirme avant.',
+        parameters: {
+          type: 'object',
+          properties: { room_id: { type: 'integer' } },
+          required: ['room_id']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'clear_room_now',
+        description: '[LIVE] Libère immédiatement une chambre : désactive le compte, kill toutes les sessions client. À utiliser pour expulser un client tout de suite.',
+        parameters: {
+          type: 'object',
+          properties: { room_id: { type: 'integer' } },
+          required: ['room_id']
+        }
+      }
+    })
+    // ----- FORM-DRIVEN (l'utilisateur clique Enregistrer) -----
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'set_room_guest',
+        description: '[FORM] Pré-remplit dans le formulaire le client + checkout pour une chambre. Pas live : l\'utilisateur valide en cliquant Enregistrer.',
+        parameters: {
+          type: 'object',
+          properties: {
+            room_id: { type: 'integer' },
+            guest_name: { type: 'string' },
+            checkout_date: { type: 'string', description: 'YYYY-MM-DD' }
           },
           required: ['room_id', 'guest_name', 'checkout_date']
         }
@@ -2810,13 +3241,25 @@ RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond pl
       type: 'function',
       function: {
         name: 'clear_room_guest',
-        description: 'Libère une chambre : efface le nom du client et la date de checkout, désactive le compte client.',
+        description: '[FORM] Pré-remplit dans le formulaire la libération d\'une chambre. Pas live : l\'utilisateur valide en cliquant Enregistrer.',
+        parameters: {
+          type: 'object',
+          properties: { room_id: { type: 'integer' } },
+          required: ['room_id']
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'update_form',
+        description: 'Met à jour des champs libres du formulaire (note, ou hotel_code prévisualisé).',
         parameters: {
           type: 'object',
           properties: {
-            room_id: { type: 'integer', description: 'ID interne de la chambre à libérer' }
-          },
-          required: ['room_id']
+            hotel_code: { type: 'string' },
+            note: { type: 'string' }
+          }
         }
       }
     })
@@ -3348,11 +3791,27 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
       // === MODE MAX (Back Wikot) : update_form === l'IA écrit dans le formulaire UI
       else if (fnName === 'update_form') {
         // Filtrer les champs autorisés selon le workflow (sécurité serveur)
-        const allowed = workflowMode === 'create_procedure' || workflowMode === 'update_procedure'
-          ? ['title', 'trigger_event', 'description', 'category_id', 'steps']
-          : workflowMode === 'create_info' || workflowMode === 'update_info'
-            ? ['title', 'content', 'category_id']
-            : []
+        let allowed: string[] = []
+        if (workflowMode === 'create_procedure' || workflowMode === 'update_procedure') {
+          allowed = ['title', 'trigger_event', 'description', 'category_id', 'steps']
+        } else if (workflowMode === 'create_info' || workflowMode === 'update_info') {
+          allowed = ['title', 'content', 'category_id']
+        } else if (workflowMode === 'gerer_conversations') {
+          allowed = ['note']
+        } else if (workflowMode === 'chercher_conversations') {
+          allowed = ['query', 'results']
+        } else if (workflowMode === 'gerer_taches') {
+          allowed = [
+            'task_kind', 'mode', 'task_id',
+            'title', 'description', 'category', 'priority',
+            'recurrence_type', 'recurrence_days', 'monthly_day',
+            'suggested_time', 'duration_min',
+            'active_from', 'active_to', 'task_date',
+            'assignee_ids'
+          ]
+        } else if (workflowMode === 'gerer_codes_wikot') {
+          allowed = ['hotel_code', 'note']
+        }
         const cleanPatch: any = {}
         for (const k of allowed) {
           if (fnArgs[k] !== undefined) cleanPatch[k] = fnArgs[k]
@@ -3367,10 +3826,272 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         proposalsCollected.push({ tool_name: fnName, args: fnArgs })
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, message: 'Proposition enregistrée, l\'utilisateur va voir un diff et pouvoir valider.' }) })
       }
-      // === WORKFLOW CODES WIKOT : édition directe en base ===
-      // set_hotel_code / rename_room / set_room_guest / clear_room_guest
-      // Permission : admin de l'hôtel uniquement (super_admin ne joue pas de rôle hôtel ici)
-      else if (workflowMode === 'gerer_codes_wikot' && ['set_hotel_code', 'rename_room', 'set_room_guest', 'clear_room_guest'].includes(fnName)) {
+      // === READ TOOLS PARTAGÉS (multi-workflows Phase 4) ===
+      else if (['list_groups', 'list_employees', 'search_messages', 'list_tasks', 'get_task'].includes(fnName)) {
+        let toolResult: any = { ok: false }
+        try {
+          if (fnName === 'list_groups') {
+            const groups = await c.env.DB.prepare('SELECT id, name, icon, color, is_system FROM chat_groups WHERE hotel_id = ? ORDER BY sort_order, id').bind(user.hotel_id).all()
+            const channels = await c.env.DB.prepare('SELECT id, group_id, name, description, icon FROM chat_channels WHERE hotel_id = ? ORDER BY sort_order, id').bind(user.hotel_id).all()
+            const chByGroup: Record<number, any[]> = {}
+            for (const ch of (channels.results as any[])) {
+              if (!chByGroup[ch.group_id]) chByGroup[ch.group_id] = []
+              chByGroup[ch.group_id].push({ id: ch.id, name: ch.name, description: ch.description, icon: ch.icon })
+            }
+            toolResult = {
+              groups: (groups.results as any[]).map(g => ({
+                id: g.id, name: g.name, icon: g.icon, color: g.color, is_system: !!g.is_system,
+                channels: chByGroup[g.id] || []
+              }))
+            }
+          } else if (fnName === 'list_employees') {
+            const r = await c.env.DB.prepare(`SELECT id, name, role, job_role FROM users WHERE hotel_id = ? AND role IN ('admin','employee') ORDER BY name`).bind(user.hotel_id).all()
+            toolResult = { employees: r.results }
+          } else if (fnName === 'search_messages') {
+            const conds: string[] = ['m.hotel_id = ?']
+            const params: any[] = [user.hotel_id]
+            if (fnArgs.q && String(fnArgs.q).trim()) {
+              conds.push('m.content LIKE ?')
+              params.push('%' + String(fnArgs.q).trim() + '%')
+            }
+            if (fnArgs.channel_id) {
+              conds.push('m.channel_id = ?')
+              params.push(parseInt(String(fnArgs.channel_id)))
+            }
+            if (fnArgs.group_id) {
+              conds.push('ch.group_id = ?')
+              params.push(parseInt(String(fnArgs.group_id)))
+            }
+            if (fnArgs.author_id) {
+              conds.push('m.user_id = ?')
+              params.push(parseInt(String(fnArgs.author_id)))
+            }
+            if (fnArgs.after && /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.after))) {
+              conds.push('date(m.created_at) >= ?')
+              params.push(String(fnArgs.after))
+            }
+            if (fnArgs.before && /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.before))) {
+              conds.push('date(m.created_at) <= ?')
+              params.push(String(fnArgs.before))
+            }
+            const limit = Math.max(1, Math.min(50, parseInt(String(fnArgs.limit || 20))))
+            const rows = await c.env.DB.prepare(`
+              SELECT m.id, m.channel_id, m.user_id, m.content, m.created_at,
+                     ch.name as channel_name, ch.group_id, g.name as group_name,
+                     u.name as author_name
+              FROM chat_messages m
+              JOIN chat_channels ch ON ch.id = m.channel_id
+              JOIN chat_groups g ON g.id = ch.group_id
+              LEFT JOIN users u ON u.id = m.user_id
+              WHERE ${conds.join(' AND ')}
+              ORDER BY m.created_at DESC, m.id DESC
+              LIMIT ?
+            `).bind(...params, limit).all()
+            toolResult = { results: rows.results }
+          } else if (fnName === 'list_tasks') {
+            const tpl = await c.env.DB.prepare(`SELECT id, title, recurrence_type, recurrence_days, monthly_day, priority, suggested_time, duration_min, is_active, category FROM task_templates WHERE hotel_id = ? ORDER BY is_active DESC, title`).bind(user.hotel_id).all()
+            const today = new Date().toISOString().slice(0, 10)
+            const inst = await c.env.DB.prepare(`SELECT id, template_id, task_date, title, suggested_time, priority, status, category FROM task_instances WHERE hotel_id = ? AND task_date >= ? ORDER BY task_date, suggested_time LIMIT 50`).bind(user.hotel_id, today).all()
+            toolResult = { templates: tpl.results, instances: inst.results }
+          } else if (fnName === 'get_task') {
+            const kind = fnArgs.task_kind === 'instance' ? 'instance' : 'template'
+            const id = parseInt(String(fnArgs.task_id))
+            if (!id) {
+              toolResult = { error: 'task_id requis' }
+            } else if (kind === 'template') {
+              const t = await c.env.DB.prepare('SELECT * FROM task_templates WHERE id = ? AND hotel_id = ?').bind(id, user.hotel_id).first<any>()
+              if (!t) toolResult = { error: 'Template introuvable' }
+              else {
+                const a = await c.env.DB.prepare(`SELECT tta.user_id, u.name FROM task_template_assignees tta JOIN users u ON u.id = tta.user_id WHERE tta.template_id = ?`).bind(id).all()
+                toolResult = { task_kind: 'template', task: t, assignees: a.results }
+              }
+            } else {
+              const t = await c.env.DB.prepare('SELECT * FROM task_instances WHERE id = ? AND hotel_id = ?').bind(id, user.hotel_id).first<any>()
+              if (!t) toolResult = { error: 'Instance introuvable' }
+              else {
+                const a = await c.env.DB.prepare(`SELECT ta.user_id, u.name FROM task_assignments ta JOIN users u ON u.id = ta.user_id WHERE ta.task_instance_id = ?`).bind(id).all()
+                toolResult = { task_kind: 'instance', task: t, assignees: a.results }
+              }
+            }
+          }
+        } catch (e: any) {
+          toolResult = { error: e?.message || 'Erreur serveur' }
+        }
+        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(toolResult) })
+      }
+
+      // === START_NEW_TASK / LOAD_TASK_FOR_EDIT : pousse un patch de formulaire (gerer_taches) ===
+      else if (workflowMode === 'gerer_taches' && (fnName === 'start_new_task' || fnName === 'load_task_for_edit')) {
+        let toolResult: any = { ok: false }
+        try {
+          if (fnName === 'start_new_task') {
+            const kind = fnArgs.task_kind === 'instance' ? 'instance' : 'template'
+            formPatches.push({
+              task_kind: kind,
+              mode: 'create',
+              task_id: null,
+              title: '',
+              description: '',
+              category: null,
+              priority: 'normal',
+              recurrence_type: kind === 'template' ? 'weekly' : null,
+              recurrence_days: kind === 'template' ? 127 : null,
+              monthly_day: null,
+              suggested_time: null,
+              duration_min: null,
+              active_from: null,
+              active_to: null,
+              task_date: kind === 'instance' ? new Date().toISOString().slice(0, 10) : null,
+              assignee_ids: []
+            })
+            toolResult = { ok: true, task_kind: kind, mode: 'create' }
+          } else {
+            const kind = fnArgs.task_kind === 'instance' ? 'instance' : 'template'
+            const id = parseInt(String(fnArgs.task_id))
+            if (!id) {
+              toolResult = { ok: false, error: 'task_id requis' }
+            } else if (kind === 'template') {
+              const t = await c.env.DB.prepare('SELECT * FROM task_templates WHERE id = ? AND hotel_id = ?').bind(id, user.hotel_id).first<any>()
+              if (!t) toolResult = { ok: false, error: 'Template introuvable' }
+              else {
+                const a = await c.env.DB.prepare(`SELECT user_id FROM task_template_assignees WHERE template_id = ?`).bind(id).all()
+                formPatches.push({
+                  task_kind: 'template', mode: 'update', task_id: id,
+                  title: t.title, description: t.description, category: t.category,
+                  priority: t.priority, recurrence_type: t.recurrence_type, recurrence_days: t.recurrence_days,
+                  monthly_day: t.monthly_day, suggested_time: t.suggested_time, duration_min: t.duration_min,
+                  active_from: t.active_from, active_to: t.active_to, task_date: null,
+                  assignee_ids: (a.results as any[]).map(r => r.user_id)
+                })
+                toolResult = { ok: true, task_kind: 'template', mode: 'update', task_id: id }
+              }
+            } else {
+              const t = await c.env.DB.prepare('SELECT * FROM task_instances WHERE id = ? AND hotel_id = ?').bind(id, user.hotel_id).first<any>()
+              if (!t) toolResult = { ok: false, error: 'Instance introuvable' }
+              else {
+                const a = await c.env.DB.prepare(`SELECT user_id FROM task_assignments WHERE task_instance_id = ?`).bind(id).all()
+                formPatches.push({
+                  task_kind: 'instance', mode: 'update', task_id: id,
+                  title: t.title, description: t.description, category: t.category,
+                  priority: t.priority, recurrence_type: null, recurrence_days: null, monthly_day: null,
+                  suggested_time: t.suggested_time, duration_min: t.duration_min,
+                  active_from: null, active_to: null, task_date: t.task_date,
+                  assignee_ids: (a.results as any[]).map(r => r.user_id)
+                })
+                toolResult = { ok: true, task_kind: 'instance', mode: 'update', task_id: id }
+              }
+            }
+          }
+        } catch (e: any) {
+          toolResult = { ok: false, error: e?.message || 'Erreur serveur' }
+        }
+        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(toolResult) })
+      }
+
+      // === WORKFLOW GÉRER LES CONVERSATIONS : CRUD live salons + channels ===
+      else if (workflowMode === 'gerer_conversations' && ['create_group', 'rename_group', 'delete_group', 'create_channel', 'rename_channel', 'move_channel', 'delete_channel'].includes(fnName)) {
+        const canManage = user.role === 'admin' || user.role === 'super_admin' || (user as any).can_edit_procedures || (user as any).can_edit_info
+        if (!canManage || !user.hotel_id) {
+          oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: 'Permission refusée pour gérer les salons.' }) })
+        } else {
+          let toolResult: any = { ok: false }
+          try {
+            if (fnName === 'create_group') {
+              const name = String(fnArgs.name || '').trim()
+              if (!name || name.length > 60) {
+                toolResult = { ok: false, error: 'Nom requis (1-60 chars).' }
+              } else {
+                const maxOrder = await c.env.DB.prepare('SELECT MAX(sort_order) as m FROM chat_groups WHERE hotel_id = ?').bind(user.hotel_id).first<any>()
+                const r = await c.env.DB.prepare('INSERT INTO chat_groups (hotel_id, name, icon, color, sort_order, is_system) VALUES (?, ?, ?, ?, ?, 0)').bind(user.hotel_id, name, fnArgs.icon || 'fa-folder', fnArgs.color || '#3B82F6', (maxOrder?.m || 0) + 1).run()
+                toolResult = { ok: true, group_id: r.meta.last_row_id, name }
+              }
+            } else if (fnName === 'rename_group') {
+              const id = parseInt(String(fnArgs.group_id))
+              const name = String(fnArgs.name || '').trim()
+              const g = await c.env.DB.prepare('SELECT hotel_id FROM chat_groups WHERE id = ?').bind(id).first<any>()
+              if (!g || g.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Salon introuvable.' }
+              else if (!name) toolResult = { ok: false, error: 'Nom requis.' }
+              else {
+                await c.env.DB.prepare('UPDATE chat_groups SET name = ?, icon = COALESCE(?, icon), color = COALESCE(?, color) WHERE id = ?').bind(name, fnArgs.icon || null, fnArgs.color || null, id).run()
+                toolResult = { ok: true, group_id: id, name }
+              }
+            } else if (fnName === 'delete_group') {
+              const id = parseInt(String(fnArgs.group_id))
+              const g = await c.env.DB.prepare('SELECT hotel_id, is_system, name FROM chat_groups WHERE id = ?').bind(id).first<any>()
+              if (!g || g.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Salon introuvable.' }
+              else if (g.is_system) toolResult = { ok: false, error: 'Impossible de supprimer un salon système.' }
+              else {
+                const channels = await c.env.DB.prepare('SELECT id FROM chat_channels WHERE group_id = ?').bind(id).all()
+                const chIds = (channels.results as any[]).map(r => r.id)
+                const ops: D1PreparedStatement[] = []
+                if (chIds.length > 0) {
+                  const ph = chIds.map(() => '?').join(',')
+                  ops.push(c.env.DB.prepare(`DELETE FROM chat_messages WHERE channel_id IN (${ph})`).bind(...chIds))
+                  ops.push(c.env.DB.prepare(`DELETE FROM chat_reads WHERE channel_id IN (${ph})`).bind(...chIds))
+                }
+                ops.push(c.env.DB.prepare('DELETE FROM chat_channels WHERE group_id = ?').bind(id))
+                ops.push(c.env.DB.prepare('DELETE FROM chat_groups WHERE id = ?').bind(id))
+                await c.env.DB.batch(ops)
+                toolResult = { ok: true, deleted_group_id: id, name: g.name, deleted_channels: chIds.length }
+              }
+            } else if (fnName === 'create_channel') {
+              const groupId = parseInt(String(fnArgs.group_id))
+              const name = String(fnArgs.name || '').trim()
+              const g = await c.env.DB.prepare('SELECT hotel_id FROM chat_groups WHERE id = ?').bind(groupId).first<any>()
+              if (!g || g.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Salon invalide.' }
+              else if (!name || name.length > 80) toolResult = { ok: false, error: 'Nom requis (1-80 chars).' }
+              else {
+                const maxOrder = await c.env.DB.prepare('SELECT MAX(sort_order) as m FROM chat_channels WHERE group_id = ?').bind(groupId).first<any>()
+                const r = await c.env.DB.prepare('INSERT INTO chat_channels (hotel_id, group_id, name, description, icon, sort_order, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').bind(user.hotel_id, groupId, name, fnArgs.description || null, fnArgs.icon || 'fa-hashtag', (maxOrder?.m || 0) + 1, user.id).run()
+                toolResult = { ok: true, channel_id: r.meta.last_row_id, group_id: groupId, name }
+              }
+            } else if (fnName === 'rename_channel') {
+              const id = parseInt(String(fnArgs.channel_id))
+              const ch = await c.env.DB.prepare('SELECT hotel_id, name, description, icon FROM chat_channels WHERE id = ?').bind(id).first<any>()
+              if (!ch || ch.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Channel introuvable.' }
+              else {
+                const newName = fnArgs.name !== undefined ? String(fnArgs.name).trim() : ch.name
+                if (!newName) toolResult = { ok: false, error: 'Nom requis.' }
+                else {
+                  await c.env.DB.prepare('UPDATE chat_channels SET name = ?, description = ?, icon = COALESCE(?, icon), updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(newName, fnArgs.description !== undefined ? fnArgs.description : ch.description, fnArgs.icon || null, id).run()
+                  toolResult = { ok: true, channel_id: id, name: newName }
+                }
+              }
+            } else if (fnName === 'move_channel') {
+              const id = parseInt(String(fnArgs.channel_id))
+              const newGroupId = parseInt(String(fnArgs.new_group_id))
+              const ch = await c.env.DB.prepare('SELECT hotel_id FROM chat_channels WHERE id = ?').bind(id).first<any>()
+              const g = await c.env.DB.prepare('SELECT hotel_id FROM chat_groups WHERE id = ?').bind(newGroupId).first<any>()
+              if (!ch || ch.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Channel introuvable.' }
+              else if (!g || g.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Salon cible invalide.' }
+              else {
+                await c.env.DB.prepare('UPDATE chat_channels SET group_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').bind(newGroupId, id).run()
+                toolResult = { ok: true, channel_id: id, new_group_id: newGroupId }
+              }
+            } else if (fnName === 'delete_channel') {
+              const id = parseInt(String(fnArgs.channel_id))
+              const ch = await c.env.DB.prepare('SELECT hotel_id, name FROM chat_channels WHERE id = ?').bind(id).first<any>()
+              if (!ch || ch.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Channel introuvable.' }
+              else {
+                await c.env.DB.batch([
+                  c.env.DB.prepare('DELETE FROM chat_messages WHERE channel_id = ?').bind(id),
+                  c.env.DB.prepare('DELETE FROM chat_reads WHERE channel_id = ?').bind(id),
+                  c.env.DB.prepare('DELETE FROM chat_channels WHERE id = ?').bind(id)
+                ])
+                toolResult = { ok: true, deleted_channel_id: id, name: ch.name }
+              }
+            }
+          } catch (e: any) {
+            toolResult = { ok: false, error: e?.message || 'Erreur serveur.' }
+          }
+          oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(toolResult) })
+        }
+      }
+
+      // === WORKFLOW CODES WIKOT : mix live + form-driven ===
+      // LIVE : set_hotel_code, rename_room, create_room, bulk_create_rooms, delete_room, clear_room_now
+      // FORM : set_room_guest, clear_room_guest (poussent dans formPatches.entries)
+      else if (workflowMode === 'gerer_codes_wikot' && ['set_hotel_code', 'rename_room', 'create_room', 'bulk_create_rooms', 'delete_room', 'clear_room_now', 'set_room_guest', 'clear_room_guest'].includes(fnName)) {
         const isAdminHotel = user.role === 'admin' && !!user.hotel_id
         if (!isAdminHotel) {
           oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: 'Permission refusée : seul l\'administrateur de l\'hôtel peut modifier les Codes Wikot.' }) })
@@ -3382,7 +4103,6 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
               if (!/^[A-Z0-9]{4,12}$/.test(code)) {
                 toolResult = { ok: false, error: 'Code invalide (4 à 12 caractères alphanumériques en majuscules).' }
               } else {
-                // Unicité globale du code client_login_code (un code par hôtel)
                 const dupe = await c.env.DB.prepare('SELECT id FROM hotels WHERE client_login_code = ? AND id <> ?').bind(code, user.hotel_id).first<any>()
                 if (dupe) {
                   toolResult = { ok: false, error: 'Ce code est déjà utilisé par un autre hôtel.' }
@@ -3410,38 +4130,74 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
                   }
                 }
               }
-            } else if (fnName === 'set_room_guest') {
-              const roomId = parseInt(String(fnArgs.room_id))
-              const guestName = String(fnArgs.guest_name || '').trim()
-              const checkout = String(fnArgs.checkout_date || '').trim()
-              if (!roomId || !guestName || !/^\d{4}-\d{2}-\d{2}$/.test(checkout)) {
-                toolResult = { ok: false, error: 'room_id, guest_name et checkout_date (YYYY-MM-DD) requis.' }
-              } else {
-                const room = await c.env.DB.prepare('SELECT id, hotel_id, room_number FROM rooms WHERE id = ?').bind(roomId).first<any>()
-                if (!room || room.hotel_id !== user.hotel_id) {
-                  toolResult = { ok: false, error: 'Chambre introuvable dans cet hôtel.' }
-                } else {
-                  const acc = await c.env.DB.prepare('SELECT id FROM client_accounts WHERE room_id = ?').bind(roomId).first<any>()
-                  if (acc) {
-                    await c.env.DB.prepare('UPDATE client_accounts SET guest_name = ?, checkout_date = ?, is_active = 1 WHERE id = ?').bind(guestName, checkout, acc.id).run()
-                  } else {
-                    await c.env.DB.prepare('INSERT INTO client_accounts (hotel_id, room_id, guest_name, checkout_date, is_active) VALUES (?, ?, ?, ?, 1)').bind(user.hotel_id, roomId, guestName, checkout).run()
-                  }
-                  toolResult = { ok: true, room_number: room.room_number, guest_name: guestName, checkout_date: checkout }
+            } else if (fnName === 'create_room') {
+              const num = String(fnArgs.room_number || '').trim()
+              if (!num) toolResult = { ok: false, error: 'room_number requis.' }
+              else {
+                const dupe = await c.env.DB.prepare('SELECT id FROM rooms WHERE hotel_id = ? AND room_number = ?').bind(user.hotel_id, num).first<any>()
+                if (dupe) toolResult = { ok: false, error: `La chambre ${num} existe déjà.` }
+                else {
+                  const r = await c.env.DB.prepare('INSERT INTO rooms (hotel_id, room_number, floor, capacity, is_active) VALUES (?, ?, ?, ?, 1)').bind(user.hotel_id, num, fnArgs.floor || null, parseInt(String(fnArgs.capacity)) || 2).run()
+                  const newId = r.meta.last_row_id
+                  await c.env.DB.prepare('INSERT INTO client_accounts (hotel_id, room_id, is_active) VALUES (?, ?, 0)').bind(user.hotel_id, newId).run()
+                  toolResult = { ok: true, room_id: newId, room_number: num }
                 }
               }
-            } else if (fnName === 'clear_room_guest') {
-              const roomId = parseInt(String(fnArgs.room_id))
-              if (!roomId) {
-                toolResult = { ok: false, error: 'room_id requis.' }
-              } else {
-                const room = await c.env.DB.prepare('SELECT id, hotel_id, room_number FROM rooms WHERE id = ?').bind(roomId).first<any>()
-                if (!room || room.hotel_id !== user.hotel_id) {
-                  toolResult = { ok: false, error: 'Chambre introuvable dans cet hôtel.' }
-                } else {
-                  await c.env.DB.prepare('UPDATE client_accounts SET guest_name = NULL, checkout_date = NULL, is_active = 0 WHERE room_id = ?').bind(roomId).run()
-                  toolResult = { ok: true, room_number: room.room_number, cleared: true }
+            } else if (fnName === 'bulk_create_rooms') {
+              const list = Array.isArray(fnArgs.rooms) ? fnArgs.rooms : []
+              if (list.length === 0) toolResult = { ok: false, error: 'rooms vide.' }
+              else if (list.length > 200) toolResult = { ok: false, error: 'Maximum 200 chambres par batch.' }
+              else {
+                const existing = await c.env.DB.prepare('SELECT room_number FROM rooms WHERE hotel_id = ?').bind(user.hotel_id).all()
+                const existSet = new Set((existing.results as any[]).map(r => String(r.room_number).trim()))
+                let created = 0, skipped = 0
+                for (const r of list) {
+                  const num = String(r.room_number || '').trim()
+                  if (!num || existSet.has(num)) { skipped++; continue }
+                  const ins = await c.env.DB.prepare('INSERT INTO rooms (hotel_id, room_number, floor, capacity, is_active) VALUES (?, ?, ?, ?, 1)').bind(user.hotel_id, num, r.floor || null, parseInt(String(r.capacity)) || 2).run()
+                  await c.env.DB.prepare('INSERT INTO client_accounts (hotel_id, room_id, is_active) VALUES (?, ?, 0)').bind(user.hotel_id, ins.meta.last_row_id).run()
+                  existSet.add(num); created++
                 }
+                toolResult = { ok: true, created, skipped }
+              }
+            } else if (fnName === 'delete_room') {
+              const roomId = parseInt(String(fnArgs.room_id))
+              const room = await c.env.DB.prepare('SELECT id, hotel_id, room_number FROM rooms WHERE id = ?').bind(roomId).first<any>()
+              if (!room || room.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Chambre introuvable.' }
+              else {
+                await c.env.DB.batch([
+                  c.env.DB.prepare('DELETE FROM client_sessions WHERE room_id = ?').bind(roomId),
+                  c.env.DB.prepare('DELETE FROM client_accounts WHERE room_id = ?').bind(roomId),
+                  c.env.DB.prepare('DELETE FROM rooms WHERE id = ?').bind(roomId)
+                ])
+                toolResult = { ok: true, deleted_room_id: roomId, room_number: room.room_number }
+              }
+            } else if (fnName === 'clear_room_now') {
+              const roomId = parseInt(String(fnArgs.room_id))
+              const room = await c.env.DB.prepare('SELECT id, hotel_id, room_number FROM rooms WHERE id = ?').bind(roomId).first<any>()
+              if (!room || room.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Chambre introuvable.' }
+              else {
+                await c.env.DB.prepare(`UPDATE client_accounts SET guest_name = NULL, guest_name_normalized = NULL, checkout_date = NULL, is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE hotel_id = ? AND room_id = ?`).bind(user.hotel_id, roomId).run()
+                await c.env.DB.prepare('DELETE FROM client_sessions WHERE client_account_id IN (SELECT id FROM client_accounts WHERE hotel_id = ? AND room_id = ?)').bind(user.hotel_id, roomId).run()
+                toolResult = { ok: true, room_number: room.room_number, cleared_now: true }
+              }
+            } else if (fnName === 'set_room_guest' || fnName === 'clear_room_guest') {
+              // FORM-DRIVEN : on ne touche pas la base, on pousse une entry dans formPatches.entries
+              const roomId = parseInt(String(fnArgs.room_id))
+              const room = await c.env.DB.prepare('SELECT id, hotel_id, room_number FROM rooms WHERE id = ?').bind(roomId).first<any>()
+              if (!room || room.hotel_id !== user.hotel_id) toolResult = { ok: false, error: 'Chambre introuvable.' }
+              else if (fnName === 'set_room_guest') {
+                const guestName = String(fnArgs.guest_name || '').trim()
+                const checkout = String(fnArgs.checkout_date || '').trim()
+                if (!guestName || !/^\d{4}-\d{2}-\d{2}$/.test(checkout)) {
+                  toolResult = { ok: false, error: 'guest_name et checkout_date (YYYY-MM-DD) requis.' }
+                } else {
+                  formPatches.push({ entry: { room_id: roomId, room_number: room.room_number, action: 'set', guest_name: guestName, checkout_date: checkout } })
+                  toolResult = { ok: true, queued: true, room_number: room.room_number, guest_name: guestName, checkout_date: checkout }
+                }
+              } else {
+                formPatches.push({ entry: { room_id: roomId, room_number: room.room_number, action: 'clear' } })
+                toolResult = { ok: true, queued: true, room_number: room.room_number, action: 'clear' }
               }
             }
           } catch (e: any) {
@@ -3450,6 +4206,18 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
           oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(toolResult) })
         }
       }
+
+      // === GET_STATE (workflow gerer_codes_wikot) — read-only ===
+      else if (workflowMode === 'gerer_codes_wikot' && fnName === 'get_state') {
+        try {
+          const hotel = await c.env.DB.prepare('SELECT id, name, client_login_code FROM hotels WHERE id = ?').bind(user.hotel_id).first<any>()
+          const rooms = await c.env.DB.prepare(`SELECT r.id, r.room_number, r.floor, r.capacity, ca.guest_name, ca.checkout_date, ca.is_active FROM rooms r LEFT JOIN client_accounts ca ON ca.room_id = r.id WHERE r.hotel_id = ? AND r.is_active = 1 ORDER BY r.sort_order, r.room_number`).bind(user.hotel_id).all()
+          oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ hotel_code: hotel?.client_login_code || null, rooms: rooms.results }) })
+        } catch (e: any) {
+          oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: e?.message || 'Erreur' }) })
+        }
+      }
+
       else {
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: 'Tool non reconnu' }) })
       }

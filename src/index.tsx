@@ -1356,12 +1356,12 @@ app.get('/api/stats', authMiddleware, async (c) => {
 // Helper : peut gérer les salons (créer/modifier/supprimer)
 function canManageChannels(user: { role: string; can_manage_chat?: number }) {
   // Basé sur la nouvelle permission can_manage_chat
-  return user.role === 'admin' || user.can_manage_chat === 1
+  return user.role === 'super_admin' || user.role === 'admin' || user.can_manage_chat === 1
 }
 
-// Helper : a accès au chat (admin + tous employees)
+// Helper : a accès au chat (super_admin + admin + tous employees)
 function canAccessChat(user: { role: string }) {
-  return user.role === 'admin' || user.role === 'employee'
+  return user.role === 'super_admin' || user.role === 'admin' || user.role === 'employee'
 }
 
 // GET /api/chat/overview — Tous les groupes + salons + compteurs non-lus pour mon hôtel

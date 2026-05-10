@@ -316,4 +316,81 @@ function userCanAssignTasks() {
 // Note: la permission can_edit_settings est conservée en DB pour compat,
 // mais la page Paramètres hôtel n'existe plus côté UI.
 
+// ============================================
+// HISTORY / NAVIGATION (bouton "Retour" navigateur)
+// ============================================
+// Chaque changement de vue principal (et ouverture d'un détail procédure)
+// pousse une entrée dans window.history, et popstate restaure l'état
+// correspondant. Permet au bouton "Retour" du navigateur de fonctionner
+// dans la SPA au lieu de quitter le site.
+//
+// Convention pour state object stocké dans history :
+//   { view: 'dashboard' | 'procedures' | 'info' | 'wikot' | 'wikot-max'
+//        | 'conversations' | 'changelog' | 'templates' | 'users' | 'hotels'
+//        | 'procedure-detail' | 'tasks' ...,
+//     procedureId: number | null }
+
+let _historyPopping = false; // garde anti-boucle
+
+function pushHistory(view, params) {
+  if (_historyPopping) return; // pas de pushState pendant un popstate
+  const entry = { view, ...(params || {}) };
+  try {
+    history.pushState(entry, '', '#' + view);
+  } catch {}
+}
+
+function replaceHistory(view, params) {
+  const entry = { view, ...(params || {}) };
+  try {
+    history.replaceState(entry, '', '#' + view);
+  } catch {}
+}
+
+async function restoreFromHistory(entry) {
+  if (!entry || !entry.view) return;
+  _historyPopping = true;
+  try {
+    // Cas spécial : retour vers une vue détail procédure → recharger la procédure
+    if (entry.view === 'procedure-detail' && entry.procedureId) {
+      const data = await api(`/procedures/${entry.procedureId}?include_subprocedures=1`);
+      if (data) {
+        state.selectedProcedure = data;
+        state.currentView = 'procedure-detail';
+      } else {
+        // Procédure introuvable (supprimée) → retour à la liste
+        state.currentView = 'procedures';
+      }
+    } else {
+      // Vues simples : on reproduit ce que fait navigate() mais sans pushHistory
+      if (state.currentView === 'conversations' && entry.view !== 'conversations') {
+        stopChatPolling();
+        state.selectedChannelId = null;
+        state.chatMessages = [];
+      }
+      state.currentView = entry.view;
+      state.selectedProcedure = null;
+
+      if (entry.view === 'conversations') {
+        const fresh = state.chatGroups && state.chatGroups.length > 0
+          && state.chatLastLoadedAt && (Date.now() - state.chatLastLoadedAt) < 30000;
+        if (!fresh) {
+          await loadChatData();
+        }
+      }
+    }
+    render();
+  } finally {
+    _historyPopping = false;
+  }
+}
+
+window.addEventListener('popstate', (e) => {
+  // Si state est vide (par exemple ancrage initial sans replaceState), on tente
+  // de retomber sur la vue racine (dashboard / procedures selon rôle).
+  const fallback = state.user
+    ? { view: state.user.role === 'employee' ? 'procedures' : 'dashboard' }
+    : { view: 'dashboard' };
+  restoreFromHistory(e.state || fallback);
+});
 

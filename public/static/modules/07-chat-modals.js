@@ -1500,3 +1500,38 @@ function formatDate(dateStr) {
   }
 }
 
+// ============================================
+// Helper escapeHtml — au cas où il n'existe pas déjà
+// ============================================
+if (typeof window.escapeHtml === 'undefined') {
+  window.escapeHtml = function(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[ch]));
+  };
+}
+
+// ============================================
+// INITIALIZATION — point d'entrée de l'application
+// (déplacé depuis l'ancien 09-client-init.js après suppression de l'espace client)
+// ============================================
+async function init() {
+  if (state.token && state.user) {
+    state.currentHotelId = state.user.hotel_id;
+    // Dashboard réservé au super admin. Admin et employé → procédures par défaut.
+    if (state.user.role !== 'super_admin' && state.currentView === 'dashboard') {
+      state.currentView = 'procedures';
+    }
+    // Sync immédiat du profil au démarrage pour récupérer les éventuels
+    // changements de droits effectués pendant que l'onglet était fermé
+    await syncUserProfile();
+    await loadData();
+    ensureChatGlobalPolling();
+    ensureProfilePolling();
+  }
+  // Ancrer l'historique sur la vue de départ (sans push, pour éviter une entrée
+  // vide qui ferait quitter le site au premier "retour")
+  replaceHistory(state.currentView || 'procedures');
+  render();
+}
+
+init();

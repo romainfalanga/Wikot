@@ -46,16 +46,18 @@ CREATE INDEX IF NOT EXISTS idx_wikot_conv_hotel_user ON wikot_conversations(hote
 CREATE INDEX IF NOT EXISTS idx_wikot_conv_updated ON wikot_conversations(updated_at);
 
 -- 1) Drop tables — ordre important pour respecter les FK existantes
-DROP TABLE IF EXISTS client_sessions;
-DROP TABLE IF EXISTS client_accounts;
-DROP TABLE IF EXISTS room_occupancy;
-DROP TABLE IF EXISTS rooms;
-
+--    restaurant_reservations a une FK vers client_accounts (created_by_client_id)
+--    → on drop le restaurant en PREMIER, puis le client/rooms ensuite.
 DROP TABLE IF EXISTS restaurant_reservations;
 DROP TABLE IF EXISTS restaurant_schedule;
 DROP TABLE IF EXISTS restaurant_templates;
 DROP TABLE IF EXISTS restaurant_exceptions;
 DROP TABLE IF EXISTS restaurant_week_templates;
+
+DROP TABLE IF EXISTS client_sessions;
+DROP TABLE IF EXISTS client_accounts;
+DROP TABLE IF EXISTS room_occupancy;
+DROP TABLE IF EXISTS rooms;
 
 -- 2) Drop colonnes hotels.client_login_code (drop l'index dépendant d'abord)
 DROP INDEX IF EXISTS idx_hotels_client_code;

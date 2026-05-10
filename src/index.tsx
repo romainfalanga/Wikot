@@ -4227,7 +4227,7 @@ function dateMatchesRecurrence(
 async function materializeTasksForDate(db: D1Database, hotelId: number, dateStr: string): Promise<void> {
   const templates = await db.prepare(
     `SELECT id, title, description, recurrence_type, recurrence_days, monthly_day,
-            active_from, active_to, suggested_time, category, priority, duration_min
+            active_from, active_to, suggested_time, category, priority, duration_min, pre_assign
      FROM task_templates WHERE hotel_id = ? AND is_active = 1`
   ).bind(hotelId).all()
 
@@ -4245,16 +4245,21 @@ async function materializeTasksForDate(db: D1Database, hotelId: number, dateStr:
   const toCreate = eligibleTemplates.filter(t => !existingSet.has(t.id))
   if (toCreate.length === 0) return
 
-  // Précharge les pré-assignés de tous les templates à matérialiser (1 seule requête)
+  // Précharge les pré-assignés UNIQUEMENT pour les templates avec pre_assign=1.
+  // Les autres seront créés non assignés (assignation manuelle au coup par coup).
   const createIds = toCreate.map(t => t.id)
   const cph = createIds.map(() => '?').join(',')
-  const preAssigns = await db.prepare(
-    `SELECT template_id, user_id FROM task_template_assignees WHERE template_id IN (${cph})`
-  ).bind(...createIds).all()
+  const preAssignTplIds = toCreate.filter(t => Number(t.pre_assign) === 1).map(t => t.id)
   const assignByTpl = new Map<number, number[]>()
-  for (const r of (preAssigns.results || []) as any[]) {
-    if (!assignByTpl.has(r.template_id)) assignByTpl.set(r.template_id, [])
-    assignByTpl.get(r.template_id)!.push(r.user_id)
+  if (preAssignTplIds.length > 0) {
+    const pph = preAssignTplIds.map(() => '?').join(',')
+    const preAssigns = await db.prepare(
+      `SELECT template_id, user_id FROM task_template_assignees WHERE template_id IN (${pph})`
+    ).bind(...preAssignTplIds).all()
+    for (const r of (preAssigns.results || []) as any[]) {
+      if (!assignByTpl.has(r.template_id)) assignByTpl.set(r.template_id, [])
+      assignByTpl.get(r.template_id)!.push(r.user_id)
+    }
   }
 
   // INSERT instances en batch
@@ -4339,7 +4344,7 @@ app.get('/api/tasks/templates', authMiddleware, async (c) => {
   const r = await c.env.DB.prepare(
     `SELECT id, title, description, recurrence_type, recurrence_days, monthly_day,
             active_from, active_to, suggested_time, category, priority, duration_min,
-            is_active, created_at
+            pre_assign, is_active, created_at
      FROM task_templates WHERE hotel_id = ? ORDER BY is_active DESC, title`
   ).bind(user.hotel_id).all()
   // Charge tous les pré-assignés en 1 requête (joint pour avoir les noms)
@@ -4418,18 +4423,20 @@ app.post('/api/tasks/templates', authMiddleware, async (c) => {
   const assigneeIds = Array.isArray(body.assignee_ids)
     ? body.assignee_ids.filter((n: any) => Number.isInteger(n))
     : []
+  // Pré-assignation : OFF par défaut. Activable uniquement si on fournit aussi des assignee_ids.
+  const preAssign = body.pre_assign === true || body.pre_assign === 1 ? 1 : 0
 
   const r = await c.env.DB.prepare(
     `INSERT INTO task_templates
        (hotel_id, title, description, recurrence_type, recurrence_days, monthly_day,
-        active_from, active_to, suggested_time, category, priority, duration_min, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        active_from, active_to, suggested_time, category, priority, duration_min, pre_assign, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     user.hotel_id, title,
     body.description || null, rec.recurrence_type, rec.recurrence_days, rec.monthly_day,
     body.active_from || null, body.active_to || null,
     body.suggested_time || null, body.category || null,
-    priority, durationMin,
+    priority, durationMin, preAssign,
     user.id
   ).run()
   const newId = r.meta.last_row_id as number
@@ -4467,6 +4474,11 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
     ? body.duration_min
     : (body.duration_min === null ? null : undefined)
 
+  // pre_assign : modifiable uniquement si fourni explicitement
+  const preAssign = (body.pre_assign === true || body.pre_assign === 1) ? 1
+                  : (body.pre_assign === false || body.pre_assign === 0) ? 0
+                  : null
+
   await c.env.DB.prepare(
     `UPDATE task_templates SET
        title = COALESCE(?, title),
@@ -4480,6 +4492,7 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
        category = ?,
        priority = COALESCE(?, priority),
        duration_min = ${durationMin !== undefined ? '?' : 'duration_min'},
+       pre_assign = COALESCE(?, pre_assign),
        is_active = COALESCE(?, is_active),
        updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
@@ -4495,6 +4508,7 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
     body.category ?? null,
     priority,
     ...(durationMin !== undefined ? [durationMin] : []),
+    preAssign,
     typeof body.is_active === 'number' ? body.is_active : null,
     id
   ).run()
@@ -4761,11 +4775,104 @@ app.get('/api/tasks/week', authMiddleware, async (c) => {
     assignments = r.results || []
   }
 
+  // Liste du staff pour permettre l'attribution rapide depuis la vue semaine
+  const staff = await c.env.DB.prepare(
+    `SELECT id, name, role FROM users WHERE hotel_id = ? AND role IN ('admin','employee') ORDER BY name`
+  ).bind(user.hotel_id).all()
+
   return c.json({
     start: dates[0], end: endStr, dates,
     instances: instances.results, assignments,
+    staff: staff.results,
     me: { id: user.id, can_create_tasks: canCreateTasks(user) ? 1 : 0, can_assign_tasks: canAssignTasks(user) ? 1 : 0 }
   })
+})
+
+// POST /api/tasks/copy-week — copie les assignations d'une semaine source vers une semaine cible
+// Body: { from: 'YYYY-MM-DD' (lundi semaine source), to: 'YYYY-MM-DD' (lundi semaine cible) }
+// Stratégie : pour chaque jour de la semaine source, on cherche les instances qui ont
+// le MÊME template_id que celles de la semaine cible (au même jour de la semaine),
+// et on copie les assignés (sans écraser les éventuelles assignations déjà faites).
+// Pour les tâches ponctuelles (template_id NULL), on copie celles qui ont le même titre.
+app.post('/api/tasks/copy-week', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canAssignTasks(user)) return c.json({ error: 'Permission requise' }, 403)
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  const body = await c.req.json() as any
+  const fromStr = String(body.from || '').trim()
+  const toStr = String(body.to || '').trim()
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fromStr) || !/^\d{4}-\d{2}-\d{2}$/.test(toStr)) {
+    return c.json({ error: 'Dates invalides (format YYYY-MM-DD requis)' }, 400)
+  }
+
+  // Calcule les 7 dates de chaque semaine
+  const fromDates: string[] = []
+  const toDates: string[] = []
+  const fromStart = new Date(fromStr + 'T12:00:00Z')
+  const toStart = new Date(toStr + 'T12:00:00Z')
+  for (let i = 0; i < 7; i++) {
+    fromDates.push(new Date(fromStart.getTime() + i * 86400000).toISOString().slice(0, 10))
+    toDates.push(new Date(toStart.getTime() + i * 86400000).toISOString().slice(0, 10))
+  }
+
+  // S'assure que la semaine cible a bien matérialisé ses instances
+  for (const d of toDates) {
+    await materializeTasksForDate(c.env.DB, user.hotel_id, d)
+  }
+
+  // Charge les instances source + leurs assignations
+  const fromInstances = await c.env.DB.prepare(
+    `SELECT id, template_id, task_date, title FROM task_instances
+     WHERE hotel_id = ? AND task_date >= ? AND task_date <= ?`
+  ).bind(user.hotel_id, fromDates[0], fromDates[6]).all()
+
+  const toInstances = await c.env.DB.prepare(
+    `SELECT id, template_id, task_date, title FROM task_instances
+     WHERE hotel_id = ? AND task_date >= ? AND task_date <= ?`
+  ).bind(user.hotel_id, toDates[0], toDates[6]).all()
+
+  const fromIds = (fromInstances.results || []).map((i: any) => i.id)
+  if (fromIds.length === 0) return c.json({ copied: 0, message: 'Aucune tâche à copier' })
+
+  const ph = fromIds.map(() => '?').join(',')
+  const fromAssigns = await c.env.DB.prepare(
+    `SELECT task_instance_id, user_id FROM task_assignments WHERE task_instance_id IN (${ph})`
+  ).bind(...fromIds).all()
+  const assignsByInst = new Map<number, number[]>()
+  for (const r of (fromAssigns.results || []) as any[]) {
+    if (!assignsByInst.has(r.task_instance_id)) assignsByInst.set(r.task_instance_id, [])
+    assignsByInst.get(r.task_instance_id)!.push(r.user_id)
+  }
+
+  // Match source→cible par (jour de la semaine, template_id ou titre)
+  const ops: D1PreparedStatement[] = []
+  let copied = 0
+  for (let i = 0; i < 7; i++) {
+    const srcDate = fromDates[i]
+    const dstDate = toDates[i]
+    const srcOfDay = (fromInstances.results || []).filter((x: any) => x.task_date === srcDate)
+    const dstOfDay = (toInstances.results || []).filter((x: any) => x.task_date === dstDate)
+    for (const src of srcOfDay as any[]) {
+      const userIds = assignsByInst.get(src.id) || []
+      if (userIds.length === 0) continue
+      // Match : même template_id si récurrente, sinon même titre exact
+      const dst = (dstOfDay as any[]).find(d =>
+        src.template_id !== null && d.template_id === src.template_id
+        || src.template_id === null && d.template_id === null && d.title === src.title
+      )
+      if (!dst) continue
+      for (const uid of userIds) {
+        ops.push(c.env.DB.prepare(
+          `INSERT OR IGNORE INTO task_assignments (task_instance_id, user_id, status, assigned_by)
+           VALUES (?, ?, 'pending', ?)`
+        ).bind(dst.id, uid, user.id))
+        copied++
+      }
+    }
+  }
+
+  if (ops.length > 0) await c.env.DB.batch(ops)
+  return c.json({ copied, success: true })
 })
 
 // GET /api/tasks/my-pending-count — badge sidebar : nombre de tâches en attente pour moi (aujourd'hui + retard)

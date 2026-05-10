@@ -1,6 +1,6 @@
 // ============================================
 // ============================================
-// VIEW: TASKS — "À faire" v2 (récurrence avancée + pré-assignation + vue semaine + filtres)
+// VIEW: TASKS — "Tâches" v3 (découplage tâche/personne + vue semaine compacte + copy-week)
 // ============================================
 //
 // Architecture :
@@ -160,8 +160,9 @@ function renderTasksHeader() {
   const dateStr = state.tasksDate || today;
   const weekStart = state.tasksWeekStart || mondayOf(today);
 
-  // Compteur de mes tâches en attente (sur la vue active)
+  // Compteurs : mes tâches en attente + tâches non attribuées (sur la vue active)
   let myPendingCount = 0;
+  let unassignedCount = 0;
   if (data) {
     const myId = state.user.id;
     const assignsByInst = {};
@@ -172,6 +173,7 @@ function renderTasksHeader() {
       const list = assignsByInst[inst.id] || [];
       const mine = list.find(a => a.user_id === myId);
       if (mine && mine.status === 'pending') myPendingCount++;
+      if (list.length === 0) unassignedCount++;
     }
   }
 
@@ -183,7 +185,7 @@ function renderTasksHeader() {
     <div class="flex flex-col gap-4 mb-5">
       <div class="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
-          <p class="section-eyebrow mb-2">À faire</p>
+          <p class="section-eyebrow mb-2">Tâches</p>
           <h2 class="section-title-premium text-2xl sm:text-3xl">Tâches</h2>
           <p class="text-sm mt-1.5 capitalize" style="color: rgba(15,27,40,0.55);">${subtitle}</p>
         </div>
@@ -201,7 +203,7 @@ function renderTasksHeader() {
         </div>
       </div>
 
-      <!-- Navigation date / semaine -->
+      <!-- Navigation date / semaine + actions -->
       <div class="flex items-center gap-2 flex-wrap">
         ${isWeek ? `
           <div class="inline-flex rounded-lg overflow-hidden" style="border: 1px solid var(--c-line);">
@@ -209,6 +211,12 @@ function renderTasksHeader() {
             <button onclick="navigateTaskWeek(0)" class="px-3 py-2 text-xs font-semibold" style="background: #fff; color: var(--c-navy); border-right: 1px solid var(--c-line);">Cette semaine</button>
             <button onclick="navigateTaskWeek(1)" class="px-3 py-2 text-sm" style="background: #fff; color: var(--c-navy);" title="Semaine suivante"><i class="fas fa-chevron-right"></i></button>
           </div>
+          ${(me.can_assign_tasks || userCanAssignTasks()) ? `
+            <button onclick="copyPreviousWeekAssignments()" class="px-3 py-2 rounded-lg text-xs font-semibold transition-all" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);" title="Copier les attributions de la semaine précédente"><i class="fas fa-copy mr-1.5"></i>Copier semaine N-1</button>
+          ` : ''}
+          ${unassignedCount > 0 ? `
+            <span class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold" style="background: rgba(184,106,31,0.10); color: #B86A1F; border: 1px solid rgba(184,106,31,0.30);"><i class="fas fa-circle-question"></i>${unassignedCount} non attribuée${unassignedCount > 1 ? 's' : ''}</span>
+          ` : ''}
         ` : `
           <div class="inline-flex rounded-lg overflow-hidden" style="border: 1px solid var(--c-line);">
             <button onclick="navigateTaskDate(-1)" class="px-3 py-2 text-sm" style="background: #fff; color: var(--c-navy); border-right: 1px solid var(--c-line);" title="Jour précédent"><i class="fas fa-chevron-left"></i></button>
@@ -216,6 +224,9 @@ function renderTasksHeader() {
             <button onclick="navigateTaskDate(1)" class="px-3 py-2 text-sm" style="background: #fff; color: var(--c-navy); border-left: 1px solid var(--c-line);" title="Jour suivant"><i class="fas fa-chevron-right"></i></button>
           </div>
           ${dateStr !== today ? `<button onclick="state.tasksDate='${today}'; loadTasksForDate('${today}').then(render);" class="px-3 py-2 rounded-lg text-xs font-semibold" style="background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);"><i class="fas fa-calendar-day mr-1"></i>Aujourd'hui</button>` : ''}
+          ${unassignedCount > 0 ? `
+            <span class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold" style="background: rgba(184,106,31,0.10); color: #B86A1F; border: 1px solid rgba(184,106,31,0.30);"><i class="fas fa-circle-question"></i>${unassignedCount} non attribuée${unassignedCount > 1 ? 's' : ''}</span>
+          ` : ''}
         `}
       </div>
     </div>`;
@@ -367,12 +378,14 @@ function renderTaskCard(inst, assignments, opts, myId) {
     </div>`;
 }
 
-// ===== Vue semaine (matrice 7 colonnes) =====
+// ===== Vue semaine (matrice 7 colonnes — densité compacte, pleine largeur) =====
 function renderTasksWeekView() {
   const data = state.tasksWeekData;
   const myId = state.user.id;
   const dates = data.dates || [];
   const today = todayIsoStr();
+  const me = data.me || {};
+  const canAssign = !!me.can_assign_tasks || userCanAssignTasks();
 
   // Indexe instances par date
   const byDate = {};
@@ -394,72 +407,123 @@ function renderTasksWeekView() {
     return list.some(a => a.user_id === myId);
   };
 
+  // Légende explicative discrète au-dessus de la grille
+  const legend = `
+    <div class="hidden md:flex flex-wrap items-center gap-3 mb-2 text-[10px]" style="color: rgba(15,27,40,0.55);">
+      <span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm" style="background: rgba(184,106,31,0.15); border: 1px dashed #B86A1F;"></span>Non attribuée</span>
+      <span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm" style="background: #fff; border: 1px solid var(--c-line);"></span>Attribuée à l'équipe</span>
+      <span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm" style="background: rgba(201,169,97,0.20); border: 1px solid var(--c-gold);"></span>Attribuée à moi</span>
+      <span class="inline-flex items-center gap-1.5"><span class="inline-block w-3 h-3 rounded-sm" style="background: var(--c-cream-deep);"></span>Terminée</span>
+      ${canAssign ? `<span class="ml-auto italic">Astuce : clic sur une carte pour attribuer rapidement.</span>` : ''}
+    </div>`;
+
   return `
-    <!-- Desktop : grille 7 colonnes -->
-    <div class="hidden md:grid gap-2 mb-6" style="grid-template-columns: repeat(7, minmax(0, 1fr));">
-      ${dates.map(d => renderWeekDayColumn(d, byDate[d].filter(filterFn), assignsByInst, myId, d === today)).join('')}
+    ${legend}
+    <!-- Desktop / tablette : grille 7 colonnes pleine largeur, sticky header -->
+    <div class="hidden md:block mb-6 -mx-3 lg:-mx-6 px-3 lg:px-6">
+      <div class="grid gap-1.5" style="grid-template-columns: repeat(7, minmax(0, 1fr));">
+        ${dates.map(d => renderWeekDayColumn(d, byDate[d].filter(filterFn), assignsByInst, myId, d === today, canAssign)).join('')}
+      </div>
     </div>
     <!-- Mobile : empilement vertical -->
     <div class="md:hidden space-y-3 mb-6">
-      ${dates.map(d => renderWeekDayMobile(d, byDate[d].filter(filterFn), assignsByInst, myId, d === today)).join('')}
+      ${dates.map(d => renderWeekDayMobile(d, byDate[d].filter(filterFn), assignsByInst, myId, d === today, canAssign)).join('')}
     </div>`;
 }
 
-function renderWeekDayColumn(dateStr, instances, assignsByInst, myId, isToday) {
+function renderWeekDayColumn(dateStr, instances, assignsByInst, myId, isToday, canAssign) {
   const dayLabel = new Date(dateStr + 'T12:00:00Z').toLocaleDateString('fr-FR', { weekday: 'short' });
   const dayNum = new Date(dateStr + 'T12:00:00Z').getUTCDate();
+  const dayMonth = new Date(dateStr + 'T12:00:00Z').toLocaleDateString('fr-FR', { month: 'short' });
   const headerStyle = isToday
     ? 'background: var(--c-navy); color: #fff;'
     : 'background: var(--c-cream-deep); color: var(--c-navy); border: 1px solid var(--c-line);';
 
+  // Compteur de non attribuées dans cette colonne
+  const nUnassigned = instances.filter(i => (assignsByInst[i.id] || []).length === 0).length;
+
   return `
-    <div class="flex flex-col" style="min-height: 200px;">
-      <button onclick="setTasksViewMode('day'); state.tasksDate='${dateStr}'; loadTasksForDate('${dateStr}').then(render);" class="rounded-t-lg px-2 py-2 text-center transition-all hover:opacity-90" style="${headerStyle}">
-        <p class="text-[10px] uppercase tracking-wider opacity-80">${dayLabel}</p>
+    <div class="flex flex-col" style="min-height: 380px;">
+      <button onclick="setTasksViewMode('day'); state.tasksDate='${dateStr}'; loadTasksForDate('${dateStr}').then(render);" class="rounded-t-lg px-1.5 py-2 text-center transition-all hover:opacity-90 sticky top-0 z-10" style="${headerStyle}">
+        <p class="text-[9px] uppercase tracking-wider opacity-80 leading-none">${dayLabel}</p>
         <p class="font-display font-bold text-lg leading-none mt-0.5">${dayNum}</p>
+        <p class="text-[9px] opacity-70 leading-none mt-0.5">${dayMonth}</p>
+        ${nUnassigned > 0 ? `<p class="text-[9px] mt-1 px-1.5 py-0.5 rounded inline-block" style="background: ${isToday ? 'rgba(255,255,255,0.20)' : 'rgba(184,106,31,0.15)'}; color: ${isToday ? '#fff' : '#B86A1F'};">${nUnassigned} libre${nUnassigned > 1 ? 's' : ''}</p>` : ''}
       </button>
-      <div class="flex-1 p-1.5 space-y-1.5 rounded-b-lg" style="background: #fff; border: 1px solid var(--c-line); border-top: none;">
-        ${instances.length === 0 ? `<p class="text-[10px] italic text-center py-2" style="color: rgba(15,27,40,0.35);">—</p>` : instances.map(inst => renderWeekTaskMini(inst, assignsByInst[inst.id] || [], myId)).join('')}
+      <div class="flex-1 p-1 space-y-1 rounded-b-lg" style="background: #fff; border: 1px solid var(--c-line); border-top: none;">
+        ${instances.length === 0 ? `<p class="text-[10px] italic text-center py-3" style="color: rgba(15,27,40,0.30);">—</p>` : instances.map(inst => renderWeekTaskMini(inst, assignsByInst[inst.id] || [], myId, canAssign)).join('')}
       </div>
     </div>`;
 }
 
-function renderWeekDayMobile(dateStr, instances, assignsByInst, myId, isToday) {
+function renderWeekDayMobile(dateStr, instances, assignsByInst, myId, isToday, canAssign) {
   const headerStyle = isToday
     ? 'background: var(--c-navy); color: #fff;'
     : 'background: var(--c-cream-deep); color: var(--c-navy);';
+  const nUnassigned = instances.filter(i => (assignsByInst[i.id] || []).length === 0).length;
   return `
     <div class="card-premium overflow-hidden" style="border: 1px solid var(--c-line);">
       <button onclick="setTasksViewMode('day'); state.tasksDate='${dateStr}'; loadTasksForDate('${dateStr}').then(render);" class="w-full px-3 py-2 text-left flex items-center justify-between" style="${headerStyle}">
         <span class="font-display font-semibold text-sm capitalize">${formatDateLong(dateStr)}</span>
-        <span class="text-xs">${instances.length}</span>
+        <span class="flex items-center gap-2">
+          ${nUnassigned > 0 ? `<span class="text-[10px] px-1.5 py-0.5 rounded" style="background: ${isToday ? 'rgba(255,255,255,0.20)' : 'rgba(184,106,31,0.15)'}; color: ${isToday ? '#fff' : '#B86A1F'};">${nUnassigned} libre${nUnassigned > 1 ? 's' : ''}</span>` : ''}
+          <span class="text-xs">${instances.length}</span>
+        </span>
       </button>
       ${instances.length > 0 ? `<div class="p-2 space-y-1.5" style="background: #fff;">
-        ${instances.map(inst => renderWeekTaskMini(inst, assignsByInst[inst.id] || [], myId)).join('')}
+        ${instances.map(inst => renderWeekTaskMini(inst, assignsByInst[inst.id] || [], myId, canAssign)).join('')}
       </div>` : ''}
     </div>`;
 }
 
-function renderWeekTaskMini(inst, assignments, myId) {
+// Carte mini en vue semaine — densité compacte, indicateur clair non-assignée
+// Clic sur la carte = attribution rapide (si droit), sinon ouvre le jour
+function renderWeekTaskMini(inst, assignments, myId, canAssign) {
   const mine = assignments.find(a => a.user_id === myId);
   const isMine = !!mine;
   const isDone = mine && mine.status === 'done';
   const allDone = inst.status === 'done';
+  const isUnassigned = assignments.length === 0;
   const prio = TASK_PRIORITY_CONFIG[inst.priority || 'normal'];
   const cat = inst.category ? TASK_CATEGORY_CONFIG[inst.category] : null;
 
-  const bg = isMine ? 'rgba(201,169,97,0.10)' : (allDone ? 'var(--c-cream-deep)' : '#fff');
-  const border = isMine ? 'var(--c-gold)' : 'var(--c-line)';
-  const leftBar = inst.priority && inst.priority !== 'normal' ? `border-left: 3px solid ${prio.color};` : '';
+  // Style selon statut d'attribution
+  let bg, border, extra = '';
+  if (isUnassigned) {
+    bg = 'rgba(184,106,31,0.06)';
+    border = '#B86A1F';
+    extra = 'border-style: dashed;';
+  } else if (isMine) {
+    bg = 'rgba(201,169,97,0.12)';
+    border = 'var(--c-gold)';
+  } else if (allDone) {
+    bg = 'var(--c-cream-deep)';
+    border = 'var(--c-line)';
+  } else {
+    bg = '#fff';
+    border = 'var(--c-line)';
+  }
+  const leftBar = inst.priority && inst.priority !== 'normal' ? `box-shadow: inset 3px 0 0 ${prio.color};` : '';
+
+  // Action principale au clic : attribuer si non assignée et droit, sinon aller au jour
+  const clickAction = (isUnassigned && canAssign)
+    ? `event.stopPropagation(); showTaskAssignModal(${inst.id})`
+    : `setTasksViewMode('day'); state.tasksDate='${inst.task_date}'; loadTasksForDate('${inst.task_date}').then(render);`;
 
   return `
-    <div onclick="setTasksViewMode('day'); state.tasksDate='${inst.task_date}'; loadTasksForDate('${inst.task_date}').then(render);" class="px-2 py-1.5 rounded cursor-pointer transition-all hover:shadow-sm" style="background: ${bg}; border: 1px solid ${border}; ${leftBar}" title="${escapeHtml(inst.title)}">
-      <div class="flex items-center gap-1.5">
-        ${cat ? `<i class="fas ${cat.icon} text-[10px]" style="color: ${cat.color};"></i>` : ''}
-        ${inst.suggested_time ? `<span class="text-[10px] font-mono" style="color: var(--c-gold-deep);">${escapeHtml(inst.suggested_time.slice(0, 5))}</span>` : ''}
+    <div onclick="${clickAction}" class="px-1.5 py-1 rounded cursor-pointer transition-all hover:shadow-sm" style="background: ${bg}; border: 1px solid ${border}; ${extra} ${leftBar}" title="${escapeHtml(inst.title)}${isUnassigned ? ' — Cliquez pour attribuer' : ''}">
+      <div class="flex items-center gap-1 mb-0.5">
+        ${isUnassigned ? `<i class="fas fa-circle-question text-[9px]" style="color: #B86A1F;" title="Non attribuée"></i>` : ''}
+        ${cat ? `<i class="fas ${cat.icon} text-[9px]" style="color: ${cat.color};"></i>` : ''}
+        ${inst.suggested_time ? `<span class="text-[9px] font-mono" style="color: var(--c-gold-deep);">${escapeHtml(inst.suggested_time.slice(0, 5))}</span>` : ''}
+        ${inst.priority === 'urgent' ? `<i class="fas fa-bolt text-[8px] ml-auto" style="color: ${prio.color};"></i>` : (inst.priority === 'high' ? `<i class="fas fa-circle-exclamation text-[8px] ml-auto" style="color: ${prio.color};"></i>` : '')}
       </div>
-      <p class="text-[11px] font-semibold leading-tight ${isDone ? 'line-through opacity-60' : ''}" style="color: var(--c-navy); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(inst.title)}</p>
-      ${assignments.length > 0 ? `<p class="text-[9px] mt-0.5" style="color: rgba(15,27,40,0.55);">${assignments.slice(0, 2).map(a => escapeHtml((a.user_name || '?').split(' ')[0])).join(', ')}${assignments.length > 2 ? ` +${assignments.length - 2}` : ''}</p>` : ''}
+      <p class="text-[10.5px] font-semibold leading-tight ${isDone ? 'line-through opacity-60' : ''}" style="color: var(--c-navy); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(inst.title)}</p>
+      ${isUnassigned ? `
+        <p class="text-[9px] mt-0.5 italic" style="color: #B86A1F;">À attribuer</p>
+      ` : `
+        <p class="text-[9px] mt-0.5" style="color: rgba(15,27,40,0.55); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${assignments.slice(0, 2).map(a => escapeHtml((a.user_name || '?').split(' ')[0])).join(', ')}${assignments.length > 2 ? ` +${assignments.length - 2}` : ''}</p>
+      `}
     </div>`;
 }
 
@@ -530,10 +594,15 @@ function renderTemplateRow(t) {
           </div>
           ${assignees.length > 0 ? `
             <div class="mt-2 flex flex-wrap items-center gap-1">
-              <span class="text-[10px] uppercase tracking-wider" style="color: rgba(15,27,40,0.4);">Assignés :</span>
-              ${assignees.map(a => `<span class="text-xs px-2 py-0.5 rounded-full" style="background: var(--c-cream-deep); color: var(--c-navy);">${escapeHtml(a.user_name)}</span>`).join('')}
+              <span class="text-[10px] uppercase tracking-wider" style="color: rgba(15,27,40,0.4);">${t.pre_assign ? 'Pré-assignés auto :' : 'Suggérés (manuel) :'}</span>
+              ${assignees.map(a => `<span class="text-xs px-2 py-0.5 rounded-full" style="background: ${t.pre_assign ? 'rgba(201,169,97,0.15)' : 'var(--c-cream-deep)'}; color: var(--c-navy); ${t.pre_assign ? 'border: 1px solid var(--c-gold);' : ''}">${escapeHtml(a.user_name)}</span>`).join('')}
+              ${t.pre_assign ? '<span class="text-[10px] italic px-1.5 py-0.5 rounded" style="background: rgba(201,169,97,0.15); color: var(--c-gold-deep);"><i class="fas fa-bolt-lightning mr-1"></i>auto</span>' : '<span class="text-[10px] italic px-1.5 py-0.5 rounded" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">manuel</span>'}
             </div>
-          ` : ''}
+          ` : `
+            <div class="mt-2">
+              <span class="text-[10px] italic" style="color: rgba(15,27,40,0.45);"><i class="fas fa-circle-question mr-1"></i>Aucun assigné par défaut — à attribuer au coup par coup</span>
+            </div>
+          `}
         </div>
         <div class="flex gap-1 shrink-0">
           <button onclick="toggleTemplateActive(${t.id}, ${t.is_active ? 0 : 1})" class="w-7 h-7 rounded flex items-center justify-center" style="background: var(--c-cream-deep); color: var(--c-navy);" title="${t.is_active ? 'Désactiver' : 'Réactiver'}"><i class="fas ${t.is_active ? 'fa-pause' : 'fa-play'} text-[11px]"></i></button>
@@ -582,6 +651,32 @@ function navigateTaskWeek(direction) {
   else nextStart = shiftDate(state.tasksWeekStart || mondayOf(todayIsoStr()), direction * 7);
   state.tasksWeekStart = nextStart;
   loadTasksForWeek(nextStart).then(render);
+}
+
+// ===== Copie d'assignations depuis la semaine précédente =====
+// Pour faire le planning hebdo en quelques clics : récupère les assignations
+// de la semaine N-1 et les applique à la semaine courante (matching par template ou par titre).
+async function copyPreviousWeekAssignments() {
+  const currentStart = state.tasksWeekStart || mondayOf(todayIsoStr());
+  const previousStart = shiftDate(currentStart, -7);
+  const fromLabel = `${formatDateShort(previousStart)} → ${formatDateShort(shiftDate(previousStart, 6))}`;
+  const toLabel = `${formatDateShort(currentStart)} → ${formatDateShort(shiftDate(currentStart, 6))}`;
+  if (!confirm(`Copier les attributions de la semaine précédente (${fromLabel}) vers cette semaine (${toLabel}) ?\n\nLes assignations existantes ne seront pas écrasées : seules les nouvelles seront ajoutées.`)) return;
+
+  const res = await api('/tasks/copy-week', {
+    method: 'POST',
+    body: JSON.stringify({ from: previousStart, to: currentStart })
+  });
+  if (res) {
+    if (res.copied > 0) {
+      showToast(`${res.copied} attribution${res.copied > 1 ? 's' : ''} copiée${res.copied > 1 ? 's' : ''} depuis la semaine précédente`, 'success');
+    } else {
+      showToast(res.message || 'Aucune attribution à copier (semaine précédente vide ou déjà tout copié)', 'info');
+    }
+    await loadTasksForWeek(currentStart);
+    refreshTaskBadge();
+    render();
+  }
 }
 
 // ===== Actions tâche =====
@@ -730,10 +825,10 @@ function showTaskCreateModal(dateStr, recurring = false, templateId = null, inst
         </div>
       </div>
 
-      <!-- Pré-assignation -->
+      <!-- Assignation -->
       ${staff.length > 0 ? `
         <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Assigner à <span class="font-normal" style="color: rgba(15,27,40,0.5);">(optionnel — multi-sélection)</span></label>
-        <div class="grid grid-cols-2 gap-1.5 mb-4 max-h-40 overflow-y-auto p-2 rounded-lg" style="background: var(--c-cream-deep); border: 1px solid var(--c-line);">
+        <div class="grid grid-cols-2 gap-1.5 mb-3 max-h-40 overflow-y-auto p-2 rounded-lg" style="background: var(--c-cream-deep); border: 1px solid var(--c-line);">
           ${staff.map(u => {
             const checked = preAssigned.includes(u.id);
             return `<label class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs" style="background: ${checked ? 'var(--c-gold)' : '#fff'}; color: ${checked ? '#fff' : 'var(--c-navy)'};">
@@ -741,6 +836,16 @@ function showTaskCreateModal(dateStr, recurring = false, templateId = null, inst
               <span class="truncate">${escapeHtml(u.name)}</span>
             </label>`;
           }).join('')}
+        </div>
+        <!-- Case pré-assignation auto (récurrente uniquement) -->
+        <div id="tcm_preassign_block" style="display: ${initialMode === 'recurring' ? 'block' : 'none'};">
+          <label class="flex items-start gap-2 mb-3 p-2.5 rounded-lg cursor-pointer transition-all" style="background: ${item.pre_assign ? 'rgba(201,169,97,0.10)' : 'var(--c-cream-deep)'}; border: 1px solid ${item.pre_assign ? 'var(--c-gold)' : 'var(--c-line)'};">
+            <input id="tcm_pre_assign" type="checkbox" ${item.pre_assign ? 'checked' : ''} class="w-4 h-4 mt-0.5 rounded shrink-0" style="accent-color: var(--c-gold-deep);" onchange="this.closest('label').style.background = this.checked ? 'rgba(201,169,97,0.10)' : 'var(--c-cream-deep)'; this.closest('label').style.borderColor = this.checked ? 'var(--c-gold)' : 'var(--c-line)';" />
+            <div class="flex-1">
+              <p class="text-xs font-semibold" style="color: var(--c-navy);">Pré-assigner ces personnes à chaque occurrence</p>
+              <p class="text-[11px] mt-0.5" style="color: rgba(15,27,40,0.6);">Si décoché (recommandé), chaque tâche générée sera <strong>libre</strong> — à attribuer manuellement selon le planning de la semaine. Si coché, les personnes ci-dessus seront automatiquement assignées à chaque génération.</p>
+            </div>
+          </label>
         </div>
       ` : ''}
 
@@ -844,6 +949,9 @@ function setTaskFormMode(mode) {
   }
   document.getElementById('tcm_section_oneoff').style.display = mode === 'oneoff' ? 'block' : 'none';
   document.getElementById('tcm_section_recurring').style.display = mode === 'recurring' ? 'block' : 'none';
+  // Le bloc pré-assignation auto n'a de sens que pour les récurrentes
+  const preBlock = document.getElementById('tcm_preassign_block');
+  if (preBlock) preBlock.style.display = mode === 'recurring' ? 'block' : 'none';
 }
 
 function setRecurrenceType(type) {
@@ -915,12 +1023,16 @@ async function submitTaskCreateModal(templateId, instanceId) {
     }
     const active_from = document.getElementById('tcm_active_from')?.value || null;
     const active_to = document.getElementById('tcm_active_to')?.value || null;
+    // Pré-assignation auto : seulement si la case est cochée
+    const preAssignEl = document.getElementById('tcm_pre_assign');
+    const pre_assign = preAssignEl ? (preAssignEl.checked ? 1 : 0) : 0;
     body = {
       title, description,
       recurrence_type, recurrence_days, monthly_day,
       suggested_time, duration_min, category, priority,
       active_from, active_to,
-      assignee_ids: assigneeIds
+      assignee_ids: assigneeIds,
+      pre_assign
     };
     if (templateId) {
       const activeEl = document.getElementById('tcm_active');

@@ -110,7 +110,7 @@ function renderMainLayout() {
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
-      { id: 'tasks', icon: 'fa-list-check', label: 'À faire', badge: state.myTasksPendingCount },
+      { id: 'tasks', icon: 'fa-list-check', label: 'Tâches', badge: state.myTasksPendingCount },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
@@ -122,8 +122,8 @@ function renderMainLayout() {
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
-      // À faire : visible pour TOUS les employés (les permissions limitent juste les actions)
-      { id: 'tasks', icon: 'fa-list-check', label: 'À faire', badge: state.myTasksPendingCount },
+      // Tâches : visible pour TOUS les employés (les permissions limitent juste les actions)
+      { id: 'tasks', icon: 'fa-list-check', label: 'Tâches', badge: state.myTasksPendingCount },
     ];
   }
 
@@ -141,7 +141,7 @@ function renderMainLayout() {
     users: 'Utilisateurs',
     hotels: 'Hôtels',
     templates: 'Modèles',
-    tasks: 'À faire',
+    tasks: 'Tâches',
   };
   const currentTitle = viewTitles[state.currentView] || 'Wikot';
 

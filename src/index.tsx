@@ -5367,6 +5367,7 @@ app.get('*', (c) => {
   <script src="/static/modules/04-procedures.js"></script>
   <script src="/static/modules/05-users-info.js"></script>
   <script src="/static/modules/06-wikot.js"></script>
+  <script src="/static/modules/08-tasks.js"></script>
   <script src="/static/modules/07-chat-modals.js"></script>
 </body>
 </html>`)

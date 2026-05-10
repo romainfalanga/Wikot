@@ -1465,6 +1465,38 @@ app.get('/api/chat/search', authMiddleware, async (c) => {
   return c.json({ results: rows.results })
 })
 
+// GET /api/chat/groups — Arborescence pure (groupes + channels) sans unread, pour Back Wikot "gérer les conversations"
+app.get('/api/chat/groups', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!canAccessChat(user)) return c.json({ error: 'Non autorisé' }, 403)
+  if (!user.hotel_id) return c.json({ groups: [] })
+
+  const groups = await c.env.DB.prepare(
+    'SELECT id, name, icon, color, sort_order, is_system FROM chat_groups WHERE hotel_id = ? ORDER BY sort_order, id'
+  ).bind(user.hotel_id).all()
+
+  const channels = await c.env.DB.prepare(
+    'SELECT id, group_id, name, description, icon, sort_order FROM chat_channels WHERE hotel_id = ? AND is_archived = 0 ORDER BY sort_order, id'
+  ).bind(user.hotel_id).all()
+
+  const chByGroup: Record<number, any[]> = {}
+  for (const ch of (channels.results as any[])) {
+    if (!chByGroup[ch.group_id]) chByGroup[ch.group_id] = []
+    chByGroup[ch.group_id].push({
+      id: ch.id, group_id: ch.group_id, name: ch.name,
+      description: ch.description || '', icon: ch.icon || 'fa-comment'
+    })
+  }
+
+  const groupsWithChannels = (groups.results as any[]).map((g: any) => ({
+    id: g.id, name: g.name, icon: g.icon || 'fa-folder', color: g.color,
+    sort_order: g.sort_order, is_system: !!g.is_system,
+    channels: chByGroup[g.id] || []
+  }))
+
+  return c.json({ groups: groupsWithChannels })
+})
+
 // POST /api/chat/groups — Créer un groupe (admin/éditeur)
 app.post('/api/chat/groups', authMiddleware, async (c) => {
   const user = c.get('user')

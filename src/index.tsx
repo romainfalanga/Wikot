@@ -2336,14 +2336,15 @@ Créer / modifier des tâches dans l'application Wikot. Deux types de tâches :
 - \`list_employees\` : liste les utilisateurs de l'hôtel (pour les assignations).
 - \`load_task_for_edit\` : charge une tâche existante dans le formulaire (mode update).
 - \`start_new_task\` : initialise un formulaire vierge pour une nouvelle tâche.
-- \`update_form\` : met à jour le formulaire visible. Champs : \`task_kind\` ('template'|'instance'), \`mode\` ('create'|'update'), \`task_id\` (en update), \`title\`, \`description\`, \`category\`, \`priority\` ('normal'|'high'|'urgent'), \`recurrence_type\` ('daily'|'weekly'|'monthly'), \`recurrence_days\` (bitmask 1-127 si weekly), \`monthly_day\` (1-31 ou -1 si monthly), \`suggested_time\` ('HH:MM'), \`duration_min\` (1-1439), \`active_from\` (YYYY-MM-DD), \`active_to\` (YYYY-MM-DD), \`task_date\` (YYYY-MM-DD pour instance), \`assignee_ids\` (tableau d'ints).
+- \`update_form\` : met à jour le formulaire visible. Champs : \`task_kind\` ('template'|'instance'), \`mode\` ('create'|'update'), \`task_id\` (en update), \`title\`, \`description\`, \`category\`, \`priority\` ('normal'|'high'|'urgent'), \`recurrence_type\` ('daily'|'weekly'|'monthly'), \`recurrence_days\` (bitmask 1-127 si weekly), \`monthly_day\` (1-31 ou -1 si monthly), \`suggested_time\` ('HH:MM'), \`duration_min\` (1-1439), \`active_from\` (YYYY-MM-DD), \`active_to\` (YYYY-MM-DD), \`task_date\` (YYYY-MM-DD pour instance), \`assignee_ids\` (tableau d'ints — **UNIQUEMENT si task_kind='instance'**).
 
 ## Comment tu agis
 - L'utilisateur enregistre lui-même via le bouton "Enregistrer" : tes \`update_form\` ne touchent **pas** la base, ils remplissent le formulaire.
 - Tu commences par 1 question si l'utilisateur est vague : récurrente ou ponctuelle ? quand ? qui ?
 - Tu remplis tous les champs cohérents en 1 ou 2 \`update_form\` consécutifs.
 - Pour les jours de la semaine (\`recurrence_days\`), c'est un bitmask : Lun=1, Mar=2, Mer=4, Jeu=8, Ven=16, Sam=32, Dim=64. "Tous les jours" = 127. "Lun-Ven" = 31. "Week-end" = 96.
-- Pour assigner par nom ("assigne à Pierre"), appelle d'abord \`list_employees\`, trouve l'id, puis push \`assignee_ids: [id]\` via \`update_form\`.
+- **RÈGLE CRITIQUE — Attribution** : une tâche **récurrente (template)** définit uniquement QUOI / QUAND / OÙ. **Tu ne peux PAS attribuer une personne à un template.** Chaque jour génère une instance "bébé" qui est attribuée au cas par cas. Si l'utilisateur dit "crée une tâche récurrente assignée à Pierre", crée le template SANS \`assignee_ids\`, et explique que l'attribution se fait jour par jour dans la vue jour/semaine.
+- Pour les tâches **ponctuelles (instance)** uniquement : tu peux assigner par nom ("assigne à Pierre"), appelle d'abord \`list_employees\`, trouve l'id, puis push \`assignee_ids: [id]\` via \`update_form\`.
 - Pour modifier une tâche existante, appelle \`load_task_for_edit\` qui charge le formulaire, puis applique les changements via \`update_form\`.
 
 ${styleRules}
@@ -2860,7 +2861,7 @@ RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond pl
             assignee_ids: {
               type: 'array',
               items: { type: 'integer' },
-              description: 'Liste des user_ids assignés (utilise list_employees pour résoudre les noms)'
+              description: 'Liste des user_ids assignés. UNIQUEMENT pour task_kind=instance (ponctuelle ou bébé d\'un récurrent). Les templates n\'ont JAMAIS d\'attribution — chaque instance est attribuée jour par jour. Utilise list_employees pour résoudre les noms.'
             }
           }
         }
@@ -3417,6 +3418,10 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         for (const k of allowed) {
           if (fnArgs[k] !== undefined) cleanPatch[k] = fnArgs[k]
         }
+        // Garde-fou : un template n'a JAMAIS d'attribution (archi instance-level only)
+        if (workflowMode === 'gerer_taches' && cleanPatch.task_kind === 'template' && 'assignee_ids' in cleanPatch) {
+          delete cleanPatch.assignee_ids
+        }
         if (Object.keys(cleanPatch).length > 0) {
           formPatches.push(cleanPatch)
         }
@@ -3503,8 +3508,8 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
               const t = await c.env.DB.prepare('SELECT * FROM task_templates WHERE id = ? AND hotel_id = ?').bind(id, user.hotel_id).first<any>()
               if (!t) toolResult = { error: 'Template introuvable' }
               else {
-                const a = await c.env.DB.prepare(`SELECT tta.user_id, u.name FROM task_template_assignees tta JOIN users u ON u.id = tta.user_id WHERE tta.template_id = ?`).bind(id).all()
-                toolResult = { task_kind: 'template', task: t, assignees: a.results }
+                // Note archi : les templates n'ont PAS d'attribution. Chaque instance est attribuée individuellement.
+                toolResult = { task_kind: 'template', task: t, assignees: [], note: 'Les templates n\'ont pas d\'attribution. Attribution gérée au niveau de chaque instance (jour par jour).' }
               }
             } else {
               const t = await c.env.DB.prepare('SELECT * FROM task_instances WHERE id = ? AND hotel_id = ?').bind(id, user.hotel_id).first<any>()
@@ -3555,14 +3560,14 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
               const t = await c.env.DB.prepare('SELECT * FROM task_templates WHERE id = ? AND hotel_id = ?').bind(id, user.hotel_id).first<any>()
               if (!t) toolResult = { ok: false, error: 'Template introuvable' }
               else {
-                const a = await c.env.DB.prepare(`SELECT user_id FROM task_template_assignees WHERE template_id = ?`).bind(id).all()
+                // Templates : aucune attribution (archi instance-level only)
                 formPatches.push({
                   task_kind: 'template', mode: 'update', task_id: id,
                   title: t.title, description: t.description, category: t.category,
                   priority: t.priority, recurrence_type: t.recurrence_type, recurrence_days: t.recurrence_days,
                   monthly_day: t.monthly_day, suggested_time: t.suggested_time, duration_min: t.duration_min,
                   active_from: t.active_from, active_to: t.active_to, task_date: null,
-                  assignee_ids: (a.results as any[]).map(r => r.user_id)
+                  assignee_ids: []
                 })
                 toolResult = { ok: true, task_kind: 'template', mode: 'update', task_id: id }
               }

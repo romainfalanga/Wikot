@@ -230,6 +230,10 @@ async function loadData() {
     const usersData = await api('/users');
     if (usersData) state.users = usersData.users || [];
   }
+  // Charger les rôles métiers (cache state.jobRoles utilisé par les modales user/job-roles)
+  if (typeof loadJobRoles === 'function') {
+    await loadJobRoles();
+  }
   // Plus de chargement des suggestions (feature supprimée)
 
   // Chat — charger groupes, salons et compteur global non-lus

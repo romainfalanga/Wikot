@@ -664,13 +664,93 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
 })
 
 // Rôles métier (différents du rôle système employee/admin/super_admin)
-// null = non défini ; libre de mettre n'importe lequel de cette whitelist
-const ALLOWED_JOB_ROLES = ['reception', 'serveur', 'cuisinier', 'housekeeping', 'maintenance', 'manager', 'autre'] as const
-function normalizeJobRole(v: any): string | null {
+// Désormais dynamiques par hôtel (table job_roles). null = non défini.
+// Normalisation : on convertit en slug (lowercase + alphanumérique + tirets) puis
+// on valide qu'il existe pour CE hôtel. Si invalide → null.
+function slugifyJobRole(v: any): string | null {
   if (v === null || v === undefined || v === '') return null
   const s = String(v).trim().toLowerCase()
-  return (ALLOWED_JOB_ROLES as readonly string[]).includes(s) ? s : null
+  if (!s) return null
+  // garde lettres/chiffres/tirets/underscores
+  const slug = s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)
+  return slug || null
 }
+async function normalizeJobRole(db: D1Database, hotelId: number | null | undefined, v: any): Promise<string | null> {
+  const slug = slugifyJobRole(v)
+  if (!slug || !hotelId) return null
+  const row = await db.prepare('SELECT slug FROM job_roles WHERE hotel_id = ? AND slug = ?').bind(hotelId, slug).first<any>()
+  return row ? row.slug : null
+}
+
+// === CRUD job_roles (admin only, scope hôtel) ===
+// GET /api/job-roles → liste des rôles métiers de l'hôtel
+app.get('/api/job-roles', authMiddleware, async (c) => {
+  const user = c.get('user')
+  // Tous les users authentifiés peuvent lire (sélecteurs dans la création utilisateur, etc.)
+  if (!user.hotel_id && user.role !== 'super_admin') return c.json({ job_roles: [] })
+  const hotelId = c.req.query('hotel_id')
+  const targetHotel = (user.role === 'super_admin' && hotelId) ? parseInt(hotelId) : user.hotel_id
+  if (!targetHotel) return c.json({ job_roles: [] })
+  const r = await c.env.DB.prepare(`
+    SELECT jr.id, jr.slug, jr.name, jr.created_at,
+           (SELECT COUNT(*) FROM users u WHERE u.hotel_id = jr.hotel_id AND u.job_role = jr.slug) as user_count
+    FROM job_roles jr
+    WHERE jr.hotel_id = ?
+    ORDER BY jr.name
+  `).bind(targetHotel).all()
+  return c.json({ job_roles: r.results })
+})
+
+// POST /api/job-roles → créer un nouveau rôle métier (admin/super_admin)
+app.post('/api/job-roles', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  const body = await c.req.json() as { name?: string; hotel_id?: number }
+  const name = String(body.name || '').trim()
+  if (!name || name.length > 60) return c.json({ error: 'Nom requis (1-60 caractères)' }, 400)
+  const targetHotel = (user.role === 'super_admin' && body.hotel_id) ? parseInt(String(body.hotel_id)) : user.hotel_id
+  if (!targetHotel) return c.json({ error: 'hotel_id requis' }, 400)
+  const slug = slugifyJobRole(name)
+  if (!slug) return c.json({ error: 'Nom invalide' }, 400)
+  // Évite les doublons (slug ou name)
+  const existing = await c.env.DB.prepare('SELECT id FROM job_roles WHERE hotel_id = ? AND (slug = ? OR LOWER(name) = LOWER(?))').bind(targetHotel, slug, name).first()
+  if (existing) return c.json({ error: 'Un rôle avec ce nom existe déjà' }, 400)
+  const r = await c.env.DB.prepare('INSERT INTO job_roles (hotel_id, slug, name) VALUES (?, ?, ?)').bind(targetHotel, slug, name).run()
+  return c.json({ id: r.meta.last_row_id, slug, name })
+})
+
+// PUT /api/job-roles/:id → renommer un rôle (admin/super_admin)
+app.put('/api/job-roles/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  const id = parseInt(c.req.param('id'))
+  const body = await c.req.json() as { name?: string }
+  const name = String(body.name || '').trim()
+  if (!name || name.length > 60) return c.json({ error: 'Nom requis (1-60 caractères)' }, 400)
+  const target = await c.env.DB.prepare('SELECT id, hotel_id, slug FROM job_roles WHERE id = ?').bind(id).first<any>()
+  if (!target) return c.json({ error: 'Rôle introuvable' }, 404)
+  if (user.role === 'admin' && target.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+  // On NE change PAS le slug (sinon il faudrait MAJ tous les users.job_role). On ne change que le label.
+  // Vérifie doublon de name dans l'hôtel
+  const dup = await c.env.DB.prepare('SELECT id FROM job_roles WHERE hotel_id = ? AND LOWER(name) = LOWER(?) AND id != ?').bind(target.hotel_id, name, id).first()
+  if (dup) return c.json({ error: 'Un autre rôle a déjà ce nom' }, 400)
+  await c.env.DB.prepare('UPDATE job_roles SET name = ? WHERE id = ?').bind(name, id).run()
+  return c.json({ success: true, id, slug: target.slug, name })
+})
+
+// DELETE /api/job-roles/:id → supprimer un rôle (et nullifier sur les users concernés)
+app.delete('/api/job-roles/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (user.role !== 'admin' && user.role !== 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
+  const id = parseInt(c.req.param('id'))
+  const target = await c.env.DB.prepare('SELECT id, hotel_id, slug FROM job_roles WHERE id = ?').bind(id).first<any>()
+  if (!target) return c.json({ error: 'Rôle introuvable' }, 404)
+  if (user.role === 'admin' && target.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+  // Nullifie le job_role des users qui l'utilisaient (pas de FK stricte, on fait à la main)
+  await c.env.DB.prepare('UPDATE users SET job_role = NULL WHERE hotel_id = ? AND job_role = ?').bind(target.hotel_id, target.slug).run()
+  await c.env.DB.prepare('DELETE FROM job_roles WHERE id = ?').bind(id).run()
+  return c.json({ success: true })
+})
 
 app.post('/api/users', authMiddleware, async (c) => {
   const currentUser = c.get('user')
@@ -689,9 +769,8 @@ app.post('/api/users', authMiddleware, async (c) => {
   // Rôle whitelist
   const allowedRoles = ['employee', 'admin', 'super_admin']
   const finalRole = allowedRoles.includes(role || '') ? role : 'employee'
-  const finalJobRole = normalizeJobRole(job_role)
-
   const targetHotel = currentUser.role === 'admin' ? currentUser.hotel_id : hotel_id
+  const finalJobRole = await normalizeJobRole(c.env.DB, targetHotel, job_role)
   if (currentUser.role === 'admin' && finalRole === 'super_admin') return c.json({ error: 'Non autorisé' }, 403)
   // Un super_admin doit avoir un hotel_id rattaché ou explicite (pour l'admin c'est forcé)
   if (currentUser.role === 'super_admin' && !targetHotel && finalRole !== 'super_admin') {
@@ -750,7 +829,8 @@ app.put('/api/users/:id', authMiddleware, async (c) => {
     fields.push('role = ?'); values.push(r)
   }
   if (body.job_role !== undefined) {
-    fields.push('job_role = ?'); values.push(normalizeJobRole(body.job_role))
+    const normalizedJobRole = await normalizeJobRole(c.env.DB, target.hotel_id, body.job_role)
+    fields.push('job_role = ?'); values.push(normalizedJobRole)
   }
   if (body.is_active !== undefined && currentUser.role === 'super_admin') {
     fields.push('is_active = ?'); values.push(body.is_active ? 1 : 0)
@@ -2069,28 +2149,49 @@ async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName
     // ============================================
     // WIKOT CLASSIQUE — SÉLECTEUR DE CARTES (zéro texte libre)
     // ============================================
+    // Date du jour (pour les questions « ma prochaine tâche », « aujourd'hui », etc.)
+    const todayISO = new Date().toISOString().slice(0, 10)
     return `Tu es **Wikot**, le moteur de recherche conversationnel du **${hotelName}**.
 
 ## Ta mission UNIQUE
-Tu reçois une question d'employé. Tu identifies LA procédure ou L'information de l'hôtel la plus pertinente, et tu la retournes via l'outil \`select_answer\`. **Tu NE rédiges JAMAIS de texte de réponse.** L'interface affiche directement la carte de la ressource sélectionnée.
+Tu reçois une question d'employé. Tu identifies LE OU LES bloc(s) le(s) plus pertinent(s) parmi : procédures, informations, MESSAGES de chat, TÂCHES. Tu les retournes via l'outil \`select_answer\` sous forme de tableau \`blocks\`. **Tu NE rédiges JAMAIS de texte de réponse.** L'interface affiche directement les cartes des ressources sélectionnées.
 
-## Protocole strict (obligatoire à chaque message)
-1. Appelle les outils de recherche pertinents :
-   - \`search_procedures\` (procédures entières) ET/OU \`search_procedure_steps\` (étapes individuelles) si la question évoque une action / un processus.
-   - \`search_hotel_info\` (infos précises) ET/OU \`list_info_categories\` (thèmes/catégories) si la question évoque une information de l'hôtel.
-2. Si plusieurs résultats, appelle \`get_procedure\` ou \`get_hotel_info_item\` pour comparer.
-3. Termine TOUJOURS par UN SEUL appel à \`select_answer\` à la BONNE GRANULARITÉ :
-   - \`type: "procedure"\` + \`id\` → la question demande la procédure ENTIÈRE (« Comment je fais un check-in ? »).
-   - \`type: "procedure_step"\` + \`procedure_id\` + \`step_number\` → la question demande UNE étape précise dans une procédure (« Comment vérifier la réservation pendant le check-in ? », « Comment vérifier l'identité d'un client ? »). Si l'étape pointe vers une sous-procédure, ce type affichera la sous-procédure complète.
-   - \`type: "info_item"\` + \`id\` → la question demande UNE information précise (« Horaires de la piscine », « Code Wi-Fi »).
-   - \`type: "info_category"\` + \`id\` → la question demande TOUT un thème regroupé en catégorie (« Quels sont les loisirs et activités ? », « Donne-moi tous les horaires »).
-   - \`type: "none"\` → aucune ressource existante ne correspond, OU question hors-sujet (« bonjour »), OU demande de création/modification.
+## Contexte utilisateur
+- ID utilisateur courant : **${user.id}** (à utiliser pour "mes tâches", "messages qui m'ont été destinés", etc.)
+- Nom : ${user.name}
+- Date du jour : **${todayISO}**
+
+## Outils disponibles
+- \`search_procedures\` / \`search_procedure_steps\` / \`get_procedure\` : procédures et étapes
+- \`search_hotel_info\` / \`list_info_categories\` / \`get_hotel_info_item\` : informations de l'hôtel
+- \`list_groups\` : arborescence des salons/channels (à appeler AVANT \`search_messages\` si besoin de filtrer par salon)
+- \`list_employees\` : annuaire (à appeler AVANT \`search_messages\` ou \`search_tasks\` pour résoudre un prénom en \`user_id\`)
+- \`search_messages\` : messages du chat. Filtres : \`q\`, \`channel_id\`, \`group_id\`, \`author_id\`, \`mentions_user_id\` (← pour "messages qui m'ont été destinés", passe \`mentions_user_id: ${user.id}\`), \`after\`, \`before\`
+- \`search_tasks\` : tâches (templates récurrents + instances ponctuelles). Filtres : \`q\`, \`assignee_id\` (← pour "mes tâches", passe \`assignee_id: ${user.id}\`), \`status\` (pending/done/all), \`after\`, \`before\`
+
+## Protocole strict
+1. Appelle les outils de recherche pertinents selon le sujet de la question.
+2. Si plusieurs résultats possibles, affine avec \`get_procedure\` / \`get_hotel_info_item\`.
+3. Termine TOUJOURS par UN appel à \`select_answer\` avec un tableau \`blocks\` (1 à 5 blocs).
+
+## Types de blocs disponibles dans \`blocks\`
+- \`{type:"procedure", id}\` → procédure ENTIÈRE (« Comment je fais un check-in ? »)
+- \`{type:"procedure_step", procedure_id, step_number}\` → UNE étape précise (« Comment vérifier la réservation pendant le check-in ? »). Si l'étape pointe vers une sous-procédure, la carte affichera la sous-procédure.
+- \`{type:"info_item", id}\` → UNE information précise (« Code Wi-Fi », « Horaires piscine »)
+- \`{type:"info_category", id}\` → TOUT un thème (« Donne-moi tous les horaires »)
+- \`{type:"chat_message", id}\` → UN message du chat sélectionné comme réponse (« Qui devait faire X ? » → renvoie le message original sans le reformuler)
+- \`{type:"task", task_kind:"template"|"instance", id}\` → UNE tâche
+- \`{type:"none"}\` → SEUL, quand rien ne correspond ou question hors-sujet
 
 ## Règles ABSOLUES
-- **AUCUN texte de réponse écrit par toi.** Le seul output que tu produis est l'appel à \`select_answer\`. Pas de politesse, pas d'introduction.
-- **GRANULARITÉ MAXIMALE** : choisis toujours le type le plus précis qui répond pleinement. Si l'employé demande une seule action, ne renvoie pas la procédure entière → renvoie \`procedure_step\`. Si l'employé demande un thème large, renvoie \`info_category\`, pas un seul \`info_item\`.
-- **UNE SEULE ressource sélectionnée** (la plus pertinente).
-- Si la question concerne une création/modification : sélectionne \`type: "none"\` (Wikot ne fait que de la lecture).
+- **AUCUN texte libre.** Le seul output produit est l'appel à \`select_answer\`. Pas de politesse, pas d'introduction.
+- **PLUSIEURS BLOCS si pertinent.** Exemples :
+  - « Quelles sont mes tâches aujourd'hui ? » → 1 bloc \`task\` par tâche assignée (max 5).
+  - « Quels messages m'ont été destinés récemment ? » → 1 bloc \`chat_message\` par message pertinent.
+  - « Qui était responsable de la livraison hier ? » → 1 bloc \`chat_message\` (le message d'origine) — Wikot ne réécrit pas, il cite.
+- **GRANULARITÉ MAXIMALE.** Si l'employé demande UNE action précise, ne renvoie pas la procédure entière → renvoie \`procedure_step\`. Si l'employé demande un thème large, renvoie \`info_category\`.
+- **MAX 5 blocs** par réponse. Trie par pertinence décroissante.
+- Si demande de création/modification : sélectionne \`type:"none"\` (Wikot ne fait que de la lecture).
 
 ## Arborescence actuelle de l'hôtel
 ${arborescence}
@@ -2427,29 +2528,99 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
     // En mode standard, on remplace add_reference par select_answer
     // (l'utilisateur ne reçoit qu'une carte structurée, pas de texte libre)
     tools.pop() // Retirer add_reference
+    // Tools de recherche étendus disponibles en mode standard : conversations + tâches
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'list_groups',
+        description: 'Liste les salons et channels du chat pour résoudre les noms en IDs avant search_messages. Retourne {groups: [{id, name, channels: [{id, name}]}]}.',
+        parameters: { type: 'object', properties: {} }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'list_employees',
+        description: 'Liste les utilisateurs de l\'hôtel pour résoudre prénom/nom en user_id avant search_messages ou search_tasks.',
+        parameters: { type: 'object', properties: {} }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'search_messages',
+        description: 'Recherche dans l\'historique des messages du chat de l\'hôtel. Utile pour répondre à "qui a dit X", "quel est le dernier message qui m\'est destiné", "qui était responsable de Y". Retourne {results: [{id, channel_id, channel_name, group_name, author_id, author_name, created_at, content}]}.',
+        parameters: {
+          type: 'object',
+          properties: {
+            q: { type: 'string', description: 'Mot-clé recherché dans le contenu' },
+            channel_id: { type: 'integer' },
+            group_id: { type: 'integer' },
+            author_id: { type: 'integer' },
+            mentions_user_id: { type: 'integer', description: 'Restreindre aux messages qui mentionnent ce user_id (utilisé pour "messages qui me sont destinés")' },
+            after: { type: 'string', description: 'YYYY-MM-DD' },
+            before: { type: 'string', description: 'YYYY-MM-DD' },
+            limit: { type: 'integer', description: '1-50, défaut 10' }
+          }
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'search_tasks',
+        description: 'Recherche dans les tâches (templates récurrents + instances ponctuelles). Utile pour répondre à "quelle est ma prochaine tâche", "qui doit faire X", "quelles tâches sont en retard". Retourne {results: [{kind, id, title, description, task_date, suggested_time, priority, status, assignees}]}. kind = "template" ou "instance".',
+        parameters: {
+          type: 'object',
+          properties: {
+            q: { type: 'string', description: 'Mot-clé sur titre/description' },
+            assignee_id: { type: 'integer', description: 'Restreindre aux tâches attribuées à ce user_id (utiliser pour "mes tâches")' },
+            status: { type: 'string', enum: ['pending', 'done', 'all'], description: 'Filtre par statut (instances). défaut: all' },
+            after: { type: 'string', description: 'YYYY-MM-DD (instances : task_date >= after)' },
+            before: { type: 'string', description: 'YYYY-MM-DD (instances : task_date <= before)' },
+            limit: { type: 'integer', description: '1-30, défaut 10' }
+          }
+        }
+      }
+    })
     tools.push({
       type: 'function',
       function: {
         name: 'select_answer',
-        description: `Sélectionne LA réponse la plus pertinente, à la BONNE GRANULARITÉ. UTILISE-LE OBLIGATOIREMENT à chaque message après tes recherches.
+        description: `Sélectionne UN OU PLUSIEURS blocs de réponse à afficher à l'utilisateur. UTILISE-LE OBLIGATOIREMENT à la fin de chaque question, jamais de texte libre.
 
-Types disponibles :
-- "procedure" + id : la question porte sur la procédure entière (ex: « Comment je fais un check-in ? »)
-- "procedure_step" + procedure_id + step_number : la question porte sur UNE étape précise d'une procédure (ex: « Comment vérifier la réservation pendant le check-in ? »). Si l'étape est liée à une sous-procédure, renvoie ce type pour afficher uniquement la sous-procédure dans son contexte.
-- "info_item" + id : la question porte sur UNE information précise (ex: « Horaires de la piscine »)
-- "info_category" + category_id : la question porte sur TOUT un thème regroupé en catégorie (ex: « Les loisirs et activités », « Tous les horaires »)
-- "none" : aucune ressource ne correspond.
+Tu passes un tableau "blocks" : 1 bloc si une seule ressource répond, plusieurs blocs si la question demande plusieurs éléments (ex : "quelles sont mes tâches pour aujourd'hui" → plusieurs blocs task).
 
-RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond pleinement à la question. Si l'employé demande une seule étape, ne renvoie pas la procédure entière. Si l'employé demande un thème large, renvoie la catégorie complète.`,
+Types de blocs disponibles :
+- {type:"procedure", id} : procédure entière
+- {type:"procedure_step", procedure_id, step_number} : UNE étape précise (ou sa sous-procédure liée)
+- {type:"info_item", id} : UNE information
+- {type:"info_category", id} : TOUT un thème d'infos
+- {type:"chat_message", id} : UN message du chat (utile pour "qui a dit X", "dernier message qui m'est destiné")
+- {type:"task", task_kind, id} : UNE tâche (task_kind = "template" pour récurrentes ou "instance" pour ponctuelles)
+- {type:"none"} : utilisé SEUL, quand aucune ressource ne correspond ou question hors-sujet.
+
+RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond. Tableau "blocks" : 1 à 5 blocs max. Si tu mets "none", c'est le seul bloc autorisé.`,
         parameters: {
           type: 'object',
           properties: {
-            type: { type: 'string', enum: ['procedure', 'procedure_step', 'info_item', 'info_category', 'none'] },
-            id: { type: 'integer', description: 'ID de la procédure (type=procedure) ou de l\'info (type=info_item) ou de la catégorie (type=info_category)' },
-            procedure_id: { type: 'integer', description: '[type=procedure_step] ID de la procédure parente' },
-            step_number: { type: 'integer', description: '[type=procedure_step] numéro de l\'étape (1, 2, 3…)' }
+            blocks: {
+              type: 'array',
+              description: 'Tableau de 1 à 5 blocs. Si type=none, mettre 1 seul bloc.',
+              items: {
+                type: 'object',
+                properties: {
+                  type: { type: 'string', enum: ['procedure', 'procedure_step', 'info_item', 'info_category', 'chat_message', 'task', 'none'] },
+                  id: { type: 'integer', description: 'ID de la ressource (procedure/info_item/info_category/chat_message/task)' },
+                  procedure_id: { type: 'integer', description: '[procedure_step] ID de la procédure parente' },
+                  step_number: { type: 'integer', description: '[procedure_step] numéro de l\'étape' },
+                  task_kind: { type: 'string', enum: ['template', 'instance'], description: '[task] template ou instance' }
+                },
+                required: ['type']
+              }
+            }
           },
-          required: ['type']
+          required: ['blocks']
         }
       }
     })
@@ -3200,8 +3371,15 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   // IDs vus dans les résultats des tools de lecture (filet de sécurité mode standard)
   const seenProcedureIds = new Set<number>()
   const seenInfoItemIds = new Set<number>()
-  // Sélection finale du mode standard (Wikot = sélecteur de cartes)
-  let selectedAnswer: { type: 'procedure' | 'procedure_step' | 'info_item' | 'info_category' | 'none'; id?: number; procedure_id?: number; step_number?: number } | null = null
+  // Sélection finale du mode standard (Wikot = sélecteur de cartes) — TABLEAU DE BLOCS
+  type SelectedBlock = {
+    type: 'procedure' | 'procedure_step' | 'info_item' | 'info_category' | 'chat_message' | 'task' | 'none'
+    id?: number
+    procedure_id?: number
+    step_number?: number
+    task_kind?: 'template' | 'instance'
+  }
+  let selectedBlocks: SelectedBlock[] = []
   let assistantText = ''
   let lastToolCalls: any[] | null = null
   // Mode max (Back Wikot) : patches de formulaire à appliquer côté UI.
@@ -3256,24 +3434,35 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         }
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) })
       }
-      // === MODE STANDARD : select_answer === outil de finalisation
+      // === MODE STANDARD : select_answer === outil de finalisation (multi-blocs)
       else if (fnName === 'select_answer') {
-        const t = fnArgs.type
-        const aId = typeof fnArgs.id === 'number' ? fnArgs.id : (fnArgs.id ? parseInt(fnArgs.id) : undefined)
-        const pId = typeof fnArgs.procedure_id === 'number' ? fnArgs.procedure_id : (fnArgs.procedure_id ? parseInt(fnArgs.procedure_id) : undefined)
-        const sNum = typeof fnArgs.step_number === 'number' ? fnArgs.step_number : (fnArgs.step_number ? parseInt(fnArgs.step_number) : undefined)
-        if (t === 'procedure' && aId) {
-          selectedAnswer = { type: 'procedure', id: aId }
-        } else if (t === 'procedure_step' && pId && sNum) {
-          selectedAnswer = { type: 'procedure_step', procedure_id: pId, step_number: sNum }
-        } else if (t === 'info_item' && aId) {
-          selectedAnswer = { type: 'info_item', id: aId }
-        } else if (t === 'info_category' && aId) {
-          selectedAnswer = { type: 'info_category', id: aId }
-        } else {
-          selectedAnswer = { type: 'none' }
+        const toInt = (v: any): number | undefined => {
+          if (typeof v === 'number') return v
+          if (v == null) return undefined
+          const n = parseInt(String(v))
+          return Number.isFinite(n) ? n : undefined
         }
-        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true }) })
+        const rawBlocks: any[] = Array.isArray(fnArgs.blocks)
+          ? fnArgs.blocks
+          // Tolérance : si l'IA renvoie l'ancien format à plat, on l'enveloppe
+          : (fnArgs.type ? [{ type: fnArgs.type, id: fnArgs.id, procedure_id: fnArgs.procedure_id, step_number: fnArgs.step_number, task_kind: fnArgs.task_kind }] : [])
+        const out: SelectedBlock[] = []
+        for (const b of rawBlocks.slice(0, 5)) {
+          const t = b?.type
+          const aId = toInt(b?.id)
+          const pId = toInt(b?.procedure_id)
+          const sNum = toInt(b?.step_number)
+          const tk = b?.task_kind === 'template' ? 'template' : (b?.task_kind === 'instance' ? 'instance' : undefined)
+          if (t === 'procedure' && aId) out.push({ type: 'procedure', id: aId })
+          else if (t === 'procedure_step' && pId && sNum) out.push({ type: 'procedure_step', procedure_id: pId, step_number: sNum })
+          else if (t === 'info_item' && aId) out.push({ type: 'info_item', id: aId })
+          else if (t === 'info_category' && aId) out.push({ type: 'info_category', id: aId })
+          else if (t === 'chat_message' && aId) out.push({ type: 'chat_message', id: aId })
+          else if (t === 'task' && aId && tk) out.push({ type: 'task', id: aId, task_kind: tk })
+          else if (t === 'none') { out.length = 0; out.push({ type: 'none' }); break }
+        }
+        selectedBlocks = out.length > 0 ? out : [{ type: 'none' }]
+        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, count: selectedBlocks.length }) })
         stopAfterThisIter = true
       }
       // === MODE MAX (Back Wikot) : update_form === l'IA écrit dans le formulaire UI
@@ -3315,7 +3504,7 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, message: 'Proposition enregistrée, l\'utilisateur va voir un diff et pouvoir valider.' }) })
       }
       // === READ TOOLS PARTAGÉS (multi-workflows Phase 4) ===
-      else if (['list_groups', 'list_employees', 'search_messages', 'list_tasks', 'get_task'].includes(fnName)) {
+      else if (['list_groups', 'list_employees', 'search_messages', 'search_tasks', 'list_tasks', 'get_task'].includes(fnName)) {
         let toolResult: any = { ok: false }
         try {
           if (fnName === 'list_groups') {
@@ -3354,6 +3543,23 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
               conds.push('m.user_id = ?')
               params.push(parseInt(String(fnArgs.author_id)))
             }
+            if (fnArgs.mentions_user_id) {
+              const mid = parseInt(String(fnArgs.mentions_user_id))
+              if (Number.isFinite(mid)) {
+                // Pas de colonne mentions_json : on détecte les mentions par pattern textuel @<prénom>
+                // On récupère le prénom/nom de l'utilisateur ciblé puis on filtre via LIKE.
+                const target = await c.env.DB.prepare('SELECT name FROM users WHERE id = ? AND hotel_id = ?').bind(mid, user.hotel_id).first<any>()
+                const fullName = (target?.name || '').trim()
+                if (fullName) {
+                  const firstName = fullName.split(/\s+/)[0]
+                  conds.push('(m.content LIKE ? OR m.content LIKE ?)')
+                  params.push(`%@${firstName}%`, `%@${fullName}%`)
+                } else {
+                  // Cible introuvable : on force un résultat vide pour éviter de leak
+                  conds.push('1 = 0')
+                }
+              }
+            }
             if (fnArgs.after && /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.after))) {
               conds.push('date(m.created_at) >= ?')
               params.push(String(fnArgs.after))
@@ -3376,6 +3582,83 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
               LIMIT ?
             `).bind(...params, limit).all()
             toolResult = { results: rows.results }
+          } else if (fnName === 'search_tasks') {
+            // Recherche unifiée templates + instances avec filtres assignee/status/dates
+            const q = fnArgs.q && String(fnArgs.q).trim() ? '%' + String(fnArgs.q).trim() + '%' : null
+            const assigneeId = fnArgs.assignee_id ? parseInt(String(fnArgs.assignee_id)) : null
+            const statusFilter = ['pending', 'done'].includes(String(fnArgs.status)) ? String(fnArgs.status) : null
+            const after = /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.after || '')) ? String(fnArgs.after) : null
+            const before = /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.before || '')) ? String(fnArgs.before) : null
+            const limit = Math.max(1, Math.min(30, parseInt(String(fnArgs.limit || 10))))
+
+            const results: any[] = []
+
+            // --- TEMPLATES (récurrents) : pas d'attribution, pas de status, pas de date ---
+            // On les inclut seulement si pas de filtre assignee/status/date (sinon ils sont hors-scope)
+            if (!assigneeId && !statusFilter && !after && !before) {
+              const tplConds: string[] = ['hotel_id = ?', 'is_active = 1']
+              const tplParams: any[] = [user.hotel_id]
+              if (q) { tplConds.push('(title LIKE ? OR description LIKE ?)'); tplParams.push(q, q) }
+              const tpls = await c.env.DB.prepare(`
+                SELECT id, title, description, suggested_time, priority, category, recurrence_type
+                FROM task_templates WHERE ${tplConds.join(' AND ')}
+                ORDER BY title LIMIT ?
+              `).bind(...tplParams, limit).all()
+              for (const t of (tpls.results as any[])) {
+                results.push({
+                  kind: 'template', id: t.id, title: t.title, description: t.description,
+                  suggested_time: t.suggested_time, priority: t.priority, category: t.category,
+                  recurrence_type: t.recurrence_type, status: null, task_date: null, assignees: []
+                })
+              }
+            }
+
+            // --- INSTANCES (ponctuelles + babies de récurrents) ---
+            const instConds: string[] = ['ti.hotel_id = ?']
+            const instParams: any[] = [user.hotel_id]
+            if (q) { instConds.push('(ti.title LIKE ? OR ti.description LIKE ?)'); instParams.push(q, q) }
+            if (statusFilter) { instConds.push('ti.status = ?'); instParams.push(statusFilter) }
+            if (after) { instConds.push('ti.task_date >= ?'); instParams.push(after) }
+            if (before) { instConds.push('ti.task_date <= ?'); instParams.push(before) }
+            if (assigneeId) {
+              instConds.push('EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_instance_id = ti.id AND ta.user_id = ?)')
+              instParams.push(assigneeId)
+            }
+            const instances = await c.env.DB.prepare(`
+              SELECT ti.id, ti.title, ti.description, ti.task_date, ti.suggested_time,
+                     ti.priority, ti.status, ti.category, ti.template_id
+              FROM task_instances ti
+              WHERE ${instConds.join(' AND ')}
+              ORDER BY ti.task_date ASC, ti.suggested_time ASC, ti.id ASC
+              LIMIT ?
+            `).bind(...instParams, limit).all()
+            const instanceRows = instances.results as any[]
+            // Récupérer assignations de toutes les instances en une seule requête
+            const instIds = instanceRows.map(r => r.id)
+            const assigneesByInstance: Record<number, any[]> = {}
+            if (instIds.length > 0) {
+              const placeholders = instIds.map(() => '?').join(',')
+              const ar = await c.env.DB.prepare(`
+                SELECT ta.task_instance_id, ta.user_id, u.name
+                FROM task_assignments ta
+                JOIN users u ON u.id = ta.user_id
+                WHERE ta.task_instance_id IN (${placeholders})
+              `).bind(...instIds).all()
+              for (const a of (ar.results as any[])) {
+                if (!assigneesByInstance[a.task_instance_id]) assigneesByInstance[a.task_instance_id] = []
+                assigneesByInstance[a.task_instance_id].push({ user_id: a.user_id, name: a.name })
+              }
+            }
+            for (const r of instanceRows) {
+              results.push({
+                kind: 'instance', id: r.id, title: r.title, description: r.description,
+                task_date: r.task_date, suggested_time: r.suggested_time, priority: r.priority,
+                status: r.status, category: r.category, template_id: r.template_id,
+                assignees: assigneesByInstance[r.id] || []
+              })
+            }
+
+            toolResult = { results }
           } else if (fnName === 'list_tasks') {
             const tpl = await c.env.DB.prepare(`SELECT id, title, recurrence_type, recurrence_days, monthly_day, priority, suggested_time, duration_min, is_active, category FROM task_templates WHERE hotel_id = ? ORDER BY is_active DESC, title`).bind(user.hotel_id).all()
             const today = new Date().toISOString().slice(0, 10)
@@ -3587,167 +3870,218 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   }
 
   // ============================================
-  // MODE STANDARD : on construit la answer_card à partir de selectedAnswer
+  // MODE STANDARD : on construit le TABLEAU answer_cards à partir de selectedBlocks
+  // (Wikot peut renvoyer 1 à 5 blocs : procédure, étape, info, catégorie, message, tâche, none)
   // ============================================
-  let answerCard: any = null
+  const answerCards: any[] = []
   if (mode === 'standard') {
-    // Filet de sécurité : si le modèle n'a pas appelé select_answer, on déduit
-    if (!selectedAnswer) {
+    // Filet de sécurité : si le modèle n'a pas appelé select_answer
+    if (selectedBlocks.length === 0) {
       if (seenProcedureIds.size > 0) {
-        const firstProc = Array.from(seenProcedureIds)[0]
-        selectedAnswer = { type: 'procedure', id: firstProc }
+        selectedBlocks = [{ type: 'procedure', id: Array.from(seenProcedureIds)[0] }]
       } else if (seenInfoItemIds.size > 0) {
-        const firstInfo = Array.from(seenInfoItemIds)[0]
-        selectedAnswer = { type: 'info_item', id: firstInfo }
+        selectedBlocks = [{ type: 'info_item', id: Array.from(seenInfoItemIds)[0] }]
       } else {
-        selectedAnswer = { type: 'none' }
+        selectedBlocks = [{ type: 'none' }]
       }
     }
 
-    // Construire la carte structurée selon le type
-    if (selectedAnswer.type === 'procedure' && selectedAnswer.id) {
-      const p = await c.env.DB.prepare(`
-        SELECT p.id, p.title, p.description, p.trigger_event, p.category_id,
-               c.name as category_name, c.color as category_color, c.icon as category_icon
-        FROM procedures p
-        LEFT JOIN categories c ON p.category_id = c.id
-        WHERE p.id = ? AND p.hotel_id = ?
-      `).bind(selectedAnswer.id, user.hotel_id).first() as any
-      if (p) {
-        // Récupération de toutes les étapes (titre + contenu + sous-procédures liées)
-        const stepsRes = await c.env.DB.prepare(`
+    for (const block of selectedBlocks) {
+      let card: any = { kind: 'not_found' }
+
+      if (block.type === 'procedure' && block.id) {
+        const p = await c.env.DB.prepare(`
+          SELECT p.id, p.title, p.description, p.trigger_event, p.category_id,
+                 c.name as category_name, c.color as category_color, c.icon as category_icon
+          FROM procedures p
+          LEFT JOIN categories c ON p.category_id = c.id
+          WHERE p.id = ? AND p.hotel_id = ?
+        `).bind(block.id, user.hotel_id).first() as any
+        if (p) {
+          const stepsRes = await c.env.DB.prepare(`
+            SELECT s.id, s.step_number, s.title, s.content, s.linked_procedure_id, lp.title as linked_title
+            FROM steps s
+            LEFT JOIN procedures lp ON lp.id = s.linked_procedure_id
+            WHERE s.procedure_id = ? ORDER BY s.step_number
+          `).bind(p.id).all()
+          const linkedIds = Array.from(new Set(
+            (stepsRes.results as any[])
+              .map(s => s.linked_procedure_id)
+              .filter((v): v is number => Number.isInteger(v))
+          ))
+          const linkedStepsByProc = new Map<number, any[]>()
+          if (linkedIds.length > 0) {
+            const placeholders = linkedIds.map(() => '?').join(',')
+            const allSubSteps = await c.env.DB.prepare(`
+              SELECT procedure_id, step_number, title, content
+              FROM steps WHERE procedure_id IN (${placeholders})
+              ORDER BY procedure_id, step_number
+            `).bind(...linkedIds).all()
+            for (const ss of (allSubSteps.results as any[])) {
+              const arr = linkedStepsByProc.get(ss.procedure_id) || []
+              arr.push({ step_number: ss.step_number, title: ss.title, content: ss.content })
+              linkedStepsByProc.set(ss.procedure_id, arr)
+            }
+          }
+          const steps: any[] = []
+          for (const st of (stepsRes.results as any[])) {
+            const linkedSteps = st.linked_procedure_id
+              ? (linkedStepsByProc.get(st.linked_procedure_id) || [])
+              : []
+            steps.push({
+              id: st.id, step_number: st.step_number, title: st.title, content: st.content,
+              linked_procedure_id: st.linked_procedure_id, linked_title: st.linked_title,
+              linked_steps: linkedSteps
+            })
+          }
+          card = {
+            kind: 'procedure',
+            id: p.id, title: p.title, description: p.description, trigger_event: p.trigger_event,
+            category_name: p.category_name, category_color: p.category_color, category_icon: p.category_icon,
+            step_count: steps.length, steps
+          }
+        }
+      } else if (block.type === 'procedure_step' && block.procedure_id && block.step_number) {
+        const p = await c.env.DB.prepare(`
+          SELECT p.id, p.title, p.trigger_event,
+                 c.name as category_name, c.color as category_color, c.icon as category_icon
+          FROM procedures p
+          LEFT JOIN categories c ON p.category_id = c.id
+          WHERE p.id = ? AND p.hotel_id = ?
+        `).bind(block.procedure_id, user.hotel_id).first() as any
+        const stepRow = await c.env.DB.prepare(`
           SELECT s.id, s.step_number, s.title, s.content, s.linked_procedure_id, lp.title as linked_title
           FROM steps s
           LEFT JOIN procedures lp ON lp.id = s.linked_procedure_id
-          WHERE s.procedure_id = ? ORDER BY s.step_number
-        `).bind(p.id).all()
-        // OPTIM N+1 → 1 seule requête : on récupère TOUTES les étapes des sous-procédures
-        // d'un coup avec un IN (...) plutôt qu'un SELECT par étape liée.
-        const linkedIds = Array.from(new Set(
-          (stepsRes.results as any[])
-            .map(s => s.linked_procedure_id)
-            .filter((v): v is number => Number.isInteger(v))
-        ))
-        const linkedStepsByProc = new Map<number, any[]>()
-        if (linkedIds.length > 0) {
-          const placeholders = linkedIds.map(() => '?').join(',')
-          const allSubSteps = await c.env.DB.prepare(`
-            SELECT procedure_id, step_number, title, content
-            FROM steps
-            WHERE procedure_id IN (${placeholders})
-            ORDER BY procedure_id, step_number
-          `).bind(...linkedIds).all()
-          for (const ss of (allSubSteps.results as any[])) {
-            const arr = linkedStepsByProc.get(ss.procedure_id) || []
-            arr.push({ step_number: ss.step_number, title: ss.title, content: ss.content })
-            linkedStepsByProc.set(ss.procedure_id, arr)
+          WHERE s.procedure_id = ? AND s.step_number = ?
+        `).bind(block.procedure_id, block.step_number).first() as any
+        if (p && stepRow) {
+          let linkedSteps: any[] = []
+          let linkedTrigger: string | null = null
+          let linkedDescription: string | null = null
+          if (stepRow.linked_procedure_id) {
+            const lp = await c.env.DB.prepare('SELECT trigger_event, description FROM procedures WHERE id = ?')
+              .bind(stepRow.linked_procedure_id).first() as any
+            linkedTrigger = lp?.trigger_event || null
+            linkedDescription = lp?.description || null
+            const subRes = await c.env.DB.prepare(`
+              SELECT step_number, title, content FROM steps
+              WHERE procedure_id = ? ORDER BY step_number
+            `).bind(stepRow.linked_procedure_id).all()
+            linkedSteps = subRes.results as any[]
+          }
+          card = {
+            kind: 'procedure_step',
+            parent_id: p.id, parent_title: p.title, parent_trigger_event: p.trigger_event,
+            category_name: p.category_name, category_color: p.category_color, category_icon: p.category_icon,
+            step: {
+              id: stepRow.id, step_number: stepRow.step_number, title: stepRow.title, content: stepRow.content,
+              linked_procedure_id: stepRow.linked_procedure_id, linked_title: stepRow.linked_title,
+              linked_trigger_event: linkedTrigger, linked_description: linkedDescription,
+              linked_steps: linkedSteps
+            }
           }
         }
-        const steps: any[] = []
-        for (const st of (stepsRes.results as any[])) {
-          const linkedSteps = st.linked_procedure_id
-            ? (linkedStepsByProc.get(st.linked_procedure_id) || [])
-            : []
-          steps.push({
-            id: st.id, step_number: st.step_number, title: st.title, content: st.content,
-            linked_procedure_id: st.linked_procedure_id, linked_title: st.linked_title,
-            linked_steps: linkedSteps
-          })
-        }
-        answerCard = {
-          kind: 'procedure',
-          id: p.id, title: p.title, description: p.description, trigger_event: p.trigger_event,
-          category_name: p.category_name, category_color: p.category_color, category_icon: p.category_icon,
-          step_count: steps.length, steps
-        }
-      } else {
-        answerCard = { kind: 'not_found' }
-      }
-    } else if (selectedAnswer.type === 'procedure_step' && selectedAnswer.procedure_id && selectedAnswer.step_number) {
-      // Carte d'UNE étape précise d'une procédure (ex: « comment vérifier la réservation »)
-      const p = await c.env.DB.prepare(`
-        SELECT p.id, p.title, p.trigger_event,
-               c.name as category_name, c.color as category_color, c.icon as category_icon
-        FROM procedures p
-        LEFT JOIN categories c ON p.category_id = c.id
-        WHERE p.id = ? AND p.hotel_id = ?
-      `).bind(selectedAnswer.procedure_id, user.hotel_id).first() as any
-      const stepRow = await c.env.DB.prepare(`
-        SELECT s.id, s.step_number, s.title, s.content, s.linked_procedure_id, lp.title as linked_title
-        FROM steps s
-        LEFT JOIN procedures lp ON lp.id = s.linked_procedure_id
-        WHERE s.procedure_id = ? AND s.step_number = ?
-      `).bind(selectedAnswer.procedure_id, selectedAnswer.step_number).first() as any
-      if (p && stepRow) {
-        let linkedSteps: any[] = []
-        let linkedTrigger: string | null = null
-        let linkedDescription: string | null = null
-        if (stepRow.linked_procedure_id) {
-          const lp = await c.env.DB.prepare('SELECT trigger_event, description FROM procedures WHERE id = ?')
-            .bind(stepRow.linked_procedure_id).first() as any
-          linkedTrigger = lp?.trigger_event || null
-          linkedDescription = lp?.description || null
-          const subRes = await c.env.DB.prepare(`
-            SELECT step_number, title, content FROM steps
-            WHERE procedure_id = ? ORDER BY step_number
-          `).bind(stepRow.linked_procedure_id).all()
-          linkedSteps = subRes.results as any[]
-        }
-        answerCard = {
-          kind: 'procedure_step',
-          parent_id: p.id, parent_title: p.title, parent_trigger_event: p.trigger_event,
-          category_name: p.category_name, category_color: p.category_color, category_icon: p.category_icon,
-          step: {
-            id: stepRow.id, step_number: stepRow.step_number, title: stepRow.title, content: stepRow.content,
-            linked_procedure_id: stepRow.linked_procedure_id, linked_title: stepRow.linked_title,
-            linked_trigger_event: linkedTrigger, linked_description: linkedDescription,
-            linked_steps: linkedSteps
+      } else if (block.type === 'info_item' && block.id) {
+        const i = await c.env.DB.prepare(`
+          SELECT i.id, i.title, i.content, i.category_id,
+                 c.name as category_name, c.color as category_color, c.icon as category_icon
+          FROM hotel_info_items i
+          LEFT JOIN hotel_info_categories c ON i.category_id = c.id
+          WHERE i.id = ? AND i.hotel_id = ?
+        `).bind(block.id, user.hotel_id).first() as any
+        if (i) {
+          card = {
+            kind: 'info_item',
+            id: i.id, title: i.title, content: i.content, category_id: i.category_id,
+            category_name: i.category_name, category_color: i.category_color, category_icon: i.category_icon
           }
         }
-      } else {
-        answerCard = { kind: 'not_found' }
-      }
-    } else if (selectedAnswer.type === 'info_item' && selectedAnswer.id) {
-      const i = await c.env.DB.prepare(`
-        SELECT i.id, i.title, i.content, i.category_id,
-               c.name as category_name, c.color as category_color, c.icon as category_icon
-        FROM hotel_info_items i
-        LEFT JOIN hotel_info_categories c ON i.category_id = c.id
-        WHERE i.id = ? AND i.hotel_id = ?
-      `).bind(selectedAnswer.id, user.hotel_id).first() as any
-      if (i) {
-        answerCard = {
-          kind: 'info_item',
-          id: i.id, title: i.title, content: i.content, category_id: i.category_id,
-          category_name: i.category_name, category_color: i.category_color, category_icon: i.category_icon
+      } else if (block.type === 'info_category' && block.id) {
+        const cat = await c.env.DB.prepare(`
+          SELECT id, name, color, icon FROM hotel_info_categories
+          WHERE id = ? AND hotel_id = ?
+        `).bind(block.id, user.hotel_id).first() as any
+        if (cat) {
+          const itemsRes = await c.env.DB.prepare(`
+            SELECT id, title, content FROM hotel_info_items
+            WHERE category_id = ? AND hotel_id = ? ORDER BY title
+          `).bind(cat.id, user.hotel_id).all()
+          const items = (itemsRes.results as any[]).map(it => ({
+            id: it.id, title: it.title, content: it.content
+          }))
+          card = {
+            kind: 'info_category',
+            id: cat.id, name: cat.name, color: cat.color, icon: cat.icon,
+            item_count: items.length, items
+          }
         }
-      } else {
-        answerCard = { kind: 'not_found' }
-      }
-    } else if (selectedAnswer.type === 'info_category' && selectedAnswer.id) {
-      // Carte qui regroupe TOUTES les infos d'une catégorie (ex: « les loisirs et activités »)
-      const cat = await c.env.DB.prepare(`
-        SELECT id, name, color, icon FROM hotel_info_categories
-        WHERE id = ? AND hotel_id = ?
-      `).bind(selectedAnswer.id, user.hotel_id).first() as any
-      if (cat) {
-        const itemsRes = await c.env.DB.prepare(`
-          SELECT id, title, content FROM hotel_info_items
-          WHERE category_id = ? AND hotel_id = ? ORDER BY title
-        `).bind(cat.id, user.hotel_id).all()
-        const items = (itemsRes.results as any[]).map(it => ({
-          id: it.id, title: it.title, content: it.content
-        }))
-        answerCard = {
-          kind: 'info_category',
-          id: cat.id, name: cat.name, color: cat.color, icon: cat.icon,
-          item_count: items.length, items
+      } else if (block.type === 'chat_message' && block.id) {
+        // Carte d'UN message de chat : on cite tel quel (l'IA ne reformule pas)
+        const m = await c.env.DB.prepare(`
+          SELECT m.id, m.content, m.created_at, m.channel_id, m.user_id,
+                 u.name as author_name,
+                 ch.name as channel_name, ch.icon as channel_icon, ch.group_id,
+                 g.name as group_name, g.icon as group_icon, g.color as group_color
+          FROM chat_messages m
+          JOIN chat_channels ch ON ch.id = m.channel_id
+          JOIN chat_groups g ON g.id = ch.group_id
+          LEFT JOIN users u ON u.id = m.user_id
+          WHERE m.id = ? AND m.hotel_id = ?
+        `).bind(block.id, user.hotel_id).first() as any
+        if (m) {
+          card = {
+            kind: 'chat_message',
+            id: m.id, content: m.content, created_at: m.created_at,
+            channel_id: m.channel_id, channel_name: m.channel_name, channel_icon: m.channel_icon,
+            group_id: m.group_id, group_name: m.group_name, group_icon: m.group_icon, group_color: m.group_color,
+            author_id: m.user_id, author_name: m.author_name
+          }
         }
-      } else {
-        answerCard = { kind: 'not_found' }
+      } else if (block.type === 'task' && block.id && block.task_kind) {
+        if (block.task_kind === 'template') {
+          const t = await c.env.DB.prepare(`
+            SELECT id, title, description, suggested_time, priority, category,
+                   recurrence_type, recurrence_days, monthly_day, duration_min, is_active
+            FROM task_templates WHERE id = ? AND hotel_id = ?
+          `).bind(block.id, user.hotel_id).first() as any
+          if (t) {
+            card = {
+              kind: 'task', task_kind: 'template',
+              id: t.id, title: t.title, description: t.description,
+              suggested_time: t.suggested_time, priority: t.priority, category: t.category,
+              recurrence_type: t.recurrence_type, recurrence_days: t.recurrence_days,
+              monthly_day: t.monthly_day, duration_min: t.duration_min, is_active: !!t.is_active,
+              assignees: []
+            }
+          }
+        } else {
+          const t = await c.env.DB.prepare(`
+            SELECT id, title, description, task_date, suggested_time, priority, status, category,
+                   duration_min, template_id
+            FROM task_instances WHERE id = ? AND hotel_id = ?
+          `).bind(block.id, user.hotel_id).first() as any
+          if (t) {
+            const ar = await c.env.DB.prepare(`
+              SELECT ta.user_id, u.name
+              FROM task_assignments ta JOIN users u ON u.id = ta.user_id
+              WHERE ta.task_instance_id = ?
+            `).bind(t.id).all()
+            card = {
+              kind: 'task', task_kind: 'instance',
+              id: t.id, title: t.title, description: t.description,
+              task_date: t.task_date, suggested_time: t.suggested_time, priority: t.priority,
+              status: t.status, category: t.category, duration_min: t.duration_min,
+              template_id: t.template_id,
+              assignees: (ar.results as any[]).map(a => ({ user_id: a.user_id, name: a.name }))
+            }
+          }
+        }
+      } else if (block.type === 'none') {
+        card = { kind: 'none' }
       }
-    } else {
-      answerCard = { kind: 'not_found' }
+
+      answerCards.push(card)
     }
 
     // En mode standard, on n'utilise PAS le texte libre du modèle (zéro texte libre)
@@ -3774,10 +4108,11 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   }
 
   // Sauvegarder le message assistant
-  // Pour mode standard : on stocke la answer_card dans references_json (réutilisation du champ existant)
+  // Pour mode standard : on stocke les answer_cards (array) dans references_json
+  // On garde answer_card (singulier = premier élément) pour rétro-compat des anciens messages
   // Pour mode max : on stocke les références sourcing classiques
   const referencesJson = mode === 'standard'
-    ? (answerCard ? JSON.stringify({ answer_card: answerCard }) : null)
+    ? (answerCards.length > 0 ? JSON.stringify({ answer_cards: answerCards, answer_card: answerCards[0] }) : null)
     : (enrichedRefs.length > 0 ? JSON.stringify(enrichedRefs) : null)
   // STATELESS : on ne persiste plus les messages. On utilise des IDs synthétiques
   // (timestamp + random) pour que le frontend puisse continuer à les référencer en mémoire.
@@ -3832,7 +4167,8 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
       role: 'assistant',
       content: assistantText,
       references: enrichedRefs,
-      answer_card: answerCard
+      answer_cards: answerCards,
+      answer_card: answerCards[0] || null
     },
     actions: createdActions,
     // Mises à jour du formulaire envoyées par l'IA via update_form (Back Wikot uniquement).

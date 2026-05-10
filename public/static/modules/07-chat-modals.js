@@ -1129,26 +1129,41 @@ async function submitSuggestion(procedureId) {
 }
 
 // User Form
-// Rôles métier (différents du rôle système). Synchronisé avec backend ALLOWED_JOB_ROLES.
-const JOB_ROLES = [
-  { v: '',             label: '— Non défini —',  icon: 'fa-circle-question' },
-  { v: 'reception',    label: 'Réception',        icon: 'fa-bell-concierge' },
-  { v: 'serveur',      label: 'Serveur',          icon: 'fa-utensils' },
-  { v: 'cuisinier',    label: 'Cuisinier',        icon: 'fa-kitchen-set' },
-  { v: 'housekeeping', label: 'Housekeeping',     icon: 'fa-broom' },
-  { v: 'maintenance',  label: 'Maintenance',      icon: 'fa-wrench' },
-  { v: 'manager',      label: 'Manager',          icon: 'fa-user-tie' },
-  { v: 'autre',        label: 'Autre',            icon: 'fa-user-gear' }
-];
-function jobRoleLabel(v) {
-  if (!v) return null;
-  const j = JOB_ROLES.find(j => j.v === v);
-  return j ? j.label : null;
+// Rôles métier : désormais DYNAMIQUES par hôtel (table job_roles).
+// On garde un cache local rempli par loadJobRoles() (appelé par loadData()).
+// Mapping d'icônes par slug connus + fallback générique.
+const JOB_ROLE_ICONS = {
+  reception:    'fa-bell-concierge',
+  serveur:      'fa-utensils',
+  cuisinier:    'fa-kitchen-set',
+  housekeeping: 'fa-broom',
+  maintenance:  'fa-wrench',
+  manager:      'fa-user-tie',
+  autre:        'fa-user-gear'
+};
+function getJobRoles() {
+  // Retourne le cache state.jobRoles (chargé via loadJobRoles), avec une option vide en tête
+  const list = Array.isArray(state.jobRoles) ? state.jobRoles : [];
+  return [{ v: '', label: '— Non défini —', icon: 'fa-circle-question' }]
+    .concat(list.map(jr => ({
+      v: jr.slug,
+      label: jr.name,
+      icon: JOB_ROLE_ICONS[jr.slug] || 'fa-id-badge'
+    })));
 }
-function jobRoleIcon(v) {
-  if (!v) return 'fa-circle-question';
-  const j = JOB_ROLES.find(j => j.v === v);
-  return j ? j.icon : 'fa-circle-question';
+function jobRoleLabel(slug) {
+  if (!slug) return null;
+  const list = Array.isArray(state.jobRoles) ? state.jobRoles : [];
+  const j = list.find(j => j.slug === slug);
+  return j ? j.name : slug;
+}
+function jobRoleIcon(slug) {
+  if (!slug) return 'fa-circle-question';
+  return JOB_ROLE_ICONS[slug] || 'fa-id-badge';
+}
+async function loadJobRoles() {
+  const data = await api('/job-roles');
+  state.jobRoles = (data && Array.isArray(data.job_roles)) ? data.job_roles : [];
 }
 
 // Modal unifiée création / édition utilisateur
@@ -1169,13 +1184,18 @@ function showUserForm(userId = null) {
   const currentRole    = isEditing ? target.role : (isSuperAdmin ? 'admin' : 'employee');
   const isSelf = isEditing && Number(target.id) === Number(state.user.id);
 
+  const jobRolesList = getJobRoles();
+  const canManageJobRoles = (state.user.role === 'admin' || state.user.role === 'super_admin');
   const jobRoleSelect = `
     <div>
-      <label class="block text-sm font-medium text-navy-600 mb-1">
-        <i class="fas fa-id-badge mr-1 text-navy-400"></i>Rôle métier
-      </label>
+      <div class="flex items-center justify-between mb-1">
+        <label class="block text-sm font-medium text-navy-600">
+          <i class="fas fa-id-badge mr-1 text-navy-400"></i>Rôle métier
+        </label>
+        ${canManageJobRoles ? `<button type="button" onclick="showJobRolesManager()" class="text-[11px] text-orange-600 hover:text-orange-700 font-medium"><i class="fas fa-gear mr-1"></i>Gérer les rôles</button>` : ''}
+      </div>
       <select id="user-job-role" class="w-full input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand-400">
-        ${JOB_ROLES.map(j => `<option value="${j.v}" ${j.v === currentJobRole ? 'selected' : ''}>${j.label}</option>`).join('')}
+        ${jobRolesList.map(j => `<option value="${j.v}" ${j.v === currentJobRole ? 'selected' : ''}>${j.label}</option>`).join('')}
       </select>
       <p class="text-[11px] text-navy-400 mt-1">Permet de filtrer & assigner les tâches selon le poste.</p>
     </div>`;
@@ -1271,6 +1291,114 @@ async function submitUserEdit(userId) {
     render();
     showToast('Utilisateur mis à jour', 'success');
   }
+}
+
+// ============================================
+// Gestion des rôles métiers (admin / super_admin)
+// Modale qui liste les rôles avec actions inline (renommer, supprimer) + champ création.
+// ============================================
+async function showJobRolesManager() {
+  if (state.user.role !== 'admin' && state.user.role !== 'super_admin') {
+    showToast('Non autorisé', 'error'); return;
+  }
+  await loadJobRoles();
+  renderJobRolesManagerModal();
+}
+
+function renderJobRolesManagerModal() {
+  const list = Array.isArray(state.jobRoles) ? state.jobRoles : [];
+  const rowsHtml = list.length === 0
+    ? '<div class="text-center text-sm text-navy-400 py-6">Aucun rôle métier pour cet hôtel.</div>'
+    : list.map(jr => `
+      <div class="flex items-center gap-2 py-2 border-b border-gray-100 last:border-b-0">
+        <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(201,169,97,0.14); color: var(--c-gold-deep);">
+          <i class="fas ${JOB_ROLE_ICONS[jr.slug] || 'fa-id-badge'} text-xs"></i>
+        </div>
+        <input id="jobrole-name-${jr.id}" type="text" value="${(jr.name || '').replace(/"/g, '&quot;')}"
+          class="flex-1 input-premium rounded-lg px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-brand-400"
+          maxlength="60">
+        <span class="text-[10px] text-navy-400 hidden sm:inline">${jr.user_count || 0} user${(jr.user_count || 0) > 1 ? 's' : ''}</span>
+        <button type="button" onclick="renameJobRole(${jr.id})" title="Renommer"
+          class="w-8 h-8 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+          <i class="fas fa-floppy-disk text-xs"></i>
+        </button>
+        <button type="button" onclick="deleteJobRole(${jr.id}, '${(jr.name || '').replace(/'/g, "\\'")}', ${jr.user_count || 0})" title="Supprimer"
+          class="w-8 h-8 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+          <i class="fas fa-trash text-xs"></i>
+        </button>
+      </div>
+    `).join('');
+
+  const content = `
+    <div class="space-y-4">
+      <p class="text-xs text-navy-500">
+        Les rôles métiers servent à filtrer et assigner les tâches. La suppression d'un rôle dissocie tous les utilisateurs concernés (leur rôle métier passe à "Non défini").
+      </p>
+
+      <!-- Liste des rôles existants -->
+      <div class="bg-white border border-gray-200 rounded-xl px-3">
+        ${rowsHtml}
+      </div>
+
+      <!-- Création d'un nouveau rôle -->
+      <div class="bg-orange-50 border border-orange-200 rounded-xl p-3">
+        <label class="block text-xs font-semibold text-navy-700 mb-1.5">
+          <i class="fas fa-plus-circle text-orange-500 mr-1"></i>Créer un nouveau rôle métier
+        </label>
+        <div class="flex gap-2">
+          <input id="new-jobrole-name" type="text" placeholder="Ex: Bagagiste, Spa, Sommelier…" maxlength="60"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();createJobRole();}"
+            class="flex-1 input-premium rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-400">
+          <button type="button" onclick="createJobRole()" class="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shrink-0">
+            <i class="fas fa-plus mr-1"></i>Ajouter
+          </button>
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-3 border-t border-gray-100">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm text-navy-500">Fermer</button>
+      </div>
+    </div>
+  `;
+  showModal('Gérer les rôles métiers', content);
+}
+
+async function createJobRole() {
+  const input = document.getElementById('new-jobrole-name');
+  if (!input) return;
+  const name = (input.value || '').trim();
+  if (!name) { showToast('Donne un nom au rôle.', 'error'); return; }
+  const result = await api('/job-roles', { method: 'POST', body: JSON.stringify({ name }) });
+  if (!result) return;
+  await loadJobRoles();
+  renderJobRolesManagerModal();
+  showToast('Rôle métier créé.', 'success');
+}
+
+async function renameJobRole(id) {
+  const input = document.getElementById(`jobrole-name-${id}`);
+  if (!input) return;
+  const name = (input.value || '').trim();
+  if (!name) { showToast('Le nom est obligatoire.', 'error'); return; }
+  const result = await api(`/job-roles/${id}`, { method: 'PUT', body: JSON.stringify({ name }) });
+  if (!result) return;
+  await loadJobRoles();
+  renderJobRolesManagerModal();
+  showToast('Rôle métier renommé.', 'success');
+}
+
+async function deleteJobRole(id, name, userCount) {
+  const msg = userCount > 0
+    ? `Supprimer le rôle "${name}" ?\n${userCount} utilisateur${userCount > 1 ? 's' : ''} ${userCount > 1 ? 'verront leur rôle' : 'verra son rôle'} métier passer à "Non défini".`
+    : `Supprimer le rôle "${name}" ?`;
+  if (!confirm(msg)) return;
+  const result = await api(`/job-roles/${id}`, { method: 'DELETE' });
+  if (!result) return;
+  await loadJobRoles();
+  // Recharger aussi les users (leur job_role peut avoir été nullifié)
+  await loadData();
+  renderJobRolesManagerModal();
+  showToast('Rôle métier supprimé.', 'success');
 }
 
 // Hotel Form

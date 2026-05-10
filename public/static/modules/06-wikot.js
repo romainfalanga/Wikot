@@ -168,12 +168,17 @@ async function sendWikotMessage(mode) {
   const lastUser = s.messages[s.messages.length - 1];
   if (lastUser && lastUser.role === 'user') lastUser.id = result.user_message_id;
 
+  // Wikot peut renvoyer plusieurs blocs ; on stocke answer_cards (array) + answer_card (rétro-compat)
+  const cardsFromServer = Array.isArray(result.assistant_message.answer_cards) && result.assistant_message.answer_cards.length > 0
+    ? result.assistant_message.answer_cards
+    : (result.assistant_message.answer_card ? [result.assistant_message.answer_card] : []);
   s.messages.push({
     id: result.assistant_message.id,
     role: 'assistant',
     content: result.assistant_message.content,
     references: result.assistant_message.references || [],
-    answer_card: result.assistant_message.answer_card || null
+    answer_cards: cardsFromServer,
+    answer_card: cardsFromServer[0] || null
   });
 
   if (result.actions && result.actions.length > 0) {
@@ -187,7 +192,10 @@ async function sendWikotMessage(mode) {
 
   // STATELESS : pas de re-fetch de liste de conversations.
   render();
-  scrollWikotToBottom(mode);
+  // UX messagerie : on positionne le dernier message user EN HAUT du viewport
+  // pour que l'utilisateur voie sa question + la réponse Wikot juste en dessous,
+  // au lieu d'être collé tout en bas du conteneur.
+  scrollWikotToLastUserMessage(mode);
 }
 
 async function acceptWikotAction(actionId) {
@@ -280,6 +288,41 @@ function scrollWikotToBottom(mode) {
   }, 50);
 }
 
+// Scroll "messagerie" : place le dernier message utilisateur en HAUT du viewport.
+// L'utilisateur voit ainsi sa question + la réponse Wikot juste en dessous,
+// comme dans une vraie application de messagerie (au lieu d'être collé tout en bas).
+function scrollWikotToLastUserMessage(mode) {
+  mode = mode || activeWikotMode();
+  const containerId = mode === 'max' ? 'wikot-max-messages' : 'wikot-messages';
+  const s = wikotState(mode);
+  // Trouver le dernier message user
+  const messages = (s && s.messages) || [];
+  let lastUserId = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') { lastUserId = messages[i].id; break; }
+  }
+  if (!lastUserId) {
+    scrollWikotToBottom(mode);
+    return;
+  }
+  setTimeout(() => {
+    const container = document.getElementById(containerId);
+    const target = document.getElementById('wikot-msg-' + lastUserId);
+    if (!container || !target) {
+      // Fallback : si on n'a pas trouvé le message dans le DOM, on scrolle au bas
+      if (container) container.scrollTop = container.scrollHeight;
+      return;
+    }
+    // Position relative du message dans le conteneur scrollable
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const offsetWithinContainer = (targetRect.top - containerRect.top) + container.scrollTop;
+    // On place le message à ~12px du haut du conteneur (petit padding visuel)
+    const desiredScrollTop = Math.max(0, offsetWithinContainer - 12);
+    container.scrollTo({ top: desiredScrollTop, behavior: 'smooth' });
+  }, 60);
+}
+
 function toggleWikotSidebar(mode) {
   mode = mode || activeWikotMode();
   const s = wikotState(mode);
@@ -303,8 +346,9 @@ function renderWikotMessage(msg, mode) {
     const txt = msg.content && msg.content.trim() ? escapeHtml(msg.content) : (hasAudio ? '<span class="italic" style="opacity: 0.7;"><i class="fas fa-microphone mr-1.5"></i>Message vocal</span>' : '');
     const audioBlock = msg.audio_key ? renderVoiceMessageBubble(msg, { isClient: false })
       : (msg.audio_pending ? `<div class="flex items-center gap-2 mt-1.5 pt-1.5 text-xs italic" style="border-top: 1px solid rgba(255,255,255,0.15); opacity: 0.7;"><i class="fas fa-circle-notch fa-spin"></i>Envoi de l'audio (${formatVoiceDuration(msg.audio_duration_ms || 0)})...</div>` : '');
+    // id DOM sur la bulle user pour permettre le scroll-to-top après la réponse Wikot
     return `
-      <div class="flex justify-end mb-4">
+      <div id="wikot-msg-${escapeHtml(String(msg.id))}" class="flex justify-end mb-4">
         <div class="max-w-[85%] sm:max-w-[75%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap" style="background: var(--c-navy); color: #fff; box-shadow: 0 1px 2px rgba(10,22,40,0.08);">
           ${txt}
           ${audioBlock}
@@ -314,15 +358,21 @@ function renderWikotMessage(msg, mode) {
   }
   // Assistant
   const refs = msg.references || [];
-  const answerCard = msg.answer_card || null;
+  // Multi-blocs : on supporte answer_cards (nouveau) avec fallback answer_card (rétro-compat)
+  const answerCards = Array.isArray(msg.answer_cards) && msg.answer_cards.length > 0
+    ? msg.answer_cards
+    : (msg.answer_card ? [msg.answer_card] : []);
   const actionsArr = mode === 'max' ? (state.wikotMaxActions || []) : (state.wikotActions || []);
   const actionsForMsg = actionsArr.filter(a => a.message_id === msg.id);
   const cfg = WIKOT_MODE_CONFIG[mode] || WIKOT_MODE_CONFIG.standard;
 
-  // MODE STANDARD (Wikot) — texte de réponse EN HAUT puis carte info/procédure
+  // MODE STANDARD (Wikot) — texte de réponse EN HAUT puis 1..N cartes (procédure, info, message, tâche…)
   if (mode === 'standard') {
     const replyText = (msg.content || '').trim();
     const hasReply = replyText.length > 0;
+    const cardsHtml = answerCards.length > 0
+      ? answerCards.map(c => renderWikotAnswerCard(c)).join('')
+      : renderWikotAnswerCard(null);
     return `
       <div class="flex justify-start mb-4">
         <div class="flex gap-2 max-w-[95%] sm:max-w-[85%] w-full">
@@ -335,7 +385,7 @@ function renderWikotMessage(msg, mode) {
                 ${formatWikotContent(replyText)}
               </div>
             ` : ''}
-            ${renderWikotAnswerCard(answerCard)}
+            ${cardsHtml}
           </div>
         </div>
       </div>
@@ -532,8 +582,123 @@ function renderWikotAnswerCard(card) {
     `;
   }
 
+  // Carte d'UN message de chat : on cite tel quel (Wikot ne reformule pas)
+  if (card.kind === 'chat_message') {
+    const groupColor = card.group_color || '#4F46E5';
+    const authorInitial = (card.author_name || '?').trim().charAt(0).toUpperCase();
+    // Formatage date message (best-effort, fallback brut)
+    let when = card.created_at || '';
+    try {
+      const d = new Date(card.created_at);
+      if (!isNaN(d.getTime())) {
+        const today = new Date(); today.setHours(0,0,0,0);
+        const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+        const dDay = new Date(d); dDay.setHours(0,0,0,0);
+        const hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        if (dDay.getTime() === today.getTime()) when = `Aujourd'hui à ${hm}`;
+        else if (dDay.getTime() === yesterday.getTime()) when = `Hier à ${hm}`;
+        else when = d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ` à ${hm}`;
+      }
+    } catch (_) {}
+    return `
+      <div class="bg-white border-2 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden" style="border-color:${groupColor}40">
+        <div class="px-4 py-2.5 text-white flex items-center gap-2" style="background:${groupColor}">
+          <i class="fas fa-comment-dots text-sm"></i>
+          <span class="text-xs font-semibold uppercase tracking-wide">Message</span>
+          <span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full flex items-center gap-1">
+            <i class="fas ${card.group_icon || 'fa-comments'} text-[9px]"></i>
+            ${escapeHtml(card.group_name || '')} · #${escapeHtml(card.channel_name || '')}
+          </span>
+        </div>
+        <div class="px-4 py-3">
+          <div class="flex items-start gap-3">
+            <div class="flex-shrink-0 w-9 h-9 rounded-full text-white text-sm font-bold flex items-center justify-center" style="background:${groupColor}">${escapeHtml(authorInitial)}</div>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-baseline gap-2 flex-wrap">
+                <span class="font-semibold text-navy-900 text-sm">${escapeHtml(card.author_name || 'Auteur inconnu')}</span>
+                <span class="text-[11px] text-navy-500">${escapeHtml(when || '')}</span>
+              </div>
+              <div class="text-sm text-navy-700 mt-1 whitespace-pre-wrap break-words leading-relaxed">${formatWikotContent(card.content || '')}</div>
+            </div>
+          </div>
+          <button onclick="openWikotChatMessage(${card.channel_id}, ${card.id})" class="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full" style="background:${groupColor}15;color:${groupColor}">
+            <i class="fas fa-arrow-up-right-from-square"></i>
+            Voir dans la conversation
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Carte d'UNE tâche (template récurrent ou instance ponctuelle)
+  if (card.kind === 'task') {
+    const isTemplate = card.task_kind === 'template';
+    const priorityColor = { urgent: '#DC2626', high: '#F59E0B', normal: '#3B82F6', low: '#6B7280' }[card.priority] || '#3B82F6';
+    const statusBadge = (() => {
+      if (isTemplate) return `<span class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">Récurrente</span>`;
+      if (card.status === 'done') return `<span class="text-[10px] bg-green-500 px-2 py-0.5 rounded-full"><i class="fas fa-check mr-1"></i>Faite</span>`;
+      return `<span class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">À faire</span>`;
+    })();
+    const assignees = Array.isArray(card.assignees) ? card.assignees : [];
+    const dateLine = !isTemplate && card.task_date
+      ? `<div class="text-xs text-navy-600 flex items-center gap-1.5"><i class="fas fa-calendar text-amber-500"></i><span>${escapeHtml(card.task_date)}${card.suggested_time ? ` · ${escapeHtml(card.suggested_time)}` : ''}</span></div>`
+      : (card.suggested_time ? `<div class="text-xs text-navy-600 flex items-center gap-1.5"><i class="fas fa-clock text-amber-500"></i><span>${escapeHtml(card.suggested_time)}</span></div>` : '');
+    return `
+      <div class="bg-white border-2 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden" style="border-color:${priorityColor}40">
+        <div class="px-4 py-2.5 text-white flex items-center gap-2" style="background:${priorityColor}">
+          <i class="fas ${isTemplate ? 'fa-repeat' : 'fa-list-check'} text-sm"></i>
+          <span class="text-xs font-semibold uppercase tracking-wide">Tâche</span>
+          ${statusBadge}
+        </div>
+        <div class="px-4 py-3 space-y-2">
+          <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.title || '')}</h3>
+          ${dateLine}
+          ${card.description ? `<div class="text-sm text-navy-700 whitespace-pre-wrap break-words leading-relaxed">${formatWikotContent(card.description)}</div>` : ''}
+          ${assignees.length > 0 ? `
+            <div class="flex items-center gap-2 flex-wrap pt-1">
+              <span class="text-[11px] text-navy-500 uppercase tracking-wide font-semibold">Attribuée à</span>
+              ${assignees.map(a => `<span class="text-xs px-2 py-0.5 rounded-full" style="background:${priorityColor}15;color:${priorityColor}"><i class="fas fa-user mr-1"></i>${escapeHtml(a.name || '')}</span>`).join('')}
+            </div>
+          ` : (!isTemplate ? `<p class="text-[11px] text-navy-400 italic">Tâche non attribuée</p>` : '')}
+        </div>
+      </div>
+    `;
+  }
+
+  // Cas "none" : rien à afficher (par exemple "bonjour" ou demande hors-sujet) → on n'affiche RIEN
+  if (card.kind === 'none') {
+    return '';
+  }
+
   // Type inconnu : fallback not_found
   return renderWikotAnswerCard({ kind: 'not_found' });
+}
+
+// Ouvrir un message de chat depuis une carte Wikot : navigation directe + scroll/highlight
+async function openWikotChatMessage(channelId, messageId) {
+  try {
+    // Aller dans la vue chat (si on n'y est pas déjà)
+    if (state.currentView !== 'chat') {
+      state.currentView = 'chat';
+    }
+    if (typeof openChannel === 'function') {
+      await openChannel(channelId);
+    } else {
+      state.selectedChannelId = channelId;
+      render();
+    }
+    setTimeout(() => {
+      const el = document.getElementById('chat-msg-' + messageId)
+        || document.querySelector(`[data-message-id="${messageId}"]`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('ring-2', 'ring-brand-400', 'shadow-md');
+        setTimeout(() => el.classList.remove('ring-2', 'ring-brand-400', 'shadow-md'), 2500);
+      }
+    }, 400);
+  } catch (e) {
+    console.warn('openWikotChatMessage', e);
+  }
 }
 
 // Helper : rend UNE étape de la answer_card procédure (mode standard Wikot)
@@ -709,8 +874,8 @@ const WIKOT_MODE_CONFIG = {
     quickButtons: [
       { label: 'Comment faire un check-in ?', q: 'Comment je fais un check-in ?' },
       { label: 'Horaires de la piscine ?', q: 'Quelles sont les horaires de la piscine ?' },
-      { label: 'Carte démagnétisée ?', q: 'Que faire si une carte de chambre est démagnétisée ?' },
-      { label: 'Procédures de réception', q: 'Liste-moi toutes les procédures de réception' }
+      { label: 'Ma prochaine tâche ?', q: 'Quelle est ma prochaine tâche à réaliser ?' },
+      { label: 'Dernier message qui m\'est destiné ?', q: 'Quel est le dernier message qui m\'a été destiné ?' }
     ],
     footer: 'Wikot peut faire des erreurs — vérifie les informations importantes.'
   },

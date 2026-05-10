@@ -192,14 +192,13 @@ function renderUsersView() {
       <i class="fas fa-circle-info text-base mt-0.5" style="color: var(--c-gold);"></i>
       <div class="text-xs space-y-1.5" style="color: rgba(15,27,40,0.7);">
         <p class="section-eyebrow">Permissions des employés</p>
-        <p>Vous pouvez activer / désactiver indépendamment <strong style="color: var(--c-navy);">six droits</strong> pour chaque employé :</p>
+        <p>Vous pouvez activer / désactiver indépendamment plusieurs <strong style="color: var(--c-navy);">droits</strong> pour chaque employé :</p>
         <ul class="list-disc pl-5 space-y-0.5">
           <li><strong style="color: var(--c-navy);">Procédures</strong> — créer, modifier et supprimer les procédures.</li>
           <li><strong style="color: var(--c-navy);">Informations</strong> — créer et modifier les informations de l'hôtel.</li>
           <li><strong style="color: var(--c-navy);">Salons / chat</strong> — créer, modifier et organiser les conversations.</li>
-          <li><strong style="color: var(--c-navy);">Chambres &amp; présents</strong> — gérer les chambres et saisir les clients du jour.</li>
-          <li><strong style="color: var(--c-navy);">Restaurant</strong> — planning hebdo, exceptions, réservations, dashboard.</li>
-          <li><strong style="color: var(--c-navy);">Paramètres hôtel</strong> — modifier l'identité, contact, séjour, wifi.</li>
+          <li><strong style="color: var(--c-navy);">Créer des tâches</strong> — créer et modifier les tâches récurrentes ou ponctuelles.</li>
+          <li><strong style="color: var(--c-navy);">Attribuer des tâches</strong> — assigner des tâches aux autres employés.</li>
         </ul>
         <p class="mt-1">Les <strong style="color: var(--c-navy);">admins</strong> ont toujours accès complet à tout, sans cases à cocher.</p>
       </div>

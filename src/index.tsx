@@ -4225,9 +4225,12 @@ function dateMatchesRecurrence(
 // Idempotent grâce à idx_task_instances_template_date (UNIQUE).
 // Utilisée par GET /api/tasks et GET /api/tasks/week.
 async function materializeTasksForDate(db: D1Database, hotelId: number, dateStr: string): Promise<void> {
+  // Le modèle (mère) définit QUOI / QUAND / OÙ.
+  // Chaque jour génère une INSTANCE (bébé) qui naît TOUJOURS LIBRE (non attribuée).
+  // L'attribution se fait UNIQUEMENT au niveau instance, jour par jour.
   const templates = await db.prepare(
     `SELECT id, title, description, recurrence_type, recurrence_days, monthly_day,
-            active_from, active_to, suggested_time, category, priority, duration_min, pre_assign
+            active_from, active_to, suggested_time, category, priority, duration_min
      FROM task_templates WHERE hotel_id = ? AND is_active = 1`
   ).bind(hotelId).all()
 
@@ -4245,48 +4248,13 @@ async function materializeTasksForDate(db: D1Database, hotelId: number, dateStr:
   const toCreate = eligibleTemplates.filter(t => !existingSet.has(t.id))
   if (toCreate.length === 0) return
 
-  // Précharge les pré-assignés UNIQUEMENT pour les templates avec pre_assign=1.
-  // Les autres seront créés non assignés (assignation manuelle au coup par coup).
-  const createIds = toCreate.map(t => t.id)
-  const cph = createIds.map(() => '?').join(',')
-  const preAssignTplIds = toCreate.filter(t => Number(t.pre_assign) === 1).map(t => t.id)
-  const assignByTpl = new Map<number, number[]>()
-  if (preAssignTplIds.length > 0) {
-    const pph = preAssignTplIds.map(() => '?').join(',')
-    const preAssigns = await db.prepare(
-      `SELECT template_id, user_id FROM task_template_assignees WHERE template_id IN (${pph})`
-    ).bind(...preAssignTplIds).all()
-    for (const r of (preAssigns.results || []) as any[]) {
-      if (!assignByTpl.has(r.template_id)) assignByTpl.set(r.template_id, [])
-      assignByTpl.get(r.template_id)!.push(r.user_id)
-    }
-  }
-
-  // INSERT instances en batch
+  // INSERT instances en batch — TOUTES non assignées par construction
   const insStmts = toCreate.map(t => db.prepare(
     `INSERT OR IGNORE INTO task_instances
        (hotel_id, template_id, task_date, title, description, suggested_time, category, priority, duration_min, created_by)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(hotelId, t.id, dateStr, t.title, t.description, t.suggested_time, t.category, t.priority || 'normal', t.duration_min || null, null))
   await db.batch(insStmts)
-
-  // Récupère les ids des instances qu'on vient de créer pour propager les assignments
-  const createdRows = await db.prepare(
-    `SELECT id, template_id FROM task_instances
-     WHERE task_date = ? AND template_id IN (${cph})`
-  ).bind(dateStr, ...createIds).all()
-
-  const assignStmts: D1PreparedStatement[] = []
-  for (const row of (createdRows.results || []) as any[]) {
-    const userIds = assignByTpl.get(row.template_id) || []
-    for (const uid of userIds) {
-      assignStmts.push(db.prepare(
-        `INSERT OR IGNORE INTO task_assignments (task_instance_id, user_id, status, assigned_by)
-         VALUES (?, ?, 'pending', NULL)`
-      ).bind(row.id, uid))
-    }
-  }
-  if (assignStmts.length > 0) await db.batch(assignStmts)
 }
 
 // GET /api/tasks?date=YYYY-MM-DD — toutes les tâches du jour pour l'hôtel
@@ -4338,33 +4306,17 @@ app.get('/api/tasks', authMiddleware, async (c) => {
 })
 
 // GET /api/tasks/templates — liste des modèles récurrents
+// Les modèles définissent QUOI/QUAND/OÙ uniquement. L'attribution est instance-level.
 app.get('/api/tasks/templates', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
   const r = await c.env.DB.prepare(
     `SELECT id, title, description, recurrence_type, recurrence_days, monthly_day,
             active_from, active_to, suggested_time, category, priority, duration_min,
-            pre_assign, is_active, created_at
+            is_active, created_at
      FROM task_templates WHERE hotel_id = ? ORDER BY is_active DESC, title`
   ).bind(user.hotel_id).all()
-  // Charge tous les pré-assignés en 1 requête (joint pour avoir les noms)
-  const tplIds = (r.results || []).map((t: any) => t.id)
-  let assignsByTpl: Record<number, Array<{ user_id: number; user_name: string }>> = {}
-  if (tplIds.length > 0) {
-    const ph = tplIds.map(() => '?').join(',')
-    const a = await c.env.DB.prepare(
-      `SELECT tta.template_id, tta.user_id, u.name AS user_name
-       FROM task_template_assignees tta
-       JOIN users u ON u.id = tta.user_id
-       WHERE tta.template_id IN (${ph})`
-    ).bind(...tplIds).all()
-    for (const row of (a.results || []) as any[]) {
-      if (!assignsByTpl[row.template_id]) assignsByTpl[row.template_id] = []
-      assignsByTpl[row.template_id].push({ user_id: row.user_id, user_name: row.user_name })
-    }
-  }
-  const templates = (r.results || []).map((t: any) => ({ ...t, assignees: assignsByTpl[t.id] || [] }))
-  return c.json({ templates })
+  return c.json({ templates: r.results || [] })
 })
 
 // Helper : valide & normalise les champs de récurrence
@@ -4383,29 +4335,8 @@ function validateRecurrence(body: any): { ok: true; recurrence_type: string; rec
   return { ok: true, recurrence_type: type, recurrence_days: recDays, monthly_day: monthlyDay }
 }
 
-// Helper : remplace les pré-assignés d'un template (delete-all + insert)
-async function setTemplateAssignees(db: D1Database, hotelId: number, templateId: number, userIds: number[]): Promise<void> {
-  // Sécurité : ne garder que les users de l'hôtel
-  let validIds: number[] = []
-  if (userIds.length > 0) {
-    const ph = userIds.map(() => '?').join(',')
-    const r = await db.prepare(
-      `SELECT id FROM users WHERE hotel_id = ? AND id IN (${ph})`
-    ).bind(hotelId, ...userIds).all()
-    validIds = ((r.results || []) as any[]).map(u => u.id)
-  }
-  const ops: D1PreparedStatement[] = [
-    db.prepare('DELETE FROM task_template_assignees WHERE template_id = ?').bind(templateId)
-  ]
-  for (const uid of validIds) {
-    ops.push(db.prepare(
-      'INSERT OR IGNORE INTO task_template_assignees (template_id, user_id) VALUES (?, ?)'
-    ).bind(templateId, uid))
-  }
-  await db.batch(ops)
-}
-
-// POST /api/tasks/templates — créer un modèle récurrent (avec pré-assignation optionnelle)
+// POST /api/tasks/templates — créer un modèle récurrent (QUOI / QUAND / OÙ)
+// Pas d'attribution ici : chaque jour génère une instance libre, à attribuer manuellement.
 app.post('/api/tasks/templates', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
@@ -4420,34 +4351,24 @@ app.post('/api/tasks/templates', authMiddleware, async (c) => {
 
   const priority = ['normal', 'high', 'urgent'].includes(body.priority) ? body.priority : 'normal'
   const durationMin = Number.isFinite(body.duration_min) && body.duration_min > 0 && body.duration_min < 1440 ? body.duration_min : null
-  const assigneeIds = Array.isArray(body.assignee_ids)
-    ? body.assignee_ids.filter((n: any) => Number.isInteger(n))
-    : []
-  // Pré-assignation : OFF par défaut. Activable uniquement si on fournit aussi des assignee_ids.
-  const preAssign = body.pre_assign === true || body.pre_assign === 1 ? 1 : 0
 
   const r = await c.env.DB.prepare(
     `INSERT INTO task_templates
        (hotel_id, title, description, recurrence_type, recurrence_days, monthly_day,
-        active_from, active_to, suggested_time, category, priority, duration_min, pre_assign, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        active_from, active_to, suggested_time, category, priority, duration_min, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     user.hotel_id, title,
     body.description || null, rec.recurrence_type, rec.recurrence_days, rec.monthly_day,
     body.active_from || null, body.active_to || null,
     body.suggested_time || null, body.category || null,
-    priority, durationMin, preAssign,
+    priority, durationMin,
     user.id
   ).run()
-  const newId = r.meta.last_row_id as number
-
-  if (assigneeIds.length > 0) {
-    await setTemplateAssignees(c.env.DB, user.hotel_id, newId, assigneeIds)
-  }
-  return c.json({ id: newId, success: true })
+  return c.json({ id: r.meta.last_row_id, success: true })
 })
 
-// PUT /api/tasks/templates/:id — modifier un modèle (incl. pré-assignation)
+// PUT /api/tasks/templates/:id — modifier un modèle (QUOI / QUAND / OÙ uniquement)
 app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
@@ -4474,11 +4395,6 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
     ? body.duration_min
     : (body.duration_min === null ? null : undefined)
 
-  // pre_assign : modifiable uniquement si fourni explicitement
-  const preAssign = (body.pre_assign === true || body.pre_assign === 1) ? 1
-                  : (body.pre_assign === false || body.pre_assign === 0) ? 0
-                  : null
-
   await c.env.DB.prepare(
     `UPDATE task_templates SET
        title = COALESCE(?, title),
@@ -4492,7 +4408,6 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
        category = ?,
        priority = COALESCE(?, priority),
        duration_min = ${durationMin !== undefined ? '?' : 'duration_min'},
-       pre_assign = COALESCE(?, pre_assign),
        is_active = COALESCE(?, is_active),
        updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
@@ -4508,16 +4423,10 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
     body.category ?? null,
     priority,
     ...(durationMin !== undefined ? [durationMin] : []),
-    preAssign,
     typeof body.is_active === 'number' ? body.is_active : null,
     id
   ).run()
 
-  // Mise à jour pré-assignés si fournie
-  if (Array.isArray(body.assignee_ids)) {
-    const ids = body.assignee_ids.filter((n: any) => Number.isInteger(n))
-    await setTemplateAssignees(c.env.DB, user.hotel_id, id, ids)
-  }
   return c.json({ success: true })
 })
 

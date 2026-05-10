@@ -575,7 +575,6 @@ function renderTaskTemplatesSection() {
 function renderTemplateRow(t) {
   const prio = TASK_PRIORITY_CONFIG[t.priority || 'normal'];
   const cat = t.category ? TASK_CATEGORY_CONFIG[t.category] : null;
-  const assignees = t.assignees || [];
   return `
     <div class="card-premium p-3 ${t.is_active ? '' : 'opacity-60'}" style="background: ${t.is_active ? '#fff' : 'var(--c-cream-deep)'}; border: 1px solid var(--c-line);">
       <div class="flex items-start gap-3">
@@ -592,17 +591,9 @@ function renderTemplateRow(t) {
             ${t.duration_min ? `<span><i class="fas fa-hourglass-half mr-1" style="color: var(--c-gold-deep);"></i>${formatDuration(t.duration_min)}</span>` : ''}
             ${cat ? `<span><i class="fas ${cat.icon} mr-1" style="color: ${cat.color};"></i>${cat.label}</span>` : ''}
           </div>
-          ${assignees.length > 0 ? `
-            <div class="mt-2 flex flex-wrap items-center gap-1">
-              <span class="text-[10px] uppercase tracking-wider" style="color: rgba(15,27,40,0.4);">${t.pre_assign ? 'Pré-assignés auto :' : 'Suggérés (manuel) :'}</span>
-              ${assignees.map(a => `<span class="text-xs px-2 py-0.5 rounded-full" style="background: ${t.pre_assign ? 'rgba(201,169,97,0.15)' : 'var(--c-cream-deep)'}; color: var(--c-navy); ${t.pre_assign ? 'border: 1px solid var(--c-gold);' : ''}">${escapeHtml(a.user_name)}</span>`).join('')}
-              ${t.pre_assign ? '<span class="text-[10px] italic px-1.5 py-0.5 rounded" style="background: rgba(201,169,97,0.15); color: var(--c-gold-deep);"><i class="fas fa-bolt-lightning mr-1"></i>auto</span>' : '<span class="text-[10px] italic px-1.5 py-0.5 rounded" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">manuel</span>'}
-            </div>
-          ` : `
-            <div class="mt-2">
-              <span class="text-[10px] italic" style="color: rgba(15,27,40,0.45);"><i class="fas fa-circle-question mr-1"></i>Aucun assigné par défaut — à attribuer au coup par coup</span>
-            </div>
-          `}
+          <div class="mt-1.5">
+            <span class="text-[10px] italic" style="color: rgba(15,27,40,0.45);"><i class="fas fa-user-tag mr-1"></i>Attribution jour par jour, dans la vue jour ou semaine</span>
+          </div>
         </div>
         <div class="flex gap-1 shrink-0">
           <button onclick="toggleTemplateActive(${t.id}, ${t.is_active ? 0 : 1})" class="w-7 h-7 rounded flex items-center justify-center" style="background: var(--c-cream-deep); color: var(--c-navy);" title="${t.is_active ? 'Désactiver' : 'Réactiver'}"><i class="fas ${t.is_active ? 'fa-pause' : 'fa-play'} text-[11px]"></i></button>
@@ -757,13 +748,16 @@ function showTaskCreateModal(dateStr, recurring = false, templateId = null, inst
 
   const data = state.tasksData || state.tasksWeekData || {};
   const staff = data.staff || [];
-  // Pour édition de template, on a déjà item.assignees ; pour instance c'est dans assignments
+  // L'attribution est INSTANCE-LEVEL UNIQUEMENT (jamais sur le modèle).
+  // → Le modèle ne propose AUCUN champ d'attribution.
+  // → L'instance (ponctuelle ou édition) peut être attribuée pour CE jour seulement.
   let preAssigned = [];
-  if (isEditTemplate) preAssigned = (item.assignees || []).map(a => a.user_id);
-  else if (isEditInstance) {
+  if (isEditInstance) {
     const myAssigns = (data.assignments || []).filter(a => a.task_instance_id === instanceId);
     preAssigned = myAssigns.map(a => a.user_id);
   }
+  // Affichage du bloc d'attribution : seulement si on n'édite PAS un modèle récurrent
+  const showAssignBlock = !isEditTemplate;
 
   showModal(title, `
     <form onsubmit="event.preventDefault(); submitTaskCreateModal(${templateId || 'null'}, ${instanceId || 'null'})">
@@ -825,27 +819,28 @@ function showTaskCreateModal(dateStr, recurring = false, templateId = null, inst
         </div>
       </div>
 
-      <!-- Assignation -->
-      ${staff.length > 0 ? `
-        <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Assigner à <span class="font-normal" style="color: rgba(15,27,40,0.5);">(optionnel — multi-sélection)</span></label>
-        <div class="grid grid-cols-2 gap-1.5 mb-3 max-h-40 overflow-y-auto p-2 rounded-lg" style="background: var(--c-cream-deep); border: 1px solid var(--c-line);">
-          ${staff.map(u => {
-            const checked = preAssigned.includes(u.id);
-            return `<label class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs" style="background: ${checked ? 'var(--c-gold)' : '#fff'}; color: ${checked ? '#fff' : 'var(--c-navy)'};">
-              <input type="checkbox" ${checked ? 'checked' : ''} data-tcm-user-id="${u.id}" class="w-3.5 h-3.5" style="accent-color: var(--c-gold-deep);" onchange="this.closest('label').style.background = this.checked ? 'var(--c-gold)' : '#fff'; this.closest('label').style.color = this.checked ? '#fff' : 'var(--c-navy)';" />
-              <span class="truncate">${escapeHtml(u.name)}</span>
-            </label>`;
-          }).join('')}
-        </div>
-        <!-- Case pré-assignation auto (récurrente uniquement) -->
-        <div id="tcm_preassign_block" style="display: ${initialMode === 'recurring' ? 'block' : 'none'};">
-          <label class="flex items-start gap-2 mb-3 p-2.5 rounded-lg cursor-pointer transition-all" style="background: ${item.pre_assign ? 'rgba(201,169,97,0.10)' : 'var(--c-cream-deep)'}; border: 1px solid ${item.pre_assign ? 'var(--c-gold)' : 'var(--c-line)'};">
-            <input id="tcm_pre_assign" type="checkbox" ${item.pre_assign ? 'checked' : ''} class="w-4 h-4 mt-0.5 rounded shrink-0" style="accent-color: var(--c-gold-deep);" onchange="this.closest('label').style.background = this.checked ? 'rgba(201,169,97,0.10)' : 'var(--c-cream-deep)'; this.closest('label').style.borderColor = this.checked ? 'var(--c-gold)' : 'var(--c-line)';" />
-            <div class="flex-1">
-              <p class="text-xs font-semibold" style="color: var(--c-navy);">Pré-assigner ces personnes à chaque occurrence</p>
-              <p class="text-[11px] mt-0.5" style="color: rgba(15,27,40,0.6);">Si décoché (recommandé), chaque tâche générée sera <strong>libre</strong> — à attribuer manuellement selon le planning de la semaine. Si coché, les personnes ci-dessus seront automatiquement assignées à chaque génération.</p>
-            </div>
+      <!-- Bloc d'attribution : UNIQUEMENT pour les instances (jour précis), JAMAIS pour les modèles -->
+      ${(showAssignBlock && staff.length > 0) ? `
+        <div id="tcm_assign_block" style="display: ${initialMode === 'oneoff' ? 'block' : 'none'};">
+          <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">
+            Attribuer à <span class="font-normal" style="color: rgba(15,27,40,0.5);">(optionnel — pour ce jour uniquement)</span>
           </label>
+          <div class="grid grid-cols-2 gap-1.5 mb-3 max-h-40 overflow-y-auto p-2 rounded-lg" style="background: var(--c-cream-deep); border: 1px solid var(--c-line);">
+            ${staff.map(u => {
+              const checked = preAssigned.includes(u.id);
+              return `<label class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer text-xs" style="background: ${checked ? 'var(--c-gold)' : '#fff'}; color: ${checked ? '#fff' : 'var(--c-navy)'};">
+                <input type="checkbox" ${checked ? 'checked' : ''} data-tcm-user-id="${u.id}" class="w-3.5 h-3.5" style="accent-color: var(--c-gold-deep);" onchange="this.closest('label').style.background = this.checked ? 'var(--c-gold)' : '#fff'; this.closest('label').style.color = this.checked ? '#fff' : 'var(--c-navy)';" />
+                <span class="truncate">${escapeHtml(u.name)}</span>
+              </label>`;
+            }).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <!-- Note explicative quand on crée/édite un modèle récurrent -->
+      ${(initialMode === 'recurring' && !isEditTemplate) || isEditTemplate ? `
+        <div id="tcm_recurring_info" class="mb-3 p-3 rounded-lg" style="display: ${initialMode === 'recurring' ? 'block' : 'none'}; background: rgba(59,130,246,0.06); border: 1px solid rgba(59,130,246,0.20);">
+          <p class="text-[11px]" style="color: rgba(15,27,40,0.75);"><i class="fas fa-circle-info mr-1.5" style="color: #3B82F6;"></i><strong>Modèle récurrent :</strong> chaque jour concerné, une tâche libre sera générée. Tu attribueras à une personne <strong>jour par jour</strong>, depuis la vue jour ou semaine. Une attribution sur un jour n'affecte aucun autre jour.</p>
         </div>
       ` : ''}
 
@@ -949,9 +944,13 @@ function setTaskFormMode(mode) {
   }
   document.getElementById('tcm_section_oneoff').style.display = mode === 'oneoff' ? 'block' : 'none';
   document.getElementById('tcm_section_recurring').style.display = mode === 'recurring' ? 'block' : 'none';
-  // Le bloc pré-assignation auto n'a de sens que pour les récurrentes
-  const preBlock = document.getElementById('tcm_preassign_block');
-  if (preBlock) preBlock.style.display = mode === 'recurring' ? 'block' : 'none';
+  // Le bloc d'attribution est INSTANCE-LEVEL : visible uniquement en mode ponctuel.
+  // En mode récurrent, l'attribution se fait jour par jour via la modal "Attribuer".
+  const assignBlock = document.getElementById('tcm_assign_block');
+  if (assignBlock) assignBlock.style.display = mode === 'oneoff' ? 'block' : 'none';
+  // Note explicative : visible en mode récurrent uniquement
+  const recInfo = document.getElementById('tcm_recurring_info');
+  if (recInfo) recInfo.style.display = mode === 'recurring' ? 'block' : 'none';
 }
 
 function setRecurrenceType(type) {
@@ -1023,16 +1022,14 @@ async function submitTaskCreateModal(templateId, instanceId) {
     }
     const active_from = document.getElementById('tcm_active_from')?.value || null;
     const active_to = document.getElementById('tcm_active_to')?.value || null;
-    // Pré-assignation auto : seulement si la case est cochée
-    const preAssignEl = document.getElementById('tcm_pre_assign');
-    const pre_assign = preAssignEl ? (preAssignEl.checked ? 1 : 0) : 0;
+    // Modèle récurrent : QUOI / QUAND / OÙ uniquement.
+    // PAS d'attribution ici — chaque jour génère une instance LIBRE,
+    // attribuée jour par jour via la modal "Attribuer".
     body = {
       title, description,
       recurrence_type, recurrence_days, monthly_day,
       suggested_time, duration_min, category, priority,
-      active_from, active_to,
-      assignee_ids: assigneeIds,
-      pre_assign
+      active_from, active_to
     };
     if (templateId) {
       const activeEl = document.getElementById('tcm_active');

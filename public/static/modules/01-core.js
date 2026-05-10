@@ -5,35 +5,9 @@
 
 const API = '/api';
 let state = {
-  // Auth STAFF
+  // Auth STAFF (espace équipe — seul espace de l'application)
   token: localStorage.getItem('wikot_token'),
   user: JSON.parse(localStorage.getItem('wikot_user') || 'null'),
-  // Auth CLIENT (Front Wikot — chambre client)
-  clientToken: localStorage.getItem('wikot_client_token'),
-  client: JSON.parse(localStorage.getItem('wikot_client') || 'null'),
-  loginTab: 'client', // 'staff' | 'client' — onglet actif sur la page de login (client par défaut)
-  // Vues client
-  clientView: 'wikot', // 'wikot' | 'restaurant' | 'info' — Front Wikot par défaut
-  clientWikotConversations: [],
-  clientWikotCurrentConvId: null,
-  clientWikotMessages: [],
-  clientWikotSending: false,
-  clientRestaurantDate: null,
-  clientRestaurantAvailability: null,
-  clientRestaurantReservations: [],
-  clientHotelInfoCategories: [],
-  clientHotelInfoItems: [],
-  // Staff — vues étendues
-  rooms: [],
-  occupancyEntries: {}, // {room_id: {guest_name, checkout_date}}
-  restaurantSchedule: [],
-  restaurantExceptions: [],
-  restaurantReservations: [],
-  restaurantDashboard: null,
-  restaurantDashboardFrom: null,
-  restaurantDashboardTo: null,
-  restaurantPickedDate: null,
-  // hotelSettings retiré : la page Paramètres hôtel n'existe plus.
   currentView: 'dashboard',
   currentHotelId: null,
   procedures: [],
@@ -100,7 +74,7 @@ let state = {
 // ============================================
 // VOICE RECORDER — capture audio MediaRecorder + upload R2 via /api/audio/upload
 // ============================================
-// state.voice : { active: 'staff'|'client'|null, mode: 'wikot'|'wikot-max'|'client-wikot'|null,
+// state.voice : { active: 'staff'|null, mode: 'wikot'|'wikot-max'|null,
 //                 recording: bool, blob: Blob|null, mime: string|null, durationMs: number,
 //                 mediaRecorder: MediaRecorder|null, stream: MediaStream|null,
 //                 chunks: Blob[], startedAt: number, timerInterval: any, previewUrl: string|null }
@@ -193,14 +167,12 @@ function discardVoiceRecording() {
 async function uploadCurrentVoice(scope) {
   const v = initVoiceState();
   if (!v.blob) return null;
-  const isClient = scope === 'client';
-  const url = `${API}${isClient ? '/client/audio/upload' : '/audio/upload'}`;
+  const url = `${API}/audio/upload`;
   const headers = {
     'Content-Type': v.mime || 'audio/webm',
     'X-Audio-Duration-Ms': String(v.durationMs || 0)
   };
-  const token = isClient ? state.clientToken : state.token;
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
   try {
     const res = await fetch(url, { method: 'POST', headers, body: v.blob });
     const data = await res.json();
@@ -250,11 +222,10 @@ function renderVoiceWidget(scope, mode) {
 // Rendu d'un message vocal (lecteur audio inline) — utilisé dans renderWikotMessage et renderFrontWikotMessage
 function renderVoiceMessageBubble(msg, opts) {
   opts = opts || {};
-  const isClient = !!opts.isClient;
   const audioKey = msg.audio_key;
   if (!audioKey) return '';
-  const token = isClient ? state.clientToken : state.token;
-  const path = isClient ? '/client/audio/' : '/audio/';
+  const token = state.token;
+  const path = '/audio/';
   // On utilise un fetch authentifié → blob URL au moment du render via data-attr
   const audioId = 'audio-' + (msg.id || Math.random().toString(36).slice(2));
   const fetchUrl = `${API}${path}${encodeURI(audioKey)}`;
@@ -332,16 +303,6 @@ function userCanManageChat() {
   return state.user.role === 'admin' || state.user.can_manage_chat === 1;
 }
 
-function userCanEditClients() {
-  if (!state.user) return false;
-  return state.user.role === 'admin' || Number(state.user.can_edit_clients) === 1;
-}
-
-function userCanEditRestaurant() {
-  if (!state.user) return false;
-  return state.user.role === 'admin' || Number(state.user.can_edit_restaurant) === 1;
-}
-
 function userCanCreateTasks() {
   if (!state.user) return false;
   return state.user.role === 'admin' || Number(state.user.can_create_tasks) === 1;
@@ -355,21 +316,4 @@ function userCanAssignTasks() {
 // Note: la permission can_edit_settings est conservée en DB pour compat,
 // mais la page Paramètres hôtel n'existe plus côté UI.
 
-// ============================================
-// CLIENT API HELPER (token séparé du staff)
-// ============================================
-async function clientApi(path, options = {}) {
-  const headers = { 'Content-Type': 'application/json' };
-  if (state.clientToken) headers['Authorization'] = `Bearer ${state.clientToken}`;
-  try {
-    const res = await fetch(`${API}${path}`, { ...options, headers });
-    const data = await res.json();
-    if (res.status === 401) { clientLogout(); return null; }
-    if (!res.ok) { showToast(data.error || 'Erreur', 'error'); return null; }
-    return data;
-  } catch (e) {
-    showToast('Erreur de connexion', 'error');
-    return null;
-  }
-}
 

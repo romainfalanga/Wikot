@@ -345,65 +345,12 @@ function updateSidebarBadges() {
 // ============================================
 function render() {
   const app = document.getElementById('app');
-  // Priorité 1 : si un client est connecté, afficher l'app Front Wikot client
-  if (state.clientToken && state.client) {
-    app.innerHTML = renderClientApp();
-    return;
-  }
-  // Priorité 2 : si un staff est connecté, afficher l'app staff
+  // Si un staff est connecté, afficher l'app staff (espace équipe — seul espace de l'app)
   if (state.token && state.user) {
     app.innerHTML = renderMainLayout();
     return;
   }
-  // Priorité 3 : page de login (avec onglet staff/client)
+  // Sinon : page de login espace équipe
   app.innerHTML = renderLoginPage();
-}
-
-// ============================================
-// CLIENT AUTH
-// ============================================
-async function clientLogin(hotelCode, roomNumber, guestName) {
-  try {
-    const res = await fetch(`${API}/client/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hotel_code: hotelCode, room_number: roomNumber, guest_name: guestName })
-    });
-    const data = await res.json();
-    if (!res.ok) { showToast(data.error || 'Connexion impossible', 'error'); return; }
-    state.clientToken = data.token;
-    state.client = data.client;
-    localStorage.setItem('wikot_client_token', data.token);
-    localStorage.setItem('wikot_client', JSON.stringify(data.client));
-    state.clientView = 'wikot';
-    state._clientWikotLoaded = false;
-    showToast(`Bienvenue ${data.client.guest_name} !`, 'success');
-    render();
-    // Pré-charger Front Wikot immédiatement après login
-    ensureClientWikotLoaded();
-  } catch (e) {
-    showToast('Erreur réseau', 'error');
-  }
-}
-
-function clientLogout() {
-  // Tenter logout serveur (silencieux)
-  if (state.clientToken) {
-    fetch(`${API}/client/logout`, { method: 'POST', headers: { 'Authorization': `Bearer ${state.clientToken}` } }).catch(() => {});
-  }
-  state.clientToken = null;
-  state.client = null;
-  state.clientView = 'wikot';
-  state.clientWikotConversations = [];
-  state.clientWikotCurrentConvId = null;
-  state.clientWikotMessages = [];
-  localStorage.removeItem('wikot_client_token');
-  localStorage.removeItem('wikot_client');
-  render();
-}
-
-function setLoginTab(tab) {
-  state.loginTab = tab;
-  render();
 }
 

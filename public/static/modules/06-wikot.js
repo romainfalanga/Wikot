@@ -809,15 +809,6 @@ const BACK_WIKOT_WORKFLOWS = {
     permissionKey: null,
     needsTarget: false,
     description: "Crée, modifie ou supprime une tâche (récurrence, priorité, assignés) avec Back Wikot."
-  },
-  gerer_codes_wikot: {
-    label: 'Codes Wikot',
-    icon: 'fa-key',
-    color: 'gold',
-    targetKind: 'codes_wikot',
-    permissionKey: 'admin_only',
-    needsTarget: false,
-    description: "Code hôtel, chambres, client courant : Back Wikot fait toutes les opérations."
   }
 };
 
@@ -897,15 +888,6 @@ function emptyBackWikotForm(workflowMode) {
       assignee_ids: []
     };
   }
-  if (workflowMode === 'gerer_codes_wikot') {
-    return {
-      kind: 'codes_wikot',
-      hotel_code: '',
-      rooms: [],         // [{ id, room_number, is_active }]
-      entries: {},       // { [room_id]: { guest_name, checkout_date } } (draft batch save)
-      lastAction: null
-    };
-  }
   return null;
 }
 
@@ -944,8 +926,6 @@ function applyBackWikotFormUpdates(updates) {
     allowedKeys = ['id','task_kind','mode','title','description','category','priority',
                    'recurrence_type','recurrence_days','monthly_day','suggested_time',
                    'duration_min','active_from','active_to','assignee_ids'];
-  } else if (f.kind === 'codes_wikot') {
-    allowedKeys = ['hotel_code','rooms','entries','lastAction'];
   } else {
     allowedKeys = [];
   }
@@ -1009,12 +989,9 @@ async function enterBackWikotWorkflow(workflowMode) {
     render();
   } else {
     // Tous les autres modes : on entre direct dans le workshop avec un form vierge.
-    // Pour les modes Phase 4 (chat_tree, codes_wikot), on précharge l'état initial.
     state.backWikotForm = emptyBackWikotForm(workflowMode);
     if (workflowMode === 'gerer_conversations') {
       await preloadBackWikotChatTree();
-    } else if (workflowMode === 'gerer_codes_wikot') {
-      await preloadBackWikotCodesState();
     }
     await openBackWikotWorkshop();
   }
@@ -1037,29 +1014,6 @@ async function preloadBackWikotChatTree() {
       group_id: g.id
     }))
   }));
-}
-
-// Préchargement de l'état Codes Wikot (hotel_code + rooms + occupancy entries du jour)
-async function preloadBackWikotCodesState() {
-  const data = await api('/occupancy/today');
-  if (!data || !state.backWikotForm) return;
-  const hotel = data.hotel || {};
-  const rooms = data.rooms || [];
-  state.backWikotForm.hotel_code = hotel.client_login_code || '';
-  state.backWikotForm.rooms = rooms.map(r => ({
-    id: r.room_id,
-    room_number: r.room_number,
-    is_active: r.is_active === 1 || r.is_active === true
-  }));
-  // Pré-remplir les entries depuis l'état actuel (chambres déjà occupées)
-  const entries = {};
-  for (const r of rooms) {
-    entries[r.room_id] = {
-      guest_name: r.guest_name || '',
-      checkout_date: r.checkout_date || ''
-    };
-  }
-  state.backWikotForm.entries = entries;
 }
 
 // (suppressed) openBackWikotChatOnly — remplacé par le pattern workshop unifié.
@@ -1420,39 +1374,6 @@ async function saveBackWikotForm() {
     return;
   }
 
-  // ====== Codes Wikot — batch POST /occupancy/day pour les entries ======
-  if (f.kind === 'codes_wikot') {
-    state.backWikotSaving = true;
-    render();
-
-    try {
-      const entries = [];
-      const rooms = f.rooms || [];
-      const draftEntries = f.entries || {};
-      for (const r of rooms) {
-        const e = draftEntries[r.id] || { guest_name: '', checkout_date: '' };
-        const name = (e.guest_name || '').trim();
-        if (name) {
-          entries.push({ room_id: r.id, guest_name: name, checkout_date: e.checkout_date || null, action: 'set' });
-        } else {
-          entries.push({ room_id: r.id, action: 'clear' });
-        }
-      }
-      const data = await api('/occupancy/day', { method: 'POST', body: JSON.stringify({ entries }) });
-      if (data) {
-        showToast('Codes Wikot enregistrés (mots de passe clients à jour).', 'success');
-        state.backWikotFormDirty = false;
-        // Refresh state local avant retour
-        state._occupancyLoaded = false;
-        if (typeof loadOccupancy === 'function') await loadOccupancy();
-        backToBackWikotHome();
-      }
-    } finally {
-      state.backWikotSaving = false;
-    }
-    return;
-  }
-
   // Kind inconnu
   showToast('Type de formulaire inconnu.', 'error');
 }
@@ -1591,8 +1512,7 @@ function renderBackWikotHome() {
     update_info:            { tag: 'Modifier', accent: 'update' },
     gerer_conversations:    { tag: 'Gérer',    accent: 'update' },
     chercher_conversations: { tag: 'Chercher', accent: 'create' },
-    gerer_taches:           { tag: 'Gérer',    accent: 'update' },
-    gerer_codes_wikot:      { tag: 'Gérer',    accent: 'create' }
+    gerer_taches:           { tag: 'Gérer',    accent: 'update' }
   };
 
   const buttonHtml = (key) => {
@@ -1644,7 +1564,7 @@ function renderBackWikotHome() {
 
       <p class="text-sm" style="color: rgba(15,27,40,0.6);">Choisis une action. Back Wikot remplit le formulaire pour toi puis tu enregistres.</p>
 
-      <!-- Grille unique de 8 boutons identiques -->
+      <!-- Grille unique de 7 boutons identiques -->
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         ${buttonHtml('create_procedure')}
         ${buttonHtml('update_procedure')}
@@ -1653,7 +1573,6 @@ function renderBackWikotHome() {
         ${buttonHtml('gerer_conversations')}
         ${buttonHtml('chercher_conversations')}
         ${buttonHtml('gerer_taches')}
-        ${buttonHtml('gerer_codes_wikot')}
       </div>
     </div>
   `;
@@ -1887,9 +1806,6 @@ function renderBackWikotWorkshop() {
   } else if (f.kind === 'task') {
     formHtml = renderBackWikotTaskForm(f);
     formTitle = 'Formulaire tâche';
-  } else if (f.kind === 'codes_wikot') {
-    formHtml = renderBackWikotCodesForm(f);
-    formTitle = 'Codes Wikot';
   } else {
     formHtml = '<div class="text-center text-navy-400 py-8">Type de formulaire inconnu.</div>';
     formTitle = 'Formulaire';
@@ -2363,77 +2279,3 @@ function renderBackWikotTaskForm(f) {
   `;
 }
 
-// ============================================
-// FORM : Codes Wikot — code hôtel + chambres + entries occupation
-// Mutations chambres/code = LIVE. Entries occupation = batch sur Enregistrer.
-// ============================================
-function renderBackWikotCodesForm(f) {
-  const rooms = f.rooms || [];
-  const entries = f.entries || {};
-  const occupied = rooms.filter(r => {
-    const e = entries[r.id];
-    return e && (e.guest_name || '').trim();
-  }).length;
-  const last = f.lastAction;
-
-  return `
-    <div class="space-y-4">
-      <div>
-        <label class="text-xs font-semibold text-navy-700 mb-1 block">Code hôtel <span class="text-red-500">*</span></label>
-        <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 font-mono uppercase tracking-wide text-navy-800 ${fieldHighlightClass('hotel_code')}">
-          ${f.hotel_code ? escapeHtml(f.hotel_code) : '<span class="italic text-navy-300 normal-case">(à définir)</span>'}
-        </div>
-      </div>
-
-      <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 flex items-center gap-3">
-        <div class="w-8 h-8 rounded-lg bg-white border border-gray-200 flex items-center justify-center text-navy-600">
-          <i class="fas fa-door-closed text-sm"></i>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="text-xs font-semibold text-navy-800">${rooms.length} chambre${rooms.length > 1 ? 's' : ''} · ${occupied} occupée${occupied > 1 ? 's' : ''}</div>
-          <div class="text-[11px] text-navy-500">Back Wikot peut créer, renommer, supprimer, occuper, libérer.</div>
-        </div>
-      </div>
-
-      ${last ? `
-        <div class="text-[11px] px-2.5 py-1.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center gap-1.5">
-          <i class="fas fa-check-circle"></i>${escapeHtml(last.label || '')}
-        </div>
-      ` : ''}
-
-      ${rooms.length === 0 ? `
-        <div class="text-center py-6 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300 ${fieldHighlightClass('rooms')}">
-          Aucune chambre. Demande à Back Wikot d'en créer.
-        </div>
-      ` : `
-        <div class="bg-white border border-gray-200 rounded-xl overflow-hidden ${fieldHighlightClass('rooms')} ${fieldHighlightClass('entries')}">
-          <div class="grid items-center gap-2 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-navy-500" style="grid-template-columns: 60px 70px 1fr 110px; background: var(--c-cream-deep); border-bottom: 1px solid var(--c-line);">
-            <div>Chambre</div>
-            <div>Statut</div>
-            <div>Client (= mot de passe)</div>
-            <div>Départ</div>
-          </div>
-          ${rooms.map(r => {
-            const e = entries[r.id] || { guest_name: '', checkout_date: '' };
-            const isOccupied = !!(e.guest_name || '').trim();
-            return `
-              <div class="grid items-center gap-2 px-3 py-1.5 text-xs" style="grid-template-columns: 60px 70px 1fr 110px; background: ${isOccupied ? 'rgba(201,169,97,0.04)' : '#fff'}; border-bottom: 1px solid var(--c-line);">
-                <div class="font-display font-bold text-navy-900">${escapeHtml(r.room_number)}</div>
-                <div>${isOccupied ? '<span class="text-[9px] px-1.5 py-0.5 rounded-full font-semibold uppercase tracking-wider" style="background: var(--c-gold); color: var(--c-navy);">Occupée</span>' : '<span class="text-[9px] px-1.5 py-0.5 rounded-full uppercase tracking-wider" style="background: var(--c-cream-deep); color: rgba(15,27,40,0.5);">Libre</span>'}</div>
-                <div class="truncate text-navy-800">${e.guest_name ? escapeHtml(e.guest_name) : '<span class="italic text-navy-300">—</span>'}</div>
-                <div class="text-navy-600 font-mono text-[11px]">${e.checkout_date || '<span class="italic text-navy-300">—</span>'}</div>
-              </div>
-            `;
-          }).join('')}
-        </div>
-      `}
-
-      <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
-        <i class="fas fa-circle-info mt-0.5"></i>
-        <div>
-          <strong>Code hôtel et chambres = mutations live.</strong> Les entrées d'occupation (client + date départ) sont enregistrées en batch via le bouton <strong>Enregistrer</strong> en haut.
-        </div>
-      </div>
-    </div>
-  `;
-}

@@ -4,17 +4,14 @@
 // ============================================
 
 // ============================================
-// LOGIN PAGE
+// LOGIN PAGE — Espace Équipe uniquement
 // ============================================
 function renderLoginPage() {
-  const tab = state.loginTab || 'client';
   return `
   <div class="min-h-screen flex flex-col lg:flex-row" style="background: var(--c-cream);">
     <!-- COLONNE GAUCHE — branding premium (caché sur mobile) -->
     <div class="hidden lg:flex lg:w-1/2 relative overflow-hidden" style="background: var(--c-navy);">
-      <!-- Pattern subtil en SVG inline (ultra-léger, pas d'image) -->
       <div class="absolute inset-0 opacity-[0.07]" style="background-image: radial-gradient(circle at 1px 1px, #C9A961 1px, transparent 0); background-size: 32px 32px;"></div>
-      <!-- Liseré or à droite -->
       <div class="absolute right-0 top-0 bottom-0 w-px" style="background: linear-gradient(to bottom, transparent, var(--c-gold), transparent);"></div>
       <div class="relative z-10 flex flex-col justify-between p-12 xl:p-16 w-full">
         <div>
@@ -35,10 +32,9 @@ function renderLoginPage() {
       </div>
     </div>
 
-    <!-- COLONNE DROITE — formulaires -->
+    <!-- COLONNE DROITE — formulaire de connexion équipe -->
     <div class="flex-1 flex items-center justify-center p-6 lg:p-12">
       <div class="w-full max-w-md">
-        <!-- Logo mobile uniquement -->
         <div class="flex lg:hidden items-center justify-center gap-3 mb-8 fade-in">
           <div class="w-11 h-11 rounded-xl flex items-center justify-center" style="background: var(--c-gold);">
             <i class="fas fa-concierge-bell text-lg" style="color: var(--c-navy);"></i>
@@ -47,21 +43,8 @@ function renderLoginPage() {
         </div>
 
         <div class="bg-white rounded-2xl shadow-premium-lg overflow-hidden fade-in" style="border: 1px solid var(--c-line);">
-          <!-- Tabs Client / Équipe -->
-          <div class="flex" style="background: var(--c-cream-deep);">
-            <button onclick="setLoginTab('client')"
-              class="flex-1 py-4 text-sm font-semibold transition-all"
-              style="${tab === 'client' ? 'background: white; color: var(--c-navy); box-shadow: inset 0 -2px 0 var(--c-gold);' : 'color: rgba(15,27,40,0.5);'}">
-              <i class="fas fa-bed mr-2"></i>Espace Client
-            </button>
-            <button onclick="setLoginTab('staff')"
-              class="flex-1 py-4 text-sm font-semibold transition-all"
-              style="${tab === 'staff' ? 'background: white; color: var(--c-navy); box-shadow: inset 0 -2px 0 var(--c-gold);' : 'color: rgba(15,27,40,0.5);'}">
-              <i class="fas fa-user-tie mr-2"></i>Espace Équipe
-            </button>
-          </div>
           <div class="p-7 sm:p-9">
-            ${tab === 'client' ? renderClientLoginForm() : renderStaffLoginForm()}
+            ${renderStaffLoginForm()}
           </div>
         </div>
 
@@ -100,50 +83,6 @@ function renderStaffLoginForm() {
     </form>`;
 }
 
-function renderClientLoginForm() {
-  const stepBadge = (n) => `<span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold mr-2" style="background: var(--c-gold); color: var(--c-navy);">${n}</span>`;
-  return `
-    <h2 class="font-display text-2xl font-semibold mb-1" style="color: var(--c-navy);">Bienvenue dans votre hôtel</h2>
-    <p class="text-xs mb-7" style="color: rgba(15,27,40,0.5);">Munissez-vous de la fiche présente dans votre chambre.</p>
-    <form onsubmit="event.preventDefault(); clientLogin(document.getElementById('client_hotel_code').value, document.getElementById('client_room_number').value, document.getElementById('client_guest_name').value)">
-      <div class="mb-4">
-        <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">
-          ${stepBadge(1)}Code de l'hôtel
-        </label>
-        <div class="relative">
-          <i class="fas fa-hotel absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
-          <input id="client_hotel_code" type="text" required placeholder="Ex: GRDPARIS" autocomplete="off"
-            style="text-transform: uppercase; letter-spacing: 1.5px;"
-            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm font-mono">
-        </div>
-      </div>
-      <div class="mb-4">
-        <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">
-          ${stepBadge(2)}Numéro de chambre
-        </label>
-        <div class="relative">
-          <i class="fas fa-door-open absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
-          <input id="client_room_number" type="text" required placeholder="Ex: 12" autocomplete="off"
-            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm">
-        </div>
-      </div>
-      <div class="mb-6">
-        <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">
-          ${stepBadge(3)}Votre nom
-        </label>
-        <div class="relative">
-          <i class="fas fa-user absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
-          <input id="client_guest_name" type="text" required placeholder="Ex: Dupont" autocomplete="off"
-            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm">
-        </div>
-        <p class="text-[11px] mt-2" style="color: rgba(15,27,40,0.4);"><i class="fas fa-info-circle mr-1" style="color: var(--c-gold);"></i>Le nom utilisé lors de la réservation.</p>
-      </div>
-      <button type="submit" class="btn-premium w-full font-semibold py-3 rounded-lg transition-all" style="background: var(--c-navy); color: white;">
-        <i class="fas fa-key mr-2"></i>Accéder à mon espace
-      </button>
-    </form>`;
-}
-
 // ============================================
 // MAIN LAYOUT
 // ============================================
@@ -164,22 +103,18 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else if (isAdmin) {
-    // Admin hôtel : accès complet à toutes les pages opérationnelles
-    // NOTE: 'Chambres' retiré du menu — accessible désormais depuis Codes Wikot
+    // Admin hôtel : accès complet aux pages opérationnelles équipe
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
       { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
-      { id: 'occupancy', icon: 'fa-id-card', label: 'Codes Wikot' },
-      { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' },
       { id: 'tasks', icon: 'fa-list-check', label: 'À faire', badge: state.myTasksPendingCount },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
     // Employé : Wikot pour tous + items conditionnels selon permissions granulaires
-    // NOTE: 'Chambres' retiré du menu — accessible désormais depuis Codes Wikot
     const canUseMax = userCanEditProcedures() || userCanEditInfo();
     menuItems = [
       { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
@@ -187,12 +122,6 @@ function renderMainLayout() {
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
-      ...(userCanEditClients() ? [
-        { id: 'occupancy', icon: 'fa-id-card', label: 'Codes Wikot' }
-      ] : []),
-      ...(userCanEditRestaurant() ? [
-        { id: 'restaurant', icon: 'fa-utensils', label: 'Restaurant' }
-      ] : []),
       // À faire : visible pour TOUS les employés (les permissions limitent juste les actions)
       { id: 'tasks', icon: 'fa-list-check', label: 'À faire', badge: state.myTasksPendingCount },
     ];
@@ -212,9 +141,6 @@ function renderMainLayout() {
     users: 'Utilisateurs',
     hotels: 'Hôtels',
     templates: 'Modèles',
-    rooms: 'Chambres',
-    occupancy: 'Codes Wikot',
-    restaurant: 'Restaurant',
     tasks: 'À faire',
   };
   const currentTitle = viewTitles[state.currentView] || 'Wikot';
@@ -421,9 +347,6 @@ function renderCurrentView() {
     case 'hotels': return renderHotelsView();
     case 'templates': return renderTemplatesView();
     case 'procedure-detail': return renderProcedureDetail();
-    case 'rooms': return renderRoomsView();
-    case 'occupancy': return renderOccupancyView();
-    case 'restaurant': return renderRestaurantView();
     case 'tasks': return renderTasksView();
     case 'hotel-settings': state.currentView = isSuperAdmin ? 'dashboard' : 'wikot'; return renderCurrentView();
     default:

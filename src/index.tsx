@@ -3619,10 +3619,11 @@ Le content doit être structuré et complet (codes, horaires précis, contacts f
     const txt = content && content.trim() ? content : 'Voici un message vocal. Écoute-le et réponds à son contenu en déclenchant les bons outils.'
     const parts: any[] = [{ type: 'text', text: txt }]
     if (audioData) {
-      parts.push({ type: 'audio_url', audio_url: { url: audioData.dataUri } })
+      // Format officiel OpenRouter : input_audio + data base64 brut + format
+      parts.push({ type: 'input_audio', input_audio: { data: audioData.base64, format: audioData.format } })
     }
     messages.push({ role: 'user', content: parts })
-    console.log('[wikot:router] audio_attached key=' + audioKey + ' has_data=' + (!!audioData))
+    console.log('[wikot:router] audio_attached key=' + audioKey + ' has_data=' + (!!audioData) + ' fmt=' + (audioData?.format || 'none'))
   } else {
     messages.push({ role: 'user', content })
   }
@@ -3819,8 +3820,8 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         const txt = (m.content && m.content.trim()) ? m.content : 'Voici un message vocal. Réponds à son contenu.'
         parts.push({ type: 'text', text: txt })
         if (audio) {
-          // Format compatible OpenRouter / Gemini multimodal : data URI dans audio_url
-          parts.push({ type: 'audio_url', audio_url: { url: audio.dataUri } })
+          // Format officiel OpenRouter : input_audio + data base64 brut + format
+          parts.push({ type: 'input_audio', input_audio: { data: audio.base64, format: audio.format } })
         }
         oaiMessages.push({ role: 'user', content: parts })
       } else {
@@ -5944,8 +5945,9 @@ app.get('/api/audio/:key{.+}', authMiddleware, async (c) => {
   return new Response(obj.body, { headers })
 })
 
-// Helper : convertit un objet R2 audio en data-URI base64 (pour l'envoyer au modèle multimodal)
-async function r2AudioToDataUri(bucket: R2Bucket, key: string): Promise<{ dataUri: string; mime: string } | null> {
+// Helper : convertit un objet R2 audio en base64 + data-URI (pour l'envoyer au modèle multimodal)
+// Retourne aussi un `format` OpenRouter-compatible (wav, mp3, webm, ogg, m4a, aac, flac).
+async function r2AudioToDataUri(bucket: R2Bucket, key: string): Promise<{ dataUri: string; mime: string; base64: string; format: string } | null> {
   const obj = await bucket.get(key)
   if (!obj) return null
   const mime = obj.httpMetadata?.contentType || 'audio/webm'
@@ -5958,7 +5960,17 @@ async function r2AudioToDataUri(bucket: R2Bucket, key: string): Promise<{ dataUr
     binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)) as any)
   }
   const b64 = btoa(binary)
-  return { dataUri: `data:${mime};base64,${b64}`, mime }
+  // Déduit le format attendu par OpenRouter à partir du MIME
+  let format = 'webm'
+  const m = mime.toLowerCase()
+  if (m.includes('mp4') || m.includes('m4a')) format = 'm4a'
+  else if (m.includes('mpeg') || m.includes('mp3')) format = 'mp3'
+  else if (m.includes('wav') || m.includes('x-wav')) format = 'wav'
+  else if (m.includes('ogg')) format = 'ogg'
+  else if (m.includes('aac')) format = 'aac'
+  else if (m.includes('flac')) format = 'flac'
+  else if (m.includes('webm')) format = 'webm'
+  return { dataUri: `data:${mime};base64,${b64}`, mime, base64: b64, format }
 }
 
 // ============================================

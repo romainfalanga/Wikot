@@ -3371,7 +3371,10 @@ app.post('/api/wikot/router', authMiddleware, async (c) => {
   let body: any = {}
   try { body = await c.req.json() } catch {}
   const content = String(body.content || '').trim()
-  if (!content) return c.json({ error: 'Message vide' }, 400)
+  // Audio optionnel : le frontend a uploadé l'audio puis nous passe la clé R2
+  const audioKey: string | null = body.audio_key || null
+  // Au moins du texte OU un audio
+  if (!content && !audioKey) return c.json({ error: 'Message vide' }, 400)
 
   // Contexte UI envoyé par le frontend (pour que l'orchestrateur sache où on est)
   const uiContext = body.ui_context || {}
@@ -3598,14 +3601,31 @@ Le content doit être structuré et complet (codes, horaires précis, contacts f
     }
   ]
 
-  // Messages : system + history + nouveau message
+  // Messages : system + history + nouveau message (avec audio multimodal si présent)
   const messages: any[] = [{ role: 'system', content: systemPrompt }]
   for (const h of history) {
     if (h && h.role && h.content) {
       messages.push({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.content).slice(0, 1000) })
     }
   }
-  messages.push({ role: 'user', content })
+
+  if (audioKey) {
+    let audioData: { dataUri: string } | null = null
+    try {
+      audioData = await r2AudioToDataUri(c.env.AUDIO_BUCKET, audioKey)
+    } catch (e: any) {
+      console.error('[wikot:router] r2_audio_error msg=' + e.message + ' key=' + audioKey)
+    }
+    const txt = content && content.trim() ? content : 'Voici un message vocal. Écoute-le et réponds à son contenu en déclenchant les bons outils.'
+    const parts: any[] = [{ type: 'text', text: txt }]
+    if (audioData) {
+      parts.push({ type: 'audio_url', audio_url: { url: audioData.dataUri } })
+    }
+    messages.push({ role: 'user', content: parts })
+    console.log('[wikot:router] audio_attached key=' + audioKey + ' has_data=' + (!!audioData))
+  } else {
+    messages.push({ role: 'user', content })
+  }
 
   let resp
   try {

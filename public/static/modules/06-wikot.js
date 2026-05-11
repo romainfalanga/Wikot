@@ -213,25 +213,61 @@ async function sendWikotMessage(mode) {
 // Outils possibles : respond_directly, enter_workflow, start_create,
 // select_procedure, select_info, select_task, prefill_form, ask_followup, back_to_home.
 async function sendBackWikotRootMessage(forwardedText) {
+  if (state.backWikotRootSending) return;
+
+  // Détection d'un message vocal prêt pour ce mode
+  const v = initVoiceState();
+  const hasVoice = v && v.active === 'staff' && v.mode === 'backwikot-root' && v.blob && !v.recording;
+
   let content = '';
   if (typeof forwardedText === 'string' && forwardedText.trim()) {
     content = forwardedText.trim();
   } else {
     const input = document.getElementById('back-wikot-root-input');
-    if (!input) return;
-    content = (input.value || '').trim();
-    if (!content) return;
-    input.value = '';
-    autoResizeTextarea(input);
+    if (input) {
+      content = (input.value || '').trim();
+      if (input.value) { input.value = ''; autoResizeTextarea(input); }
+    }
+    // Si pas de texte ET pas de vocal → rien à envoyer
+    if (!content && !hasVoice) return;
   }
-  if (state.backWikotRootSending) return;
 
   // Init
   if (!Array.isArray(state.backWikotRootMessages)) state.backWikotRootMessages = [];
-  state.backWikotRootMessages.push({ role: 'user', content, ts: Date.now() });
+
+  // Push d'une bulle user provisoire — affiche un preview du vocal si présent
+  const userBubble = { role: 'user', content: content || '', ts: Date.now() };
+  if (hasVoice) {
+    userBubble._audioPreviewUrl = v.previewUrl;
+    userBubble._audioDurationMs = v.durationMs;
+    userBubble._audioPending = true;
+  }
+  state.backWikotRootMessages.push(userBubble);
   state.backWikotRootSending = true;
   render();
   scrollBackWikotRootToBottom();
+
+  // Upload audio si présent
+  let audioMeta = null;
+  if (hasVoice) {
+    try {
+      audioMeta = await uploadCurrentVoice('staff');
+    } catch (e) {
+      audioMeta = null;
+    }
+    if (!audioMeta) {
+      // Échec upload : retirer la bulle, restituer la voix pour réessai
+      state.backWikotRootMessages.pop();
+      state.backWikotRootSending = false;
+      render();
+      alert('Impossible d\'envoyer le message vocal. Réessaye.');
+      return;
+    }
+    userBubble._audioPending = false;
+    userBubble._audioKey = audioMeta.audio_key;
+    discardVoiceRecording();
+    render();
+  }
 
   // Snapshot UI pour que l'orchestrateur sache où on est
   const uiContext = {
@@ -246,11 +282,19 @@ async function sendBackWikotRootMessage(forwardedText) {
     .filter(m => !m._system)
     .map(m => ({ role: m.role, content: String(m.content || '').slice(0, 800) }));
 
+  const payload = { content, ui_context: uiContext, history };
+  if (audioMeta) {
+    payload.audio_key = audioMeta.audio_key;
+    payload.audio_mime = audioMeta.audio_mime;
+    payload.audio_duration_ms = audioMeta.audio_duration_ms;
+    payload.audio_size_bytes = audioMeta.audio_size_bytes;
+  }
+
   let data;
   try {
     data = await api('/wikot/router', {
       method: 'POST',
-      body: JSON.stringify({ content, ui_context: uiContext, history })
+      body: JSON.stringify(payload)
     });
   } catch (e) {
     data = null;
@@ -2131,9 +2175,21 @@ function renderBackWikotChatPanel({ inDrawer }) {
             </div>`;
           }
           if (m.role === 'user') {
+            // Bulle audio (preview blob URL pendant l'envoi) + texte éventuel
+            let audioBlock = '';
+            if (m._audioPreviewUrl) {
+              const dur = m._audioDurationMs ? formatVoiceDuration(m._audioDurationMs) : '';
+              audioBlock = `
+                <div class="flex items-center gap-2 mb-1.5 px-2 py-1.5 rounded-lg" style="background: rgba(255,255,255,0.12);">
+                  <audio src="${m._audioPreviewUrl}" controls preload="metadata" style="height: 30px; max-width: 200px;"></audio>
+                  ${dur ? `<span class="text-[10px] font-mono opacity-80">${dur}</span>` : ''}
+                  ${m._audioPending ? `<i class="fas fa-spinner fa-spin text-[10px] opacity-70"></i>` : ''}
+                </div>`;
+            }
+            const textBlock = m.content ? `<div>${escapeHtml(m.content)}</div>` : '';
             return `<div class="flex justify-end">
               <div class="max-w-[85%] px-3 py-2 rounded-2xl rounded-tr-sm text-sm leading-relaxed" style="background: var(--c-navy); color: #fff;">
-                ${escapeHtml(m.content)}
+                ${audioBlock}${textBlock || (audioBlock ? '' : escapeHtml(m.content))}
               </div>
             </div>`;
           }
@@ -2174,6 +2230,7 @@ function renderBackWikotChatPanel({ inDrawer }) {
           class="flex-1 resize-none px-3 py-2 text-sm rounded-xl border focus:outline-none focus:ring-2 transition-all"
           style="border-color: rgba(15,27,40,0.12); background: var(--c-cream); color: var(--c-navy); max-height: 120px;"
         ></textarea>
+        ${renderVoiceWidget('staff', 'backwikot-root')}
         <button
           onclick="sendBackWikotRootMessage()"
           ${isSending ? 'disabled' : ''}

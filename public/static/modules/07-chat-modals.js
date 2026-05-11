@@ -237,7 +237,7 @@ async function openChannel(channelId) {
   state.chatMessages = [];
   state.chatLastMessageId = null;
   render();
-  // Charger les messages
+  // Charger les messages (loadChannelMessages re-render maintenant la zone après fetch)
   await loadChannelMessages();
   scrollChatToBottom();
   // Marquer comme lu
@@ -264,6 +264,26 @@ async function loadChannelMessages() {
     state.chatMessages = data.messages || [];
     if (state.chatMessages.length > 0) {
       state.chatLastMessageId = state.chatMessages[state.chatMessages.length - 1].id;
+    }
+  }
+  // BUGFIX CRITIQUE : sans ce re-render, le DOM reste sur l'état "Aucun message"
+  // figé par le render() initial de openChannel(), et l'utilisateur devait envoyer
+  // un message pour déclencher le re-render et enfin voir l'historique du salon.
+  // Même symptôme pour le compte B qui ne voyait jamais les messages de A.
+  const zone = document.getElementById('chat-messages-zone');
+  if (zone) {
+    if (state.chatMessages.length === 0) {
+      zone.innerHTML = `
+        <div class="text-center py-12">
+          <div class="w-14 h-14 mx-auto rounded-2xl flex items-center justify-center mb-3" style="background: var(--c-navy);">
+            <i class="fas fa-comment-dots text-xl" style="color: var(--c-gold);"></i>
+          </div>
+          <p class="font-display text-base font-semibold" style="color: var(--c-navy);">Aucun message</p>
+          <p class="text-xs mt-1" style="color: rgba(15,27,40,0.4);">Soyez le premier à écrire dans ce salon.</p>
+        </div>
+      `;
+    } else {
+      zone.innerHTML = state.chatMessages.map((m, i) => renderMessage(m, state.chatMessages[i - 1])).join('');
     }
   }
 }

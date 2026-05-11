@@ -3018,6 +3018,31 @@ RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis. Max 5 blocs.`
     })
   }
 
+  // ============================================
+  // TOOL UNIVERSEL : return_to_root
+  // Dispo pour TOUS les sous-agents Back Wikot (mode max + workflowMode actif).
+  // Permet au sous-agent de rendre la main à l'orchestrateur si la demande utilisateur
+  // change de domaine en plein milieu d'une session.
+  // Le frontend, en recevant action='return_to_root', renvoie le message au router
+  // qui re-dispatchera vers le bon sous-agent.
+  // ============================================
+  if (mode === 'max' && workflowMode) {
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'return_to_root',
+        description: `Rends la main à l'orchestrateur Back Wikot. À utiliser UNIQUEMENT si la demande utilisateur sort clairement du domaine de ce sous-agent (ex : tu es dans 'gerer_procedures' mais l'utilisateur demande maintenant de modifier une information ou de créer une tâche). Tu transmets le message d'origine reformulé pour que l'orchestrateur puisse rediriger vers le bon sous-agent.`,
+        parameters: {
+          type: 'object',
+          properties: {
+            reason: { type: 'string', description: '1 phrase courte expliquant pourquoi tu rends la main (domaine perçu).' },
+            forwarded_message: { type: 'string', description: 'Reformulation 1 phrase du besoin utilisateur à transmettre à l\'orchestrateur.' }
+          },
+          required: ['reason', 'forwarded_message']
+        }
+      }
+    })
+  }
 
   return tools
 }
@@ -3317,6 +3342,146 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   return c.json({ id: r.meta.last_row_id, mode, workflow_mode: workflowMode, target_kind: targetKind, target_id: targetId })
 })
 
+// ============================================
+// POST /api/wikot/router — ORCHESTRATEUR BACK WIKOT (couche méta)
+// ============================================
+// Le user parle à Back Wikot depuis l'écran d'accueil. Le router LLM choisit :
+//   1) enter_workflow(workflow, opening_message)  → ouvre le bon sous-agent
+//   2) respond_directly(reply_text)               → réponse directe (salutation, hors-sujet, méta)
+// Le frontend reçoit la décision et exécute (entrer dans le workflow ou afficher la réponse).
+// Aucune modification des 4 sous-agents Back Wikot existants : c'est une couche par-dessus.
+app.post('/api/wikot/router', authMiddleware, async (c) => {
+  const user = c.get('user')
+  // Rate-limit léger : 30/min comme le POST message standard
+  const rl = await checkRateLimit(c.env, 'wikot_router', `u:${user.id}`, 30, 60)
+  if (!rl.ok) return rateLimitedResponse(c, 60)
+  if (!user.hotel_id) return c.json({ error: 'Aucun hôtel' }, 400)
+  if (!userCanUseMaxMode(user)) {
+    return c.json({ error: 'Back Wikot nécessite des droits d\'édition' }, 403)
+  }
+  const apiKey = c.env.OPENROUTER_API_KEY
+  if (!apiKey) return c.json({ error: 'Wikot indisponible : clé API non configurée' }, 503)
+
+  let body: any = {}
+  try { body = await c.req.json() } catch {}
+  const content = String(body.content || '').trim()
+  if (!content) return c.json({ error: 'Message vide' }, 400)
+
+  // Vérifier quelles permissions le user a (pour ne proposer que les workflows accessibles)
+  const canProc = wikotUserCanEditProcedures(user)
+  const canInf = wikotUserCanEditInfo(user)
+  // Conversations et tâches : pas de permission spécifique → tout user qui passe userCanUseMaxMode
+  const allowedWorkflows: string[] = []
+  if (canProc) allowedWorkflows.push('gerer_procedures')
+  if (canInf) allowedWorkflows.push('gerer_infos')
+  allowedWorkflows.push('gerer_conversations')
+  allowedWorkflows.push('gerer_taches')
+
+  // System prompt orchestrateur : ultra-court, mission précise
+  const hotel = await c.env.DB.prepare('SELECT name FROM hotels WHERE id = ?').bind(user.hotel_id).first() as any
+  const hotelName = hotel?.name || "l'hôtel"
+  const systemPrompt = `Tu es **Back Wikot**, l'assistant d'édition du **${hotelName}** (utilisateur : ${user.name}).
+
+Tu es à l'écran d'accueil. Tu disposes de 4 sous-modes spécialisés :
+- **gerer_procedures** : créer/modifier/supprimer des procédures (manuels, étapes, déclencheurs)
+- **gerer_infos** : créer/modifier/supprimer des informations (codes, horaires, contacts, fiches)
+- **gerer_conversations** : créer/renommer/déplacer/supprimer des groupes & salons de chat
+- **gerer_taches** : créer/modifier/supprimer des tâches récurrentes ou ponctuelles
+
+Sous-modes accessibles à cet utilisateur : ${allowedWorkflows.join(', ')}.
+
+Pour chaque message utilisateur, choisis UN seul outil :
+1. \`enter_workflow(workflow, opening_message)\` : ouvre le sous-mode adapté à la demande. \`opening_message\` = reformulation 1 phrase de la demande, claire et actionnable pour le sous-agent.
+2. \`respond_directly(reply_text)\` : si la demande est une salutation ("salut"), une méta-question ("qui es-tu", "que peux-tu faire"), trop vague ("aide-moi"), ou hors-sujet (météo, blagues). Réponds en 1-2 phrases max.
+
+Règles :
+- Choisis toujours UN outil, jamais zéro, jamais deux.
+- Si plusieurs sous-modes pourraient s'appliquer, prends celui qui correspond à l'ACTION principale demandée.
+- Si l'utilisateur dit "aide-moi", "que peux-tu faire", liste brièvement les 4 sous-modes via \`respond_directly\`.
+- Ne propose JAMAIS un sous-mode non accessible à l'utilisateur (cf. liste ci-dessus).`
+
+  const tools = [
+    {
+      type: 'function',
+      function: {
+        name: 'enter_workflow',
+        description: 'Ouvre un sous-mode spécialisé de Back Wikot avec le message utilisateur comme première instruction.',
+        parameters: {
+          type: 'object',
+          properties: {
+            workflow: { type: 'string', enum: allowedWorkflows },
+            opening_message: { type: 'string', description: 'Reformulation 1 phrase de la demande, claire et actionnable.' }
+          },
+          required: ['workflow', 'opening_message']
+        }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'respond_directly',
+        description: 'Réponse texte directe (salutation, hors-sujet, méta-question, demande trop vague).',
+        parameters: {
+          type: 'object',
+          properties: {
+            reply_text: { type: 'string', description: '1-2 phrases courtes en français.' }
+          },
+          required: ['reply_text']
+        }
+      }
+    }
+  ]
+
+  const messages = [
+    { role: 'system', content: systemPrompt },
+    { role: 'user', content }
+  ]
+
+  let resp
+  try {
+    resp = await callOpenRouter(apiKey, messages, tools)
+  } catch (e: any) {
+    console.error('[wikot:router] openrouter_error msg=' + e.message)
+    return c.json({ error: 'Erreur Back Wikot : ' + e.message }, 500)
+  }
+
+  const choice = resp.choices?.[0]
+  const msg = choice?.message
+  const call = msg?.tool_calls?.[0]
+
+  // Fallback ultime si rien de structuré : on renvoie le texte libre éventuel
+  if (!call) {
+    const fallback = (msg?.content || '').trim() || "Peux-tu reformuler ta demande ? Je peux gérer les procédures, infos, conversations ou tâches."
+    console.log('[wikot:router] no_tool_call fallback_len=' + fallback.length)
+    return c.json({ action: 'respond', reply_text: fallback })
+  }
+
+  let args: any = {}
+  try { args = JSON.parse(call.function?.arguments || '{}') } catch {}
+
+  if (call.function?.name === 'enter_workflow') {
+    const wf = String(args.workflow || '')
+    const openingMessage = String(args.opening_message || content).trim().slice(0, 500)
+    if (!allowedWorkflows.includes(wf)) {
+      console.log('[wikot:router] invalid_workflow=' + wf)
+      return c.json({ action: 'respond', reply_text: "Je n'ai pas accès à ce sous-mode. Reformule ta demande." })
+    }
+    console.log('[wikot:router] enter_workflow=' + wf + ' opening_len=' + openingMessage.length)
+    return c.json({ action: 'enter_workflow', workflow: wf, opening_message: openingMessage })
+  }
+
+  if (call.function?.name === 'respond_directly') {
+    const replyText = String(args.reply_text || '').trim().slice(0, 400)
+    if (!replyText) {
+      return c.json({ action: 'respond', reply_text: "Peux-tu reformuler ? Je gère procédures, infos, conversations et tâches." })
+    }
+    console.log('[wikot:router] respond_directly len=' + replyText.length)
+    return c.json({ action: 'respond', reply_text: replyText })
+  }
+
+  return c.json({ action: 'respond', reply_text: "Peux-tu reformuler ta demande ?" })
+})
+
 // GET détail d'une conversation
 // STATELESS : on n'enregistre plus la mémoire des messages → messages: [].
 // On retourne toujours les pending_actions (workflow Back Wikot) qui restent persistées.
@@ -3484,6 +3649,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   let assistantText = ''
   let lastToolCalls: any[] | null = null
   let selectAnswerCalled = false
+  // Back Wikot — payload de remontée à l'orchestrateur (tool return_to_root).
+  // Si non-null à la fin de la boucle, le frontend re-dispatchera via /api/wikot/router.
+  let returnToRootPayload: { reason: string; forwarded_message: string } | null = null
   // Mode max (Back Wikot) : patches de formulaire à appliquer côté UI.
   // Chaque appel à update_form ajoute un patch ; le frontend mergera dans l'ordre.
   const formPatches: any[] = []
@@ -3717,6 +3885,21 @@ Ne fais aucun autre appel d'outil. Choisis UN seul outil.`
         console.log('[wikot] tool=select_answer blocks=' + selectedBlocks.length + ' kinds=' + selectedBlocks.map(b => b.type).join(',') + ' reply_text_len=' + replyText.length)
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, count: selectedBlocks.length, has_reply_text: replyText.length > 0 }) })
         stopAfterThisIter = true
+      }
+      // === BACK WIKOT — return_to_root === le sous-agent rend la main à l'orchestrateur
+      // Le frontend (en voyant return_to_root_payload dans la réponse) renverra le forwarded_message
+      // au POST /api/wikot/router qui re-dispatchera vers le bon sous-agent.
+      else if (fnName === 'return_to_root') {
+        const reason = String(fnArgs.reason || '').trim().slice(0, 200)
+        const forwarded = String(fnArgs.forwarded_message || '').trim().slice(0, 500)
+        if (forwarded) {
+          returnToRootPayload = { reason, forwarded_message: forwarded }
+          console.log('[wikot] tool=return_to_root reason="' + reason.slice(0, 80) + '" forwarded_len=' + forwarded.length)
+          oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true }) })
+          stopAfterThisIter = true
+        } else {
+          oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: false, error: 'forwarded_message manquant' }) })
+        }
       }
       // === MODE MAX (Back Wikot) : update_form === l'IA écrit dans le formulaire UI
       else if (fnName === 'update_form') {
@@ -4598,7 +4781,10 @@ Ne fais aucun autre appel d'outil. Choisis UN seul outil.`
     // Le frontend applique ces patches sur le formulaire visible à l'utilisateur.
     // On expose sous deux noms pour compat (form_patches historique + form_updates utilisé par le nouveau front).
     form_patches: formPatches,
-    form_updates: formPatches
+    form_updates: formPatches,
+    // Back Wikot : si le sous-agent a appelé return_to_root, le frontend re-dispatchera
+    // au router avec le forwarded_message pour rediriger vers le bon sous-agent.
+    return_to_root: returnToRootPayload
   })
 })
 

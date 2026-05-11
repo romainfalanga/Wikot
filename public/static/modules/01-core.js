@@ -68,7 +68,13 @@ let state = {
   backWikotSaving: false,
   // cache pour la liste des cibles à modifier
   backWikotProceduresCache: null,
-  backWikotInfoCache: null
+  backWikotInfoCache: null,
+  // Back Wikot ROOT — conversation directe sur l'écran d'accueil (orchestrateur)
+  // L'utilisateur peut écrire directement à Back Wikot qui décide :
+  //  - de répondre directement (action='respond')
+  //  - d'entrer dans un sous-workflow (action='enter_workflow')
+  backWikotRootMessages: [],   // [{role:'user'|'assistant', content, ts}]
+  backWikotRootSending: false
 };
 
 // ============================================

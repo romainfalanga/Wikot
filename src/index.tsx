@@ -1718,7 +1718,10 @@ app.get('/api/chat/channels/:id/messages', authMiddleware, async (c) => {
   const after = c.req.query('after') // ID du dernier message connu pour le polling
 
   const channel = await c.env.DB.prepare('SELECT hotel_id, name, description, icon, group_id FROM chat_channels WHERE id = ?').bind(id).first() as any
-  if (!channel || channel.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+  if (!channel || channel.hotel_id !== user.hotel_id) {
+    console.log('[chat:get] FORBIDDEN user=' + user.id + ' channel=' + id + ' channel_hotel=' + (channel?.hotel_id ?? 'null') + ' user_hotel=' + user.hotel_id)
+    return c.json({ error: 'Non autorisé' }, 403)
+  }
 
   let query = `SELECT m.*, u.name as user_name, u.role as user_role, u.can_edit_procedures as user_can_edit
     FROM chat_messages m
@@ -1734,8 +1737,12 @@ app.get('/api/chat/channels/:id/messages', authMiddleware, async (c) => {
   query += ' ORDER BY m.created_at ASC, m.id ASC LIMIT 200'
 
   const messages = await c.env.DB.prepare(query).bind(...params).all()
+  const rows = messages.results as any[]
+  // DIAG : on log aussi le COUNT brut sans WHERE après pour différencier "vraiment vide" vs "vide à cause du after"
+  const totalCount = await c.env.DB.prepare('SELECT COUNT(*) as c, MAX(id) as max_id FROM chat_messages WHERE channel_id = ?').bind(id).first() as any
+  console.log('[chat:get] user=' + user.id + ' channel=' + id + ' after=' + (after || 'null') + ' returned=' + rows.length + ' total_in_channel=' + (totalCount?.c ?? 0) + ' max_id=' + (totalCount?.max_id ?? 0))
 
-  return c.json({ channel, messages: messages.results })
+  return c.json({ channel, messages: rows })
 })
 
 // POST /api/chat/channels/:id/messages — Envoyer un message
@@ -1751,9 +1758,12 @@ app.post('/api/chat/channels/:id/messages', authMiddleware, async (c) => {
   const channel = await c.env.DB.prepare('SELECT hotel_id FROM chat_channels WHERE id = ?').bind(id).first() as any
   if (!channel || channel.hotel_id !== user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
 
+  // hotel_id est dénormalisé sur chat_messages pour permettre des requêtes WHERE m.hotel_id = ?
+  // (utilisé par Wikot search_messages, recherche globale, etc.)
   const result = await c.env.DB.prepare(
-    'INSERT INTO chat_messages (channel_id, user_id, content) VALUES (?, ?, ?)'
-  ).bind(id, user.id, content.trim()).run()
+    'INSERT INTO chat_messages (channel_id, user_id, content, hotel_id) VALUES (?, ?, ?, ?)'
+  ).bind(id, user.id, content.trim(), user.hotel_id).run()
+  console.log('[chat:post] user=' + user.id + ' channel=' + id + ' new_msg_id=' + result.meta.last_row_id + ' hotel=' + user.hotel_id)
 
   // L'auteur a forcément lu son propre message → mettre à jour son chat_reads
   await c.env.DB.prepare(`

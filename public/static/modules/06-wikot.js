@@ -366,13 +366,40 @@ function renderWikotMessage(msg, mode) {
   const actionsForMsg = actionsArr.filter(a => a.message_id === msg.id);
   const cfg = WIKOT_MODE_CONFIG[mode] || WIKOT_MODE_CONFIG.standard;
 
-  // MODE STANDARD (Wikot) — texte de réponse EN HAUT puis 1..N cartes (procédure, info, message, tâche…)
+  // MODE STANDARD (Wikot) — bulle texte courte (reply_text) + 0..N cartes
+  // Garanties anti-bulle-vide :
+  //   1. Si reply_text + cartes utiles → on affiche les deux
+  //   2. Si reply_text seul → on affiche le texte
+  //   3. Si cartes utiles seules → on affiche les cartes (rare, fallback de transition)
+  //   4. Si RIEN → on affiche un message par défaut pour ne jamais avoir de bulle vide
   if (mode === 'standard') {
     const replyText = (msg.content || '').trim();
+    // Cartes "visibles" : on filtre les none (texte fait le job) tout en gardant tout le reste
+    const visibleCards = answerCards.filter(c => c && c.kind && c.kind !== 'none');
     const hasReply = replyText.length > 0;
-    const cardsHtml = answerCards.length > 0
-      ? answerCards.map(c => renderWikotAnswerCard(c)).join('')
-      : renderWikotAnswerCard(null);
+    const hasVisibleCards = visibleCards.length > 0;
+
+    // Construction du contenu visible
+    let bubbleHtml = '';
+    if (hasReply) {
+      bubbleHtml = `
+        <div class="rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm leading-relaxed" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04); color: var(--c-navy);">
+          ${formatWikotContent(replyText)}
+        </div>
+      `;
+    } else if (!hasVisibleCards) {
+      // Filet ultime côté front : aucune donnée → on affiche un message lisible
+      bubbleHtml = `
+        <div class="rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm leading-relaxed" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04); color: var(--c-navy);">
+          Je n'ai pas trouvé de réponse précise. Peux-tu reformuler ta question ?
+        </div>
+      `;
+    }
+
+    const cardsHtml = hasVisibleCards
+      ? visibleCards.map(c => renderWikotAnswerCard(c)).join('')
+      : '';
+
     return `
       <div class="flex justify-start mb-4">
         <div class="flex gap-2 max-w-[95%] sm:max-w-[85%] w-full">
@@ -380,11 +407,7 @@ function renderWikotMessage(msg, mode) {
             <i class="fas ${cfg.icon}"></i>
           </div>
           <div class="flex-1 min-w-0 space-y-2">
-            ${hasReply ? `
-              <div class="rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm leading-relaxed" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04); color: var(--c-navy);">
-                ${formatWikotContent(replyText)}
-              </div>
-            ` : ''}
+            ${bubbleHtml}
             ${cardsHtml}
           </div>
         </div>
@@ -428,11 +451,20 @@ function renderWikotMessage(msg, mode) {
 //   - not_found        : message préfait "aucune information ni procédure ne correspond"
 function renderWikotAnswerCard(card) {
   if (!card || card.kind === 'not_found') {
+    // Bloc 4 : not_found typé. Si le serveur a fourni title/subtitle, on les utilise (carte spécifique
+    // au type de bloc disparu : message supprimé, tâche introuvable, etc.). Sinon, fallback générique.
+    const title = (card && card.title) || "Aucune information ni procédure ne correspond à ta demande.";
+    const subtitle = (card && card.subtitle) || "Essaie de reformuler ta question, ou contacte un responsable si le sujet n'est pas encore documenté.";
+    const icon = (card && card.requested_type === 'chat_message') ? 'fa-comment-slash'
+               : (card && card.requested_type === 'task') ? 'fa-square-xmark'
+               : (card && (card.requested_type === 'procedure' || card.requested_type === 'procedure_step')) ? 'fa-sitemap'
+               : (card && (card.requested_type === 'info_item' || card.requested_type === 'info_category')) ? 'fa-circle-info'
+               : 'fa-circle-question';
     return `
       <div class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-2xl px-4 py-5 text-center">
-        <i class="fas fa-circle-question text-3xl text-gray-400 mb-2"></i>
-        <p class="text-sm font-semibold text-navy-700">Aucune information ni procédure ne correspond à ta demande.</p>
-        <p class="text-xs text-navy-500 mt-1.5">Essaie de reformuler ta question, ou contacte un responsable si le sujet n'est pas encore documenté.</p>
+        <i class="fas ${icon} text-3xl text-gray-400 mb-2"></i>
+        <p class="text-sm font-semibold text-navy-700">${escapeHtml(title)}</p>
+        <p class="text-xs text-navy-500 mt-1.5">${escapeHtml(subtitle)}</p>
       </div>
     `;
   }

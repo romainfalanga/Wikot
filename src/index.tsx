@@ -2160,7 +2160,7 @@ Tu reçois une question d'employé. Tu cherches la réponse dans les **4 univers
 3. **Conversations** (messages du chat interne)
 4. **Tâches** (récurrentes ou ponctuelles, assignées ou non)
 
-Tu retournes 1 à 5 blocs pertinents via \`select_answer\`. **Tu NE rédiges JAMAIS de texte de réponse.** L'interface affiche directement les cartes des ressources sélectionnées.
+Tu retournes 0 à 5 blocs pertinents via \`select_answer\`, accompagnés d'un \`reply_text\` court (1-2 phrases max) qui oriente l'employé. Le \`reply_text\` est **obligatoire** quand aucune carte ne correspond, **optionnel** quand les cartes parlent d'elles-mêmes.
 
 ## Contexte utilisateur
 - ID utilisateur courant : **${user.id}** (déjà résolu — n'appelle PAS \`list_employees\` pour te trouver)
@@ -2202,7 +2202,9 @@ Les "shortcuts" résolvent les questions perso fréquentes en 1 SEUL appel (iden
 - \`{type:"none"}\` → SEUL, quand rien ne correspond ou question hors-sujet
 
 ## Règles ABSOLUES
-- **AUCUN texte libre.** Le seul output produit est l'appel à \`select_answer\`. Pas de politesse, pas d'introduction.
+- **TOUJOURS terminer par \`select_answer\`.** Jamais de texte libre en dehors de \`reply_text\`.
+- **\`reply_text\` = 1 à 2 phrases COURTES max.** Pas de salutations, pas de remplissage. Va droit au but. Exemples valides : "Voici la procédure de check-in." / "Aucune procédure ne couvre ce cas, mais cette info s'en rapproche." / "Tu n'as aucun message qui t'est destiné aujourd'hui." / "Je n'ai rien trouvé sur ce sujet, peux-tu reformuler ?"
+- **\`reply_text\` OBLIGATOIRE si \`blocks\` est vide ou \`[{type:"none"}]\`** (sinon la bulle de réponse serait vide).
 - **PLUSIEURS BLOCS si pertinent.** Exemples :
   - « Quelles sont mes tâches aujourd'hui ? » → 1 bloc \`task\` par tâche assignée (max 5).
   - « Quels messages m'ont été destinés récemment ? » → 1 bloc \`chat_message\` par message pertinent.
@@ -2667,38 +2669,46 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
       type: 'function',
       function: {
         name: 'select_answer',
-        description: `Sélectionne UN OU PLUSIEURS blocs de réponse à afficher à l'utilisateur. UTILISE-LE OBLIGATOIREMENT à la fin de chaque question, jamais de texte libre.
+        description: `Finalise ta réponse à l'utilisateur. UTILISE-LE OBLIGATOIREMENT à la fin de chaque question.
 
-Tu passes un tableau "blocks" : 1 bloc si une seule ressource répond, plusieurs blocs si la question demande plusieurs éléments (ex : "quelles sont mes tâches pour aujourd'hui" → plusieurs blocs task).
+Tu passes :
+- "blocks" : tableau de 0 à 5 cartes (procédure, info, message, tâche…). Vide si aucune ressource pertinente.
+- "reply_text" (FACULTATIF si blocks > 0, OBLIGATOIRE si blocks vide ou [{type:"none"}]) : 1 à 2 phrases courtes en français qui introduisent ou complètent la réponse. Style direct, naturel, oral léger. PAS de salutation type "Bonjour !". PAS de phrase générique vide.
 
-Types de blocs disponibles :
+Quand utiliser reply_text :
+- TOUJOURS quand blocks est vide ou {type:"none"} : explique en 1 phrase pourquoi tu n'as pas trouvé ou réponds directement à la question (ex: "Je n'ai trouvé aucune info sur le Wi-Fi dans la base.").
+- TOUJOURS pour saluer / répondre aux questions hors-sujet (ex: "Salut Romain ! Pose-moi une question sur les procédures, infos, tâches ou conversations de l'hôtel.").
+- OPTIONNEL en complément d'une carte si tu veux contextualiser (ex: "Voici la procédure check-in :" + bloc procedure).
+
+Types de blocs :
 - {type:"procedure", id} : procédure entière
-- {type:"procedure_step", procedure_id, step_number} : UNE étape précise (ou sa sous-procédure liée)
+- {type:"procedure_step", procedure_id, step_number} : UNE étape précise
 - {type:"info_item", id} : UNE information
 - {type:"info_category", id} : TOUT un thème d'infos
-- {type:"chat_message", id} : UN message du chat (utile pour "qui a dit X", "dernier message qui m'est destiné")
-- {type:"task", task_kind, id} : UNE tâche (task_kind = "template" pour récurrentes ou "instance" pour ponctuelles)
-- {type:"none"} : utilisé SEUL, quand aucune ressource ne correspond ou question hors-sujet.
+- {type:"chat_message", id} : UN message du chat
+- {type:"task", task_kind, id} : UNE tâche (task_kind = "template" ou "instance")
+- {type:"none"} : SEUL, quand aucune ressource ne correspond → nécessite obligatoirement reply_text.
 
-RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis qui répond. Tableau "blocks" : 1 à 5 blocs max. Si tu mets "none", c'est le seul bloc autorisé.`,
+RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis. Max 5 blocs.`,
         parameters: {
           type: 'object',
           properties: {
             blocks: {
               type: 'array',
-              description: 'Tableau de 1 à 5 blocs. Si type=none, mettre 1 seul bloc.',
+              description: 'Tableau de 0 à 5 blocs. Vide si aucune carte pertinente (alors reply_text obligatoire).',
               items: {
                 type: 'object',
                 properties: {
                   type: { type: 'string', enum: ['procedure', 'procedure_step', 'info_item', 'info_category', 'chat_message', 'task', 'none'] },
-                  id: { type: 'integer', description: 'ID de la ressource (procedure/info_item/info_category/chat_message/task)' },
+                  id: { type: 'integer', description: 'ID de la ressource' },
                   procedure_id: { type: 'integer', description: '[procedure_step] ID de la procédure parente' },
                   step_number: { type: 'integer', description: '[procedure_step] numéro de l\'étape' },
                   task_kind: { type: 'string', enum: ['template', 'instance'], description: '[task] template ou instance' }
                 },
                 required: ['type']
               }
-            }
+            },
+            reply_text: { type: 'string', description: '1-2 phrases courtes en français. OBLIGATOIRE si blocks vide / [{type:"none"}], optionnel sinon.' }
           },
           required: ['blocks']
         }
@@ -3460,18 +3470,163 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     task_kind?: 'template' | 'instance'
   }
   let selectedBlocks: SelectedBlock[] = []
+  let replyText = '' // Texte court (1-2 phrases) renvoyé par Wikot via select_answer.reply_text
   let assistantText = ''
   let lastToolCalls: any[] | null = null
+  let selectAnswerCalled = false
   // Mode max (Back Wikot) : patches de formulaire à appliquer côté UI.
   // Chaque appel à update_form ajoute un patch ; le frontend mergera dans l'ordre.
   const formPatches: any[] = []
 
-  for (let iter = 0; iter < 5; iter++) {
+  // ============================================
+  // BLOC 2 : ORCHESTRATEUR (mode standard uniquement)
+  // 1er appel LLM ultra-court qui décide :
+  //   - quick_answer(reply_text)        → réponse directe (salutation, hors-sujet, méta-question)
+  //   - dispatch_to_expert(domain, …)   → on entre dans la boucle avec outils filtrés au domaine
+  //   - (rien)                          → fallback : tous les outils (comportement actuel)
+  // Avantages : moins d'outils dans le contexte de l'expert = décisions plus rapides et plus précises,
+  // et un raccourci complet pour les cas "Salut" / "Tu fais quoi" qui ne nécessitent aucune recherche.
+  // ============================================
+  let scopedTools = tools
+  let orchestratorDomain: 'procedures' | 'infos' | 'conversations' | 'tasks' | 'mixed' | null = null
+  let orchestratorSkipLoop = false
+
+  if (mode === 'standard') {
+    const orchestratorTools = [
+      {
+        type: 'function',
+        function: {
+          name: 'dispatch_to_expert',
+          description: `Achemine la question vers UN expert (ou "mixed" si la question couvre plusieurs domaines). Utilise ceci si la question demande une recherche dans la base de l'hôtel.
+- "procedures" : manuels opérationnels, étapes, comment-faire ("comment je fais un check-in ?")
+- "infos" : données factuelles de l'hôtel (codes, horaires, contacts, lieux, équipements)
+- "conversations" : recherche dans les messages du chat (qui a dit quoi, mentions, messages destinés à moi)
+- "tasks" : tâches récurrentes ou ponctuelles ("ma prochaine tâche", "qui doit faire X ?")
+- "mixed" : la question recoupe plusieurs domaines, l'expert généraliste répondra.`,
+          parameters: {
+            type: 'object',
+            properties: {
+              domain: { type: 'string', enum: ['procedures', 'infos', 'conversations', 'tasks', 'mixed'] },
+              refined_query: { type: 'string', description: 'Reformulation 1 phrase de la question pour l\'expert (facultatif).' }
+            },
+            required: ['domain']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'quick_answer',
+          description: `Réponds directement quand AUCUNE recherche dans la base n'est nécessaire : salutation ("salut", "merci"), méta-question ("tu fais quoi", "qui es-tu"), hors-sujet, question impossible à interpréter. Donne 1 à 2 phrases courtes en français.`,
+          parameters: {
+            type: 'object',
+            properties: {
+              reply_text: { type: 'string', description: '1-2 phrases courtes en français.' }
+            },
+            required: ['reply_text']
+          }
+        }
+      }
+    ]
+    const orchestratorSystem = `Tu es l'**orchestrateur** de Wikot, l'assistant interne du **${hotel?.name || "l'hôtel"}**.
+
+Ta SEULE mission : décider en 1 appel d'outil.
+
+Tu reçois la dernière question de **${user.name}** (id ${user.id}). Choisis :
+
+1) \`quick_answer(reply_text)\` si la question est :
+   - une salutation / remerciement / fin de conversation ("salut", "merci", "bonne journée")
+   - une méta-question sur toi ("qui es-tu", "tu fais quoi", "que peux-tu faire")
+   - clairement hors-sujet (météo, blagues, infos non liées à l'hôtel)
+   - inintelligible (vide, juste de la ponctuation)
+
+2) \`dispatch_to_expert(domain)\` sinon, avec le domaine PRIORITAIRE :
+   - **procedures** : "comment je fais", "procédure de…", "étapes du check-in"
+   - **infos** : "code wifi", "horaire piscine", "adresse de l'hôtel", "qui est le directeur"
+   - **conversations** : "dernier message", "qui m'a écrit", "qu'a dit X", contient "message", "chat"
+   - **tasks** : "mes tâches", "prochaine tâche", "qui doit faire", "à faire aujourd'hui"
+   - **mixed** : si tu hésites entre 2 domaines (ex : "quelle est la procédure ET les infos sur X")
+
+Ne fais aucun autre appel d'outil. Choisis UN seul outil.`
+
+    // On ne donne à l'orchestrateur que les 1-2 derniers messages utilisateur pour minimiser le coût.
+    const lastUserMsgs = oaiMessages.filter(m => m.role === 'user').slice(-1)
+    const orchestratorMessages: any[] = [
+      { role: 'system', content: orchestratorSystem },
+      ...lastUserMsgs.map(m => ({
+        role: 'user',
+        content: typeof m.content === 'string'
+          ? m.content
+          : (Array.isArray(m.content) ? m.content : String(m.content || ''))
+      }))
+    ]
+    try {
+      const orchResp = await callOpenRouter(apiKey, orchestratorMessages, orchestratorTools)
+      const orchChoice = orchResp.choices?.[0]
+      const orchMsg = orchChoice?.message
+      const orchCall = orchMsg?.tool_calls?.[0]
+      if (orchCall?.function?.name === 'quick_answer') {
+        let orchArgs: any = {}
+        try { orchArgs = JSON.parse(orchCall.function?.arguments || '{}') } catch {}
+        const rt = typeof orchArgs.reply_text === 'string' ? orchArgs.reply_text.trim().slice(0, 400) : ''
+        if (rt) {
+          replyText = rt
+          selectedBlocks = [{ type: 'none' }]
+          selectAnswerCalled = true
+          orchestratorSkipLoop = true
+          console.log('[wikot] orchestrator quick_answer reply_text_len=' + rt.length)
+        }
+      } else if (orchCall?.function?.name === 'dispatch_to_expert') {
+        let orchArgs: any = {}
+        try { orchArgs = JSON.parse(orchCall.function?.arguments || '{}') } catch {}
+        const d = String(orchArgs.domain || '').toLowerCase()
+        if (['procedures', 'infos', 'conversations', 'tasks', 'mixed'].includes(d)) {
+          orchestratorDomain = d as any
+          console.log('[wikot] orchestrator dispatch=' + d + ' refined="' + (orchArgs.refined_query || '').slice(0, 80) + '"')
+        }
+      } else {
+        console.log('[wikot] orchestrator no_call content="' + String(orchMsg?.content || '').slice(0, 80) + '"')
+      }
+    } catch (e: any) {
+      // Si l'orchestrateur échoue, on continue avec tous les outils (comportement actuel).
+      console.log('[wikot] orchestrator_error msg=' + (e?.message || 'unknown'))
+    }
+
+    // Si on a un domaine, on filtre les outils donnés à l'expert (mais on garde toujours select_answer).
+    if (orchestratorDomain) {
+      // Mapping domaine → noms de tools autorisés (en plus de select_answer toujours dispo)
+      const allowByDomain: Record<string, string[]> = {
+        procedures: ['search_procedures', 'search_procedure_steps', 'get_procedure', 'list_categories'],
+        infos: ['search_hotel_info', 'list_info_categories', 'get_hotel_info_item'],
+        conversations: ['get_messages_for_me', 'get_my_recent_messages', 'get_latest_messages', 'search_messages', 'list_groups', 'list_employees'],
+        tasks: ['get_my_tasks', 'search_tasks', 'list_employees'],
+        mixed: [] // mixed = tous les outils restent
+      }
+      const allowed = allowByDomain[orchestratorDomain] || []
+      if (orchestratorDomain !== 'mixed' && allowed.length > 0) {
+        scopedTools = tools.filter((t: any) => {
+          const n = t?.function?.name
+          return n === 'select_answer' || allowed.includes(n)
+        })
+        // Mini-prompt expert injecté en message system additionnel
+        const expertHints: Record<string, string> = {
+          procedures: "Tu es l'expert **Procédures**. Cherche dans procedures / steps. Préfère `procedure_step` si la question est très précise, sinon `procedure`. Termine par `select_answer`.",
+          infos: "Tu es l'expert **Informations**. Cherche dans hotel_info_items et hotel_info_categories. Préfère `info_item` (précis) ou `info_category` (thème). Termine par `select_answer`.",
+          conversations: "Tu es l'expert **Conversations**. Préfère les shortcuts (`get_messages_for_me`, `get_my_recent_messages`) avant `search_messages`. Renvoie des `chat_message`. Termine par `select_answer`.",
+          tasks: "Tu es l'expert **Tâches**. Préfère `get_my_tasks` si la question concerne l'utilisateur courant. Sinon `search_tasks`. Renvoie des `task`. Termine par `select_answer`."
+        }
+        oaiMessages.push({ role: 'system', content: expertHints[orchestratorDomain] || '' })
+      }
+    }
+  }
+
+  // Si l'orchestrateur a déjà répondu (quick_answer), on saute toute la boucle.
+  for (let iter = 0; iter < (orchestratorSkipLoop ? 0 : 5); iter++) {
     let response
     try {
-      response = await callOpenRouter(apiKey, oaiMessages, tools)
+      response = await callOpenRouter(apiKey, oaiMessages, scopedTools)
     } catch (e: any) {
-      console.error('OpenRouter error:', e.message)
+      console.error('[wikot] openrouter_error iter=' + iter + ' msg=' + e.message)
       return c.json({ error: 'Erreur Wikot : ' + e.message }, 500)
     }
 
@@ -3479,14 +3634,16 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     if (!choice) return c.json({ error: 'Réponse Wikot vide' }, 500)
     const msg = choice.message
 
-    // Cas 1 : pas de tool_calls → réponse finale
+    // Cas 1 : pas de tool_calls → réponse finale (texte libre du modèle)
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
       assistantText = msg.content || ''
+      console.log('[wikot] iter=' + iter + ' no_tool_calls text_len=' + assistantText.length)
       break
     }
 
     // Cas 2 : tool_calls présents → exécuter chaque tool
     lastToolCalls = msg.tool_calls
+    console.log('[wikot] iter=' + iter + ' tool_calls=' + msg.tool_calls.map((t: any) => t.function?.name).join(','))
     oaiMessages.push({ role: 'assistant', content: msg.content || '', tool_calls: msg.tool_calls })
 
     let stopAfterThisIter = false
@@ -3542,7 +3699,13 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
           else if (t === 'none') { out.length = 0; out.push({ type: 'none' }); break }
         }
         selectedBlocks = out.length > 0 ? out : [{ type: 'none' }]
-        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, count: selectedBlocks.length }) })
+        // Capture du texte court éventuel (1-2 phrases). Tronqué à 400 chars pour rester court.
+        if (typeof fnArgs.reply_text === 'string') {
+          replyText = String(fnArgs.reply_text).trim().slice(0, 400)
+        }
+        selectAnswerCalled = true
+        console.log('[wikot] tool=select_answer blocks=' + selectedBlocks.length + ' kinds=' + selectedBlocks.map(b => b.type).join(',') + ' reply_text_len=' + replyText.length)
+        oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, count: selectedBlocks.length, has_reply_text: replyText.length > 0 }) })
         stopAfterThisIter = true
       }
       // === MODE MAX (Back Wikot) : update_form === l'IA écrit dans le formulaire UI
@@ -4087,6 +4250,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     if (stopAfterThisIter) break
   }
 
+  // Log de sortie de boucle (avant construction finale)
+  console.log('[wikot] loop_done mode=' + mode + ' select_answer_called=' + selectAnswerCalled + ' reply_text_len=' + replyText.length + ' selected_blocks=' + selectedBlocks.length + ' seen_procs=' + seenProcedureIds.size + ' seen_infos=' + seenInfoItemIds.size)
+
   // ============================================
   // MODE STANDARD : on construit le TABLEAU answer_cards à partir de selectedBlocks
   // (Wikot peut renvoyer 1 à 5 blocs : procédure, étape, info, catégorie, message, tâche, none)
@@ -4105,7 +4271,22 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
     }
 
     for (const block of selectedBlocks) {
-      let card: any = { kind: 'not_found' }
+      // Par défaut : not_found typé selon le type de bloc demandé (Bloc 4)
+      // Permet d'expliquer à l'utilisateur POURQUOI rien ne s'affiche (message supprimé, tâche introuvable…)
+      let card: any = { kind: 'not_found', requested_type: block.type }
+      if (block.type === 'chat_message') {
+        card.title = 'Message introuvable'
+        card.subtitle = "Le message a peut-être été supprimé."
+      } else if (block.type === 'task') {
+        card.title = 'Tâche introuvable'
+        card.subtitle = "Cette tâche a peut-être été supprimée ou modifiée."
+      } else if (block.type === 'procedure' || block.type === 'procedure_step') {
+        card.title = 'Procédure introuvable'
+        card.subtitle = "Cette procédure n'existe plus ou a été renommée."
+      } else if (block.type === 'info_item' || block.type === 'info_category') {
+        card.title = 'Information introuvable'
+        card.subtitle = "Cette information n'existe plus dans le wiki de l'hôtel."
+      }
 
       if (block.type === 'procedure' && block.id) {
         const p = await c.env.DB.prepare(`
@@ -4302,8 +4483,22 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
       answerCards.push(card)
     }
 
-    // En mode standard, on n'utilise PAS le texte libre du modèle (zéro texte libre)
-    assistantText = ''
+    // En mode standard : assistantText = reply_text capturé via select_answer.
+    // Si replyText est vide ET qu'il n'y a aucune carte exploitable (none uniquement),
+    // on injecte un fallback ultime pour ne JAMAIS renvoyer une bulle vide.
+    assistantText = replyText
+    const hasOnlyNone = selectedBlocks.length === 1 && selectedBlocks[0].type === 'none'
+    if (!assistantText) {
+      if (hasOnlyNone) {
+        assistantText = selectAnswerCalled
+          ? "Je n'ai rien trouvé qui réponde précisément à ta question. Peux-tu reformuler ou donner plus de contexte ?"
+          : "Je n'ai pas réussi à formuler une réponse. Peux-tu reformuler ta question ?"
+      } else if (!selectAnswerCalled) {
+        // Cas pathologique : on a des cartes via filet de sécurité mais pas de reply_text.
+        assistantText = "Voici ce que j'ai trouvé qui pourrait correspondre :"
+      }
+    }
+    console.log('[wikot] final mode=standard reply_text_len=' + assistantText.length + ' cards=' + selectedBlocks.length + ' select_answer_called=' + selectAnswerCalled)
   }
 
   // ============================================

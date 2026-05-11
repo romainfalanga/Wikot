@@ -69,12 +69,14 @@ let state = {
   // cache pour la liste des cibles à modifier
   backWikotProceduresCache: null,
   backWikotInfoCache: null,
-  // Back Wikot ROOT — conversation directe sur l'écran d'accueil (orchestrateur)
-  // L'utilisateur peut écrire directement à Back Wikot qui décide :
-  //  - de répondre directement (action='respond')
-  //  - d'entrer dans un sous-workflow (action='enter_workflow')
-  backWikotRootMessages: [],   // [{role:'user'|'assistant', content, ts}]
-  backWikotRootSending: false
+  // Back Wikot ROOT — conversation persistante avec l'orchestrateur (panneau latéral / drawer)
+  // L'utilisateur peut écrire en permanence à Back Wikot qui pilote l'UI en autonomie :
+  //  - exécute une SÉQUENCE d'actions (respond, enter_workflow, start_create, select_*, prefill_form, ask_followup, back_to_home)
+  //  - réutilise toutes les fonctions UI existantes (zéro régression)
+  backWikotRootMessages: [],         // [{role:'user'|'assistant', content, ts, _system?}]
+  backWikotRootSending: false,
+  backWikotChatDrawerOpen: false,    // état du drawer mobile/tablette
+  backWikotChatUnread: 0             // compteur de messages non lus (badge bouton flottant)
 };
 
 // ============================================

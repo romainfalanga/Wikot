@@ -205,14 +205,14 @@ async function sendWikotMessage(mode) {
 }
 
 // ============================================
-// BACK WIKOT ROOT — Conversation directe avec l'orchestrateur (écran d'accueil)
+// BACK WIKOT ROOT — Conversation persistante + pilotage UI multi-tools
 // ============================================
-// L'utilisateur écrit directement à Back Wikot depuis l'écran d'accueil.
-// Le backend /api/wikot/router décide :
-//   - action='respond' → on affiche la réponse texte
-//   - action='enter_workflow' → on entre dans le sous-workflow + on auto-envoie l'opening_message
+// L'utilisateur écrit à Back Wikot depuis n'importe quelle vue Back Wikot.
+// Le backend /api/wikot/router renvoie une SÉQUENCE d'actions (actions[])
+// que l'on exécute côté frontend en réutilisant toutes les fonctions UI existantes.
+// Outils possibles : respond_directly, enter_workflow, start_create,
+// select_procedure, select_info, select_task, prefill_form, ask_followup, back_to_home.
 async function sendBackWikotRootMessage(forwardedText) {
-  // Si pas de texte forwardé (utilisation directe depuis input), on lit l'input.
   let content = '';
   if (typeof forwardedText === 'string' && forwardedText.trim()) {
     content = forwardedText.trim();
@@ -233,11 +233,24 @@ async function sendBackWikotRootMessage(forwardedText) {
   render();
   scrollBackWikotRootToBottom();
 
+  // Snapshot UI pour que l'orchestrateur sache où on est
+  const uiContext = {
+    step: state.backWikotStep || 'home',
+    workflow_mode: state.backWikotWorkflowMode || null,
+    form: state.backWikotForm ? JSON.parse(JSON.stringify(state.backWikotForm)) : null
+  };
+
+  // Historique conv pour contexte (jusqu'à 8 derniers messages)
+  const history = state.backWikotRootMessages
+    .slice(-9, -1)   // tous sauf le dernier user qu'on vient de pousser
+    .filter(m => !m._system)
+    .map(m => ({ role: m.role, content: String(m.content || '').slice(0, 800) }));
+
   let data;
   try {
     data = await api('/wikot/router', {
       method: 'POST',
-      body: JSON.stringify({ content })
+      body: JSON.stringify({ content, ui_context: uiContext, history })
     });
   } catch (e) {
     data = null;
@@ -245,7 +258,7 @@ async function sendBackWikotRootMessage(forwardedText) {
 
   state.backWikotRootSending = false;
 
-  if (!data) {
+  if (!data || !Array.isArray(data.actions) || data.actions.length === 0) {
     state.backWikotRootMessages.push({
       role: 'assistant',
       content: "Désolé, je rencontre un souci pour répondre. Réessaye dans un instant ?",
@@ -256,74 +269,123 @@ async function sendBackWikotRootMessage(forwardedText) {
     return;
   }
 
-  // Action 1 : réponse directe
-  if (data.action === 'respond') {
-    state.backWikotRootMessages.push({
-      role: 'assistant',
-      content: data.reply_text || '…',
-      ts: Date.now()
-    });
-    render();
-    scrollBackWikotRootToBottom();
-    return;
-  }
+  await executeBackWikotActions(data.actions);
+}
 
-  // Action 2 : entrer dans un sous-workflow
-  if (data.action === 'enter_workflow' && data.workflow) {
-    // Garder une trace dans la conv root (transparent pour l'utilisateur)
-    state.backWikotRootMessages.push({
-      role: 'assistant',
-      content: data.opening_message || `J'ouvre l'atelier pour faire ça.`,
-      ts: Date.now(),
-      _enteredWorkflow: data.workflow
-    });
-    render();
-    // Message original à transmettre au sous-agent (utilise le forwarded_message si fourni,
-    // sinon le contenu utilisateur original — c'est lui qui contient l'intention détaillée).
-    const pending = (data.forwarded_message && String(data.forwarded_message).trim()) || content;
-    state.backWikotPendingMessage = pending;
-    // On entre dans le workflow → page hub (select-target) avec la liste à choisir
-    await enterBackWikotWorkflow(data.workflow);
-    return;
+// EXÉCUTEUR D'ACTIONS — joue séquentiellement les tools renvoyés par /api/wikot/router.
+// Réutilise 100% des fonctions UI existantes (enter, start_create, select_*, applyForm).
+async function executeBackWikotActions(actions) {
+  for (const act of actions) {
+    if (!act || !act.tool) continue;
+    const tool = act.tool;
+    const args = act.args || {};
+    try {
+      if (tool === 'respond_directly') {
+        pushBackWikotRootBubble(args.text || '…');
+      }
+      else if (tool === 'ask_followup') {
+        pushBackWikotRootBubble(args.text || '…');
+      }
+      else if (tool === 'enter_workflow') {
+        // On vide la conv max éventuelle, puis on ouvre l'atelier
+        if (args.workflow && BACK_WIKOT_WORKFLOWS[args.workflow]) {
+          // Si on est déjà dans un autre workflow → reset propre
+          if (state.backWikotWorkflowMode && state.backWikotWorkflowMode !== args.workflow) {
+            state.wikotMaxCurrentConvId = null;
+            state.wikotMaxMessages = [];
+            state.wikotMaxActions = [];
+          }
+          await enterBackWikotWorkflow(args.workflow);
+        }
+      }
+      else if (tool === 'start_create') {
+        // Doit être dans un workflow ; sinon ignore
+        if (state.backWikotWorkflowMode) {
+          await startBackWikotCreate();
+        }
+      }
+      else if (tool === 'select_procedure') {
+        if (args.id) {
+          // S'assurer qu'on est dans le bon workflow
+          if (state.backWikotWorkflowMode !== 'gerer_procedures') {
+            await enterBackWikotWorkflow('gerer_procedures');
+          }
+          await selectBackWikotProcedureTarget(parseInt(args.id));
+        }
+      }
+      else if (tool === 'select_info') {
+        if (args.id) {
+          if (state.backWikotWorkflowMode !== 'gerer_infos') {
+            await enterBackWikotWorkflow('gerer_infos');
+          }
+          await selectBackWikotInfoTarget(parseInt(args.id));
+        }
+      }
+      else if (tool === 'select_task') {
+        if (args.id && (args.kind === 'template' || args.kind === 'instance')) {
+          if (state.backWikotWorkflowMode !== 'gerer_taches') {
+            await enterBackWikotWorkflow('gerer_taches');
+          }
+          await selectBackWikotTaskTarget(args.kind, parseInt(args.id));
+        }
+      }
+      else if (tool === 'prefill_form') {
+        // applyBackWikotFormUpdates attend un array de patches
+        if (args.patches && state.backWikotForm) {
+          const patches = Array.isArray(args.patches) ? args.patches : [args.patches];
+          applyBackWikotFormUpdates(patches);
+          state.backWikotFormDirty = true;
+        }
+      }
+      else if (tool === 'back_to_home') {
+        state.backWikotStep = 'home';
+        state.backWikotWorkflowMode = null;
+        state.backWikotTargetKind = null;
+        state.backWikotTargetId = null;
+        state.backWikotForm = null;
+        state.backWikotFormDirty = false;
+        state.wikotMaxCurrentConvId = null;
+        state.wikotMaxMessages = [];
+        state.wikotMaxActions = [];
+      }
+    } catch (e) {
+      console.error('[backwikot] action_failed tool=' + tool, e);
+    }
   }
-
-  // Cas non géré : fallback
-  state.backWikotRootMessages.push({
-    role: 'assistant',
-    content: "Je n'ai pas bien compris, peux-tu reformuler ?",
-    ts: Date.now()
-  });
   render();
   scrollBackWikotRootToBottom();
 }
 
+// Helper : pousse une bulle assistant dans la conv root + incrémente unread si drawer fermé
+function pushBackWikotRootBubble(text) {
+  if (!Array.isArray(state.backWikotRootMessages)) state.backWikotRootMessages = [];
+  state.backWikotRootMessages.push({ role: 'assistant', content: text, ts: Date.now() });
+  // Sur mobile/tablette, si le drawer est fermé, on signale un nouveau message via le badge
+  if (typeof window !== 'undefined' && window.innerWidth < 1024 && !state.backWikotChatDrawerOpen) {
+    state.backWikotChatUnread = (state.backWikotChatUnread || 0) + 1;
+  }
+}
+
 // Quand un sous-agent (max) appelle return_to_root, on revient au home + on relance le routeur.
 async function handleBackWikotReturnToRoot(payload) {
-  // 1) Retour au home Back Wikot
   state.backWikotStep = 'home';
   state.backWikotWorkflowMode = null;
   state.backWikotTargetKind = null;
   state.backWikotTargetId = null;
   state.backWikotForm = null;
   state.backWikotFormDirty = false;
-  // Reset chat max (sous-agent fermé)
   state.wikotMaxCurrentConvId = null;
   state.wikotMaxMessages = [];
   state.wikotMaxActions = [];
 
-  // 2) On ajoute une bulle système discrète dans la conv root pour expliquer
   if (!Array.isArray(state.backWikotRootMessages)) state.backWikotRootMessages = [];
-  if (payload.reason) {
-    state.backWikotRootMessages.push({
-      role: 'assistant',
-      content: `Je change de domaine pour mieux te répondre.`,
-      ts: Date.now(),
-      _system: true
-    });
-  }
+  state.backWikotRootMessages.push({
+    role: 'assistant',
+    content: `Je change de domaine pour mieux te répondre.`,
+    ts: Date.now(),
+    _system: true
+  });
   render();
-
-  // 3) On rejoue le routeur avec le message forwardé
   await sendBackWikotRootMessage(payload.forwarded_message);
 }
 
@@ -1932,9 +1994,197 @@ function quickWikot(text, mode) {
 function renderBackWikotView() {
   // STATELESS : pas de chargement d'historique. Chaque session est éphémère.
   const step = state.backWikotStep || 'home';
-  if (step === 'select-target') return renderBackWikotSelectTarget();
-  if (step === 'workshop') return renderBackWikotWorkshop();
-  return renderBackWikotHome();
+  const canChat = userCanUseWikotMax();
+
+  // Rendu du contenu principal selon la step
+  let mainHtml;
+  if (step === 'select-target') mainHtml = renderBackWikotSelectTarget();
+  else if (step === 'workshop') mainHtml = renderBackWikotWorkshop();
+  else mainHtml = renderBackWikotHome();
+
+  // Si pas d'accès chat, on retourne le contenu seul
+  if (!canChat) return mainHtml;
+
+  // Dans le workshop, le chat max EXISTANT (avec ses tools update_form) reste le seul chat
+  // pour éviter la redondance. Le mécanisme return_to_root permet de changer de domaine
+  // depuis le sous-agent → on revient au home + on rejoue le routeur.
+  if (step === 'workshop') return mainHtml;
+
+  // Sur home et select-target : panneau Back Wikot persistant
+  //  - Desktop (≥ lg) : panneau latéral droit fixe à côté du contenu
+  //  - Mobile/tablette : bouton flottant + drawer plein écran
+  const drawerOpen = state.backWikotChatDrawerOpen === true;
+  const unread = state.backWikotChatUnread || 0;
+
+  return `
+    <div class="relative">
+      <!-- Layout desktop : 2 colonnes -->
+      <div class="lg:grid lg:grid-cols-12 lg:gap-5">
+        <!-- Contenu principal -->
+        <div class="lg:col-span-8">
+          ${mainHtml}
+        </div>
+
+        <!-- Panneau Back Wikot (desktop only, sticky) -->
+        <aside class="hidden lg:block lg:col-span-4">
+          <div class="sticky" style="top: 1rem; height: calc(100vh - 2rem);">
+            ${renderBackWikotChatPanel({ inDrawer: false })}
+          </div>
+        </aside>
+      </div>
+
+      <!-- Bouton flottant mobile/tablette -->
+      <button
+        onclick="toggleBackWikotChatDrawer()"
+        class="lg:hidden fixed z-40 bottom-5 right-5 w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-105"
+        style="background: var(--c-navy); color: var(--c-gold);"
+        title="Discuter avec Back Wikot">
+        <i class="fas fa-comments text-lg"></i>
+        ${unread > 0 ? `<span class="absolute -top-1 -right-1 w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center" style="background: var(--c-gold); color: var(--c-navy);">${unread > 9 ? '9+' : unread}</span>` : ''}
+      </button>
+
+      <!-- Drawer mobile/tablette -->
+      ${drawerOpen ? `
+        <div class="lg:hidden fixed inset-0 z-50 flex flex-col" style="background: rgba(15,27,40,0.5);" onclick="if(event.target===this){toggleBackWikotChatDrawer()}">
+          <div class="mt-auto flex flex-col bg-white rounded-t-2xl shadow-2xl" style="height: 85vh; max-height: 85vh;">
+            ${renderBackWikotChatPanel({ inDrawer: true })}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// Toggle drawer mobile/tablette + reset unread
+function toggleBackWikotChatDrawer() {
+  state.backWikotChatDrawerOpen = !state.backWikotChatDrawerOpen;
+  if (state.backWikotChatDrawerOpen) state.backWikotChatUnread = 0;
+  render();
+  if (state.backWikotChatDrawerOpen) {
+    setTimeout(() => {
+      const input = document.getElementById('back-wikot-root-input');
+      if (input) input.focus();
+      scrollBackWikotRootToBottom();
+    }, 100);
+  }
+}
+
+// PANNEAU CHAT BACK WIKOT (utilisé en sticky desktop + en drawer mobile)
+function renderBackWikotChatPanel({ inDrawer }) {
+  const rootMessages = Array.isArray(state.backWikotRootMessages) ? state.backWikotRootMessages : [];
+  const isSending = state.backWikotRootSending === true;
+  const step = state.backWikotStep || 'home';
+  const wfMode = state.backWikotWorkflowMode;
+  const wf = wfMode ? BACK_WIKOT_WORKFLOWS[wfMode] : null;
+
+  // Indicateur contextuel discret en haut du panneau
+  let contextBadge = '';
+  if (step === 'select-target' && wf) {
+    contextBadge = `<span class="text-[10px] px-1.5 py-0.5 rounded-md" style="background: rgba(212,175,55,0.15); color: var(--c-gold-deep);"><i class="fas ${wf.icon} mr-1"></i>${escapeHtml(wf.label)}</span>`;
+  } else if (step === 'workshop' && wf) {
+    const sub = state.backWikotSubMode === 'create' ? 'Création' : 'Édition';
+    contextBadge = `<span class="text-[10px] px-1.5 py-0.5 rounded-md" style="background: rgba(212,175,55,0.15); color: var(--c-gold-deep);"><i class="fas ${wf.icon} mr-1"></i>${sub}</span>`;
+  }
+
+  return `
+    <div class="card-premium overflow-hidden flex flex-col h-full">
+      <!-- Header -->
+      <div class="px-3.5 py-2.5 flex items-center gap-2.5 border-b shrink-0" style="background: var(--c-navy); border-color: rgba(255,255,255,0.08);">
+        <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(212,175,55,0.18); color: var(--c-gold);">
+          <i class="fas fa-wand-magic-sparkles text-xs"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="text-[10px] uppercase tracking-[0.16em] font-semibold flex items-center gap-1.5" style="color: rgba(255,255,255,0.55);">
+            Copilote
+            ${contextBadge}
+          </div>
+          <div class="text-sm font-semibold" style="color: #fff;">Back Wikot</div>
+        </div>
+        ${rootMessages.length > 0 ? `
+          <button onclick="resetBackWikotRootChat()" class="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors" style="color: rgba(255,255,255,0.7);" title="Effacer la conversation">
+            <i class="fas fa-eraser"></i>
+          </button>
+        ` : ''}
+        ${inDrawer ? `
+          <button onclick="toggleBackWikotChatDrawer()" class="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors" style="color: rgba(255,255,255,0.7);" title="Fermer">
+            <i class="fas fa-xmark"></i>
+          </button>
+        ` : ''}
+      </div>
+
+      <!-- Zone messages -->
+      <div id="back-wikot-root-messages" class="flex-1 overflow-y-auto p-3 space-y-2.5" style="background: var(--c-cream); min-height: 0;">
+        ${rootMessages.length === 0 ? `
+          <div class="text-center py-6">
+            <div class="w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center" style="background: rgba(212,175,55,0.15); color: var(--c-gold-deep);">
+              <i class="fas fa-wand-magic-sparkles"></i>
+            </div>
+            <p class="text-xs font-medium mb-1" style="color: var(--c-navy);">Dis-moi ce que tu veux faire</p>
+            <p class="text-[11px] leading-relaxed max-w-xs mx-auto" style="color: rgba(15,27,40,0.5);">
+              "Crée une procédure pour la réservation directe", "Modifie le wifi", "Ajoute une tâche pour demain"…
+            </p>
+          </div>
+        ` : rootMessages.map(m => {
+          if (m._system) {
+            return `<div class="text-center text-[10px] uppercase tracking-wide italic py-1" style="color: rgba(15,27,40,0.4);">
+              <i class="fas fa-arrow-rotate-right mr-1"></i>${escapeHtml(m.content)}
+            </div>`;
+          }
+          if (m.role === 'user') {
+            return `<div class="flex justify-end">
+              <div class="max-w-[85%] px-3 py-2 rounded-2xl rounded-tr-sm text-sm leading-relaxed" style="background: var(--c-navy); color: #fff;">
+                ${escapeHtml(m.content)}
+              </div>
+            </div>`;
+          }
+          return `<div class="flex justify-start gap-2 items-end">
+            <div class="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style="background: var(--c-gold); color: var(--c-navy);">
+              <i class="fas fa-sparkles text-[10px]"></i>
+            </div>
+            <div class="max-w-[85%] px-3 py-2 rounded-2xl rounded-tl-sm text-sm leading-relaxed border" style="background: #fff; color: var(--c-navy); border-color: rgba(15,27,40,0.08);">
+              ${escapeHtml(m.content)}
+            </div>
+          </div>`;
+        }).join('')}
+        ${isSending ? `
+          <div class="flex justify-start gap-2 items-end">
+            <div class="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style="background: var(--c-gold); color: var(--c-navy);">
+              <i class="fas fa-sparkles text-[10px]"></i>
+            </div>
+            <div class="px-3 py-2 rounded-2xl rounded-tl-sm border" style="background: #fff; border-color: rgba(15,27,40,0.08);">
+              <span class="inline-flex gap-1 items-center" style="color: rgba(15,27,40,0.5);">
+                <span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--c-gold-deep);"></span>
+                <span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--c-gold-deep); animation-delay: 0.15s;"></span>
+                <span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--c-gold-deep); animation-delay: 0.3s;"></span>
+              </span>
+            </div>
+          </div>
+        ` : ''}
+      </div>
+
+      <!-- Composer -->
+      <div class="border-t p-2.5 flex gap-2 items-end shrink-0" style="background: #fff; border-color: rgba(15,27,40,0.08);">
+        <textarea
+          id="back-wikot-root-input"
+          rows="1"
+          ${isSending ? 'disabled' : ''}
+          oninput="autoResizeTextarea(this)"
+          onkeydown="handleBackWikotRootInputKey(event)"
+          placeholder="Écris ta demande à Back Wikot…"
+          class="flex-1 resize-none px-3 py-2 text-sm rounded-xl border focus:outline-none focus:ring-2 transition-all"
+          style="border-color: rgba(15,27,40,0.12); background: var(--c-cream); color: var(--c-navy); max-height: 120px;"
+        ></textarea>
+        <button
+          onclick="sendBackWikotRootMessage()"
+          ${isSending ? 'disabled' : ''}
+          class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all ${isSending ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105 cursor-pointer'}"
+          style="background: var(--c-navy); color: var(--c-gold);"
+          title="Envoyer (Entrée)">
+          <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'} text-xs"></i>
+        </button>
+      </div>
+    </div>
+  `;
 }
 
 // --------------------------------------------
@@ -1972,104 +2222,7 @@ function renderBackWikotHome() {
     `;
   };
 
-  // L'utilisateur peut-il parler directement à Back Wikot ?
-  // (au moins un workflow accessible = il peut utiliser l'orchestrateur)
   const canChat = userCanUseWikotMax();
-
-  // Rendu de la zone conversation root (orchestrateur)
-  const rootMessages = Array.isArray(state.backWikotRootMessages) ? state.backWikotRootMessages : [];
-  const isSending = state.backWikotRootSending === true;
-  const chatZoneHtml = !canChat ? '' : `
-    <div class="card-premium overflow-hidden flex flex-col" style="min-height: 320px;">
-      <!-- Header conv root -->
-      <div class="px-3.5 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2.5 border-b" style="background: var(--c-navy); border-color: rgba(255,255,255,0.08);">
-        <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(212,175,55,0.18); color: var(--c-gold);">
-          <i class="fas fa-comments text-xs"></i>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="text-[10px] uppercase tracking-[0.16em] font-semibold" style="color: rgba(255,255,255,0.55);">Discute directement</div>
-          <div class="text-sm font-semibold" style="color: #fff;">Demande à Back Wikot</div>
-        </div>
-        ${rootMessages.length > 0 ? `
-          <button onclick="resetBackWikotRootChat()" class="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors" style="color: rgba(255,255,255,0.7);" title="Effacer la conversation">
-            <i class="fas fa-eraser"></i>
-          </button>
-        ` : ''}
-      </div>
-
-      <!-- Zone messages -->
-      <div id="back-wikot-root-messages" class="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2.5" style="background: var(--c-cream); max-height: 380px; min-height: 200px;">
-        ${rootMessages.length === 0 ? `
-          <div class="text-center py-6 sm:py-8">
-            <div class="w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center" style="background: rgba(212,175,55,0.15); color: var(--c-gold-deep);">
-              <i class="fas fa-wand-magic-sparkles"></i>
-            </div>
-            <p class="text-xs sm:text-sm font-medium mb-1" style="color: var(--c-navy);">Dis-moi ce que tu veux faire</p>
-            <p class="text-[11px] sm:text-xs leading-relaxed max-w-xs mx-auto" style="color: rgba(15,27,40,0.5);">
-              "Crée une procédure pour l'arrivée VIP", "Modifie le wifi de la chambre 12", "Ajoute une tâche pour demain matin"…
-            </p>
-          </div>
-        ` : rootMessages.map(m => {
-          if (m._system) {
-            return `<div class="text-center text-[10px] uppercase tracking-wide italic py-1" style="color: rgba(15,27,40,0.4);">
-              <i class="fas fa-arrow-rotate-right mr-1"></i>${escapeHtml(m.content)}
-            </div>`;
-          }
-          if (m.role === 'user') {
-            return `<div class="flex justify-end">
-              <div class="max-w-[85%] sm:max-w-[75%] px-3 py-2 rounded-2xl rounded-tr-sm text-sm leading-relaxed" style="background: var(--c-navy); color: #fff;">
-                ${escapeHtml(m.content)}
-              </div>
-            </div>`;
-          }
-          return `<div class="flex justify-start gap-2 items-end">
-            <div class="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style="background: var(--c-gold); color: var(--c-navy);">
-              <i class="fas fa-sparkles text-[10px]"></i>
-            </div>
-            <div class="max-w-[85%] sm:max-w-[75%] px-3 py-2 rounded-2xl rounded-tl-sm text-sm leading-relaxed border" style="background: #fff; color: var(--c-navy); border-color: rgba(15,27,40,0.08);">
-              ${escapeHtml(m.content)}
-            </div>
-          </div>`;
-        }).join('')}
-        ${isSending ? `
-          <div class="flex justify-start gap-2 items-end">
-            <div class="w-7 h-7 rounded-full flex items-center justify-center shrink-0" style="background: var(--c-gold); color: var(--c-navy);">
-              <i class="fas fa-sparkles text-[10px]"></i>
-            </div>
-            <div class="px-3 py-2 rounded-2xl rounded-tl-sm border" style="background: #fff; border-color: rgba(15,27,40,0.08);">
-              <span class="inline-flex gap-1 items-center" style="color: rgba(15,27,40,0.5);">
-                <span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--c-gold-deep);"></span>
-                <span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--c-gold-deep); animation-delay: 0.15s;"></span>
-                <span class="w-1.5 h-1.5 rounded-full animate-pulse" style="background: var(--c-gold-deep); animation-delay: 0.3s;"></span>
-              </span>
-            </div>
-          </div>
-        ` : ''}
-      </div>
-
-      <!-- Composer -->
-      <div class="border-t p-2.5 sm:p-3 flex gap-2 items-end" style="background: #fff; border-color: rgba(15,27,40,0.08);">
-        <textarea
-          id="back-wikot-root-input"
-          rows="1"
-          ${isSending ? 'disabled' : ''}
-          oninput="autoResizeTextarea(this)"
-          onkeydown="handleBackWikotRootInputKey(event)"
-          placeholder="Écris ta demande à Back Wikot…"
-          class="flex-1 resize-none px-3 py-2 text-sm rounded-xl border focus:outline-none focus:ring-2 transition-all"
-          style="border-color: rgba(15,27,40,0.12); background: var(--c-cream); color: var(--c-navy); max-height: 120px;"
-        ></textarea>
-        <button
-          onclick="sendBackWikotRootMessage()"
-          ${isSending ? 'disabled' : ''}
-          class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 transition-all ${isSending ? 'opacity-50 cursor-not-allowed' : 'hover:scale-105 cursor-pointer'}"
-          style="background: var(--c-navy); color: var(--c-gold);"
-          title="Envoyer (Entrée)">
-          <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'} text-xs"></i>
-        </button>
-      </div>
-    </div>
-  `;
 
   return `
     <div class="fade-in space-y-5 sm:space-y-6">
@@ -2086,39 +2239,17 @@ function renderBackWikotHome() {
 
       <p class="text-sm" style="color: rgba(15,27,40,0.6);">
         ${canChat
-          ? "Parle directement à Back Wikot ou choisis un atelier ci-dessous. Il s'occupe de t'amener au bon endroit."
+          ? "Demande directement à Back Wikot ou choisis un atelier ci-dessous. Il pilote pour toi."
           : "Choisis ce que tu veux gérer. Back Wikot t'aide à créer ou modifier les éléments puis tu enregistres."}
       </p>
 
-      <!-- Layout responsive :
-           - Mobile (<lg)   : conv en premier (plus naturel pour parler), puis les 4 boutons
-           - Desktop (>=lg) : 4 boutons à gauche (col-span 7), conv à droite (col-span 5) sticky
-      -->
-      ${canChat ? `
-        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5">
-          <!-- Conv root : ordre 1 sur mobile, ordre 2 (droite) sur desktop -->
-          <div class="order-1 lg:order-2 lg:col-span-5">
-            ${chatZoneHtml}
-          </div>
-          <!-- Grille 4 boutons : ordre 2 sur mobile, ordre 1 (gauche) sur desktop -->
-          <div class="order-2 lg:order-1 lg:col-span-7">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              ${buttonHtml('gerer_procedures')}
-              ${buttonHtml('gerer_infos')}
-              ${buttonHtml('gerer_conversations')}
-              ${buttonHtml('gerer_taches')}
-            </div>
-          </div>
-        </div>
-      ` : `
-        <!-- Pas de permission max → on garde la grille classique pleine largeur -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          ${buttonHtml('gerer_procedures')}
-          ${buttonHtml('gerer_infos')}
-          ${buttonHtml('gerer_conversations')}
-          ${buttonHtml('gerer_taches')}
-        </div>
-      `}
+      <!-- Grille 4 boutons "Gérer X" (conv injectée par renderBackWikotView en panneau persistant) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        ${buttonHtml('gerer_procedures')}
+        ${buttonHtml('gerer_infos')}
+        ${buttonHtml('gerer_conversations')}
+        ${buttonHtml('gerer_taches')}
+      </div>
     </div>
   `;
 }

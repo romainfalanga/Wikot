@@ -3343,16 +3343,22 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
 })
 
 // ============================================
-// POST /api/wikot/router — ORCHESTRATEUR BACK WIKOT (couche méta)
+// POST /api/wikot/router — ORCHESTRATEUR BACK WIKOT (couche méta multi-tools)
 // ============================================
-// Le user parle à Back Wikot depuis l'écran d'accueil. Le router LLM choisit :
-//   1) enter_workflow(workflow, opening_message)  → ouvre le bon sous-agent
-//   2) respond_directly(reply_text)               → réponse directe (salutation, hors-sujet, méta)
-// Le frontend reçoit la décision et exécute (entrer dans le workflow ou afficher la réponse).
-// Aucune modification des 4 sous-agents Back Wikot existants : c'est une couche par-dessus.
+// Back Wikot pilote l'UI en autonomie. Le LLM peut renvoyer une SÉQUENCE d'actions
+// qui sont exécutées côté frontend sans rappel API supplémentaire :
+//   - respond_directly(text)            : répondre simplement
+//   - enter_workflow(workflow)          : ouvre l'atelier (page hub)
+//   - start_create()                    : clique "+ Créer" (formulaire vierge)
+//   - select_procedure(id)              : ouvre une procédure existante en édition
+//   - select_info(id)                   : ouvre une info existante en édition
+//   - select_task(kind, id)             : ouvre une tâche (template|instance) en édition
+//   - prefill_form(patches)             : préremplit le formulaire actif
+//   - ask_followup(text)                : pose une question de raffinage à l'user
+//   - back_to_home()                    : revient au menu Back Wikot
+// Tous les outils réutilisent les fonctions JS existantes côté frontend → zéro régression.
 app.post('/api/wikot/router', authMiddleware, async (c) => {
   const user = c.get('user')
-  // Rate-limit léger : 30/min comme le POST message standard
   const rl = await checkRateLimit(c.env, 'wikot_router', `u:${user.id}`, 30, 60)
   if (!rl.ok) return rateLimitedResponse(c, 60)
   if (!user.hotel_id) return c.json({ error: 'Aucun hôtel' }, 400)
@@ -3367,75 +3373,239 @@ app.post('/api/wikot/router', authMiddleware, async (c) => {
   const content = String(body.content || '').trim()
   if (!content) return c.json({ error: 'Message vide' }, 400)
 
-  // Vérifier quelles permissions le user a (pour ne proposer que les workflows accessibles)
+  // Contexte UI envoyé par le frontend (pour que l'orchestrateur sache où on est)
+  const uiContext = body.ui_context || {}
+  const currentStep: string = String(uiContext.step || 'home')       // 'home' | 'select-target' | 'workshop'
+  const currentWorkflow: string | null = uiContext.workflow_mode || null
+  const formSnapshot = uiContext.form || null
+  // Historique conversation root (jusqu'à 8 derniers messages pour le contexte)
+  const history: any[] = Array.isArray(body.history) ? body.history.slice(-8) : []
+
+  // Permissions
   const canProc = wikotUserCanEditProcedures(user)
   const canInf = wikotUserCanEditInfo(user)
-  // Conversations et tâches : pas de permission spécifique → tout user qui passe userCanUseMaxMode
   const allowedWorkflows: string[] = []
   if (canProc) allowedWorkflows.push('gerer_procedures')
   if (canInf) allowedWorkflows.push('gerer_infos')
   allowedWorkflows.push('gerer_conversations')
   allowedWorkflows.push('gerer_taches')
 
-  // System prompt orchestrateur : ultra-court, mission précise
-  const hotel = await c.env.DB.prepare('SELECT name FROM hotels WHERE id = ?').bind(user.hotel_id).first() as any
+  // Données existantes compactes (pour que le LLM puisse référencer un élément par id)
+  const hotelId = user.hotel_id
+  const [proceduresRes, infosRes, tplRes, instRes, procCatsRes, infoCatsRes] = await Promise.all([
+    canProc ? c.env.DB.prepare('SELECT id, title, trigger_event, category_id, is_subprocedure FROM procedures WHERE hotel_id = ? ORDER BY title LIMIT 60').bind(hotelId).all() : Promise.resolve({ results: [] }),
+    canInf ? c.env.DB.prepare('SELECT id, title, category_id FROM hotel_info_items WHERE hotel_id = ? ORDER BY title LIMIT 60').bind(hotelId).all() : Promise.resolve({ results: [] }),
+    c.env.DB.prepare('SELECT id, title, recurrence_type FROM task_templates WHERE hotel_id = ? AND is_active = 1 ORDER BY title LIMIT 30').bind(hotelId).all().catch(() => ({ results: [] })),
+    c.env.DB.prepare("SELECT id, title, task_date FROM task_instances WHERE hotel_id = ? AND task_date >= date('now') AND status != 'done' ORDER BY task_date LIMIT 30").bind(hotelId).all().catch(() => ({ results: [] })),
+    canProc ? c.env.DB.prepare('SELECT id, name FROM procedure_categories WHERE hotel_id = ? ORDER BY name').bind(hotelId).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] }),
+    canInf ? c.env.DB.prepare('SELECT id, name FROM hotel_info_categories WHERE hotel_id = ? ORDER BY name').bind(hotelId).all().catch(() => ({ results: [] })) : Promise.resolve({ results: [] })
+  ])
+
+  const procedures = (proceduresRes.results as any[]) || []
+  const infos = (infosRes.results as any[]) || []
+  const taskTemplates = (tplRes.results as any[]) || []
+  const taskInstances = (instRes.results as any[]) || []
+  const procCats = (procCatsRes.results as any[]) || []
+  const infoCats = (infoCatsRes.results as any[]) || []
+
+  // System prompt enrichi : playbooks par catégorie + pilotage UI
+  const hotel = await c.env.DB.prepare('SELECT name FROM hotels WHERE id = ?').bind(hotelId).first() as any
   const hotelName = hotel?.name || "l'hôtel"
-  const systemPrompt = `Tu es **Back Wikot**, l'assistant d'édition du **${hotelName}** (utilisateur : ${user.name}).
 
-Tu es à l'écran d'accueil. Tu disposes de 4 sous-modes spécialisés :
-- **gerer_procedures** : créer/modifier/supprimer des procédures (manuels, étapes, déclencheurs)
-- **gerer_infos** : créer/modifier/supprimer des informations (codes, horaires, contacts, fiches)
-- **gerer_conversations** : créer/renommer/déplacer/supprimer des groupes & salons de chat
-- **gerer_taches** : créer/modifier/supprimer des tâches récurrentes ou ponctuelles
+  const fmtList = (arr: any[], fields: string[], max = 40) => {
+    if (!arr || arr.length === 0) return '(aucun)'
+    return arr.slice(0, max).map(x => fields.map(f => `${f}=${JSON.stringify(x[f])}`).join(' ')).join('\n')
+  }
 
-Sous-modes accessibles à cet utilisateur : ${allowedWorkflows.join(', ')}.
+  const systemPrompt = `Tu es **Back Wikot**, copilote autonome d'édition du **${hotelName}** (utilisateur : ${user.name}).
 
-Pour chaque message utilisateur, choisis UN seul outil :
-1. \`enter_workflow(workflow, opening_message)\` : ouvre le sous-mode adapté à la demande. \`opening_message\` = reformulation 1 phrase de la demande, claire et actionnable pour le sous-agent.
-2. \`respond_directly(reply_text)\` : si la demande est une salutation ("salut"), une méta-question ("qui es-tu", "que peux-tu faire"), trop vague ("aide-moi"), ou hors-sujet (météo, blagues). Réponds en 1-2 phrases max.
+# MISSION
+Tu PILOTES l'interface utilisateur. Tu ne te contentes pas de rediriger : tu enchaînes les actions pour faire avancer la demande au maximum en UN SEUL TOUR, puis tu poses une question de raffinage si besoin.
 
-Règles :
-- Choisis toujours UN outil, jamais zéro, jamais deux.
-- Si plusieurs sous-modes pourraient s'appliquer, prends celui qui correspond à l'ACTION principale demandée.
-- Si l'utilisateur dit "aide-moi", "que peux-tu faire", liste brièvement les 4 sous-modes via \`respond_directly\`.
-- Ne propose JAMAIS un sous-mode non accessible à l'utilisateur (cf. liste ci-dessus).`
+# DOMAINES (4 sous-modes)
+- **gerer_procedures** : procédures (manuels, étapes ordonnées, déclencheurs) — accessible : ${canProc}
+- **gerer_infos** : informations (codes, horaires, contacts, fiches) — accessible : ${canInf}
+- **gerer_conversations** : groupes & salons de chat — accessible : true
+- **gerer_taches** : tâches récurrentes ou ponctuelles — accessible : true
+Workflows autorisés : ${allowedWorkflows.join(', ')}
 
+# OÙ TU ES MAINTENANT (état UI)
+- step = ${currentStep}
+- workflow_mode = ${currentWorkflow || 'aucun'}
+- form_snapshot = ${formSnapshot ? JSON.stringify(formSnapshot).slice(0, 600) : 'aucun'}
+
+# DONNÉES EXISTANTES (pour pouvoir cibler par id)
+## Procédures (id, title, trigger_event, category_id, is_subprocedure)
+${fmtList(procedures, ['id', 'title', 'trigger_event', 'category_id', 'is_subprocedure'])}
+
+## Catégories de procédures
+${fmtList(procCats, ['id', 'name'])}
+
+## Infos (id, title, category_id)
+${fmtList(infos, ['id', 'title', 'category_id'])}
+
+## Catégories d'infos
+${fmtList(infoCats, ['id', 'name'])}
+
+## Tâches templates (id, title, recurrence_type)
+${fmtList(taskTemplates, ['id', 'title', 'recurrence_type'])}
+
+## Tâches instances à venir (id, title, task_date)
+${fmtList(taskInstances, ['id', 'title', 'task_date'])}
+
+# OUTILS À TA DISPOSITION (tu peux et tu DOIS en chaîner plusieurs dans la même réponse)
+1. \`respond_directly(text)\` — réponse simple (salutation, méta-question, hors-sujet). 1-2 phrases.
+2. \`enter_workflow(workflow)\` — ouvre l'atelier d'un domaine (page hub).
+3. \`start_create()\` — clique "+ Créer", formulaire vierge prêt à être rempli.
+4. \`select_procedure(id)\` — ouvre une procédure existante en édition.
+5. \`select_info(id)\` — ouvre une info existante en édition.
+6. \`select_task(kind, id)\` — kind='template' ou 'instance'.
+7. \`prefill_form(patches)\` — remplit le formulaire actif. \`patches\` = objet aux clés autorisées selon le kind :
+   - procedure : { title, trigger_event, description, category_id, steps:[{title, content}] }
+   - info_item : { title, content, category_id }
+   - task : { title, description, category, priority, mode, recurrence_type, recurrence_days, monthly_day, suggested_time, duration_min, active_from, active_to, task_date, assignee_ids }
+8. \`ask_followup(text)\` — pose UNE question claire de raffinage à l'user. 1-3 phrases max.
+9. \`back_to_home()\` — revient au menu Back Wikot.
+
+# PLAYBOOKS (séquences canoniques à appliquer agressivement)
+
+## CRÉER UNE PROCÉDURE — séquence par défaut
+Si l'user dit "crée une procédure pour X" (ou équivalent), renvoie en UN tour :
+[enter_workflow('gerer_procedures'), start_create(), prefill_form({...}), ask_followup(...)]
+Le prefill DOIT contenir :
+- title : court, action claire (ex: "Réservation client en direct")
+- trigger_event : format "Quand un client…" ou "Lors de…"
+- description : 1 phrase de contexte
+- category_id : choisis intelligemment parmi les catégories dispo
+- steps : 4 à 7 étapes ordonnées et actionnables, avec title court et content détaillé
+La question de raffinage doit cibler les points fragiles : moyen de paiement, communication client, traçabilité, cas particuliers.
+
+## MODIFIER UNE PROCÉDURE EXISTANTE
+Si l'user mentionne une procédure existante (ex: "modifie l'arrivée VIP") :
+[enter_workflow('gerer_procedures'), select_procedure(<id correspondant>), prefill_form({patches ciblés}), ask_followup(...)]
+Cherche le meilleur match dans la liste des procédures par title/trigger_event.
+
+## CRÉER UNE INFO
+[enter_workflow('gerer_infos'), start_create(), prefill_form({title, content structuré, category_id}), ask_followup(...)]
+Le content doit être structuré et complet (codes, horaires précis, contacts formatés). Choisis la meilleure catégorie.
+
+## MODIFIER UNE INFO
+[enter_workflow('gerer_infos'), select_info(<id>), prefill_form({...}), ask_followup(...)]
+
+## CRÉER UNE TÂCHE
+[enter_workflow('gerer_taches'), start_create(), prefill_form({title, description, mode, recurrence_type si récurrent, suggested_time, priority, duration_min}), ask_followup(...)]
+- mode='recurring' si l'user parle de répétition (tous les jours, chaque lundi…), sinon 'oneoff'
+- Pour recurring : remplir recurrence_type (daily/weekly/monthly) ET recurrence_days (bitmap si weekly) OU monthly_day si monthly
+- Pour oneoff : remplir task_date (YYYY-MM-DD), interpréter "demain", "lundi", "le 15"
+
+## MODIFIER UNE TÂCHE
+[enter_workflow('gerer_taches'), select_task(kind, id), prefill_form({...}), ask_followup(...)]
+
+## GÉRER LES CONVERSATIONS
+[enter_workflow('gerer_conversations'), ...] — ce domaine se pilote surtout depuis le sous-agent en mode max.
+
+# RÈGLES D'OR
+1. **Sois proactif et exhaustif** : chaîne le maximum d'actions en UN tour. Ne te limite pas à enter_workflow.
+2. **Préremplis agressivement** : c'est mieux d'avoir une proposition à raffiner qu'un formulaire vide.
+3. **Une seule question** à la fois dans ask_followup, ciblée sur le point le plus impactant.
+4. **Si la demande est claire et complète** : prefill_form sans ask_followup, juste un respond_directly de confirmation à la fin (ex: "C'est prêt à enregistrer si tout te va.").
+5. **Si la demande est vague** : respond_directly avec une question d'éclaircissement, sans rien ouvrir.
+6. **Si tu es déjà dans un atelier** (step=workshop) et l'user veut changer de domaine : enchaîne back_to_home() + enter_workflow(autre) + actions.
+7. **Ne propose JAMAIS un workflow non autorisé**.
+8. **Réutilise toujours les catégories existantes** quand c'est pertinent.
+9. **Détecte les références aux éléments existants** (par titre approximatif, par sujet) et utilise select_* avec le bon id.`
+
+  // Tools schema — autorise plusieurs tool_calls dans la même réponse
   const tools = [
     {
       type: 'function',
       function: {
+        name: 'respond_directly',
+        description: 'Réponse texte directe (salutation, hors-sujet, méta, demande vague nécessitant clarification). 1-2 phrases.',
+        parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
+      }
+    },
+    {
+      type: 'function',
+      function: {
         name: 'enter_workflow',
-        description: 'Ouvre un sous-mode spécialisé de Back Wikot avec le message utilisateur comme première instruction.',
+        description: 'Ouvre l\'atelier d\'un domaine (page hub avec liste + bouton Créer).',
+        parameters: { type: 'object', properties: { workflow: { type: 'string', enum: allowedWorkflows } }, required: ['workflow'] }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'start_create',
+        description: 'Clique "+ Créer" dans l\'atelier actuel (formulaire vierge prêt à remplir).',
+        parameters: { type: 'object', properties: {} }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'select_procedure',
+        description: 'Ouvre une procédure existante en édition.',
+        parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'select_info',
+        description: 'Ouvre une info existante en édition.',
+        parameters: { type: 'object', properties: { id: { type: 'integer' } }, required: ['id'] }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'select_task',
+        description: 'Ouvre une tâche existante en édition.',
         parameters: {
           type: 'object',
           properties: {
-            workflow: { type: 'string', enum: allowedWorkflows },
-            opening_message: { type: 'string', description: 'Reformulation 1 phrase de la demande, claire et actionnable.' }
+            kind: { type: 'string', enum: ['template', 'instance'] },
+            id: { type: 'integer' }
           },
-          required: ['workflow', 'opening_message']
+          required: ['kind', 'id']
         }
       }
     },
     {
       type: 'function',
       function: {
-        name: 'respond_directly',
-        description: 'Réponse texte directe (salutation, hors-sujet, méta-question, demande trop vague).',
-        parameters: {
-          type: 'object',
-          properties: {
-            reply_text: { type: 'string', description: '1-2 phrases courtes en français.' }
-          },
-          required: ['reply_text']
-        }
+        name: 'prefill_form',
+        description: 'Préremplit le formulaire actif. Les clés autorisées dépendent du kind (procedure/info_item/task).',
+        parameters: { type: 'object', properties: { patches: { type: 'object' } }, required: ['patches'] }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'ask_followup',
+        description: 'Pose UNE question de raffinage à l\'user après avoir prérempli. 1-3 phrases max.',
+        parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] }
+      }
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'back_to_home',
+        description: 'Revient au menu Back Wikot (ferme l\'atelier en cours).',
+        parameters: { type: 'object', properties: {} }
       }
     }
   ]
 
-  const messages = [
-    { role: 'system', content: systemPrompt },
-    { role: 'user', content }
-  ]
+  // Messages : system + history + nouveau message
+  const messages: any[] = [{ role: 'system', content: systemPrompt }]
+  for (const h of history) {
+    if (h && h.role && h.content) {
+      messages.push({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.content).slice(0, 1000) })
+    }
+  }
+  messages.push({ role: 'user', content })
 
   let resp
   try {
@@ -3447,39 +3617,59 @@ Règles :
 
   const choice = resp.choices?.[0]
   const msg = choice?.message
-  const call = msg?.tool_calls?.[0]
+  const toolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : []
 
-  // Fallback ultime si rien de structuré : on renvoie le texte libre éventuel
-  if (!call) {
-    const fallback = (msg?.content || '').trim() || "Peux-tu reformuler ta demande ? Je peux gérer les procédures, infos, conversations ou tâches."
+  // Pas de tool_call : fallback texte
+  if (toolCalls.length === 0) {
+    const fallback = (msg?.content || '').trim() || "Peux-tu reformuler ? Je gère procédures, infos, conversations et tâches."
     console.log('[wikot:router] no_tool_call fallback_len=' + fallback.length)
-    return c.json({ action: 'respond', reply_text: fallback })
+    return c.json({ actions: [{ tool: 'respond_directly', args: { text: fallback } }] })
   }
 
-  let args: any = {}
-  try { args = JSON.parse(call.function?.arguments || '{}') } catch {}
+  // Parse et valide chaque tool_call
+  const actions: Array<{ tool: string; args: any }> = []
+  for (const tc of toolCalls) {
+    const fnName = tc.function?.name
+    let fnArgs: any = {}
+    try { fnArgs = JSON.parse(tc.function?.arguments || '{}') } catch {}
 
-  if (call.function?.name === 'enter_workflow') {
-    const wf = String(args.workflow || '')
-    const openingMessage = String(args.opening_message || content).trim().slice(0, 500)
-    if (!allowedWorkflows.includes(wf)) {
-      console.log('[wikot:router] invalid_workflow=' + wf)
-      return c.json({ action: 'respond', reply_text: "Je n'ai pas accès à ce sous-mode. Reformule ta demande." })
+    if (fnName === 'respond_directly') {
+      const text = String(fnArgs.text || '').trim().slice(0, 600)
+      if (text) actions.push({ tool: 'respond_directly', args: { text } })
+    } else if (fnName === 'enter_workflow') {
+      const wf = String(fnArgs.workflow || '')
+      if (allowedWorkflows.includes(wf)) actions.push({ tool: 'enter_workflow', args: { workflow: wf } })
+    } else if (fnName === 'start_create') {
+      actions.push({ tool: 'start_create', args: {} })
+    } else if (fnName === 'select_procedure') {
+      const id = parseInt(fnArgs.id)
+      if (id > 0) actions.push({ tool: 'select_procedure', args: { id } })
+    } else if (fnName === 'select_info') {
+      const id = parseInt(fnArgs.id)
+      if (id > 0) actions.push({ tool: 'select_info', args: { id } })
+    } else if (fnName === 'select_task') {
+      const id = parseInt(fnArgs.id)
+      const kind = String(fnArgs.kind || '')
+      if (id > 0 && (kind === 'template' || kind === 'instance')) {
+        actions.push({ tool: 'select_task', args: { id, kind } })
+      }
+    } else if (fnName === 'prefill_form') {
+      const patches = fnArgs.patches && typeof fnArgs.patches === 'object' ? fnArgs.patches : null
+      if (patches) actions.push({ tool: 'prefill_form', args: { patches } })
+    } else if (fnName === 'ask_followup') {
+      const text = String(fnArgs.text || '').trim().slice(0, 600)
+      if (text) actions.push({ tool: 'ask_followup', args: { text } })
+    } else if (fnName === 'back_to_home') {
+      actions.push({ tool: 'back_to_home', args: {} })
     }
-    console.log('[wikot:router] enter_workflow=' + wf + ' opening_len=' + openingMessage.length)
-    return c.json({ action: 'enter_workflow', workflow: wf, opening_message: openingMessage })
   }
 
-  if (call.function?.name === 'respond_directly') {
-    const replyText = String(args.reply_text || '').trim().slice(0, 400)
-    if (!replyText) {
-      return c.json({ action: 'respond', reply_text: "Peux-tu reformuler ? Je gère procédures, infos, conversations et tâches." })
-    }
-    console.log('[wikot:router] respond_directly len=' + replyText.length)
-    return c.json({ action: 'respond', reply_text: replyText })
+  if (actions.length === 0) {
+    return c.json({ actions: [{ tool: 'respond_directly', args: { text: "Peux-tu reformuler ta demande ?" } }] })
   }
 
-  return c.json({ action: 'respond', reply_text: "Peux-tu reformuler ta demande ?" })
+  console.log('[wikot:router] actions_count=' + actions.length + ' tools=' + actions.map(a => a.tool).join(','))
+  return c.json({ actions })
 })
 
 // GET détail d'une conversation

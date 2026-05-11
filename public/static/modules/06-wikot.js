@@ -1488,10 +1488,15 @@ async function selectBackWikotProcedureTarget(procId) {
 
 // L'utilisateur a choisi une info à modifier
 async function selectBackWikotInfoTarget(itemId) {
-  const cache = state.backWikotInfoCache;
-  if (!cache) await loadBackWikotInfo();
-  const items = (state.backWikotInfoCache && state.backWikotInfoCache.items) || [];
-  const it = items.find(x => x.id === itemId);
+  if (!state.backWikotInfoCache) await loadBackWikotInfo();
+  let items = (state.backWikotInfoCache && state.backWikotInfoCache.items) || [];
+  let it = items.find(x => x.id === itemId);
+  // Si pas dans le cache (orchestrateur qui ouvre direct depuis le chat), on force un reload
+  if (!it) {
+    await loadBackWikotInfo();
+    items = (state.backWikotInfoCache && state.backWikotInfoCache.items) || [];
+    it = items.find(x => x.id === itemId);
+  }
   if (!it) {
     showToast('Information introuvable.', 'error');
     return;
@@ -1516,14 +1521,25 @@ async function selectBackWikotTaskTarget(taskKind, taskId) {
   state.backWikotTargetId = taskId;
   state.backWikotSubMode = 'update';
 
-  // Charger le détail de la tâche
+  // Charger le détail de la tâche — force un reload si le cache est vide
+  // (cas où l'orchestrateur arrive direct depuis le chat root)
+  if (!state.backWikotTasksCache && typeof loadBackWikotTasksForHub === 'function') {
+    try { await loadBackWikotTasksForHub(); } catch {}
+  }
   let task = null;
+  const cache = state.backWikotTasksCache || { templates: [], instances: [] };
   if (taskKind === 'template') {
-    const cache = state.backWikotTasksCache || { templates: [], instances: [] };
     task = (cache.templates || []).find(t => t.id === taskId);
   } else {
-    const cache = state.backWikotTasksCache || { templates: [], instances: [] };
     task = (cache.instances || []).find(t => t.id === taskId);
+  }
+  // Filet de sécurité : si toujours rien, on retente un reload
+  if (!task && typeof loadBackWikotTasksForHub === 'function') {
+    try { await loadBackWikotTasksForHub(); } catch {}
+    const c2 = state.backWikotTasksCache || { templates: [], instances: [] };
+    task = taskKind === 'template'
+      ? (c2.templates || []).find(t => t.id === taskId)
+      : (c2.instances || []).find(t => t.id === taskId);
   }
   if (!task) {
     showToast('Tâche introuvable.', 'error');

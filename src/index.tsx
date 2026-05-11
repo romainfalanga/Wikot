@@ -3628,68 +3628,221 @@ Le content doit être structuré et complet (codes, horaires précis, contacts f
     messages.push({ role: 'user', content })
   }
 
-  let resp
-  try {
-    resp = await callOpenRouter(apiKey, messages, tools)
-  } catch (e: any) {
-    console.error('[wikot:router] openrouter_error msg=' + e.message)
-    return c.json({ error: 'Erreur Back Wikot : ' + e.message }, 500)
-  }
-
-  const choice = resp.choices?.[0]
-  const msg = choice?.message
-  const toolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : []
-
-  // Pas de tool_call : fallback texte
-  if (toolCalls.length === 0) {
-    const fallback = (msg?.content || '').trim() || "Peux-tu reformuler ? Je gère procédures, infos, conversations et tâches."
-    console.log('[wikot:router] no_tool_call fallback_len=' + fallback.length)
-    return c.json({ actions: [{ tool: 'respond_directly', args: { text: fallback } }] })
-  }
-
-  // Parse et valide chaque tool_call
+  // ====================================================================
+  // BOUCLE PLANNER-EXECUTOR — Gemini renvoie souvent UN seul tool_call par tour.
+  // Après chaque action structurante (enter_workflow, start_create, select_*),
+  // on simule le nouvel état UI et on rappelle le LLM pour qu'il enchaîne
+  // (typiquement : prefill_form puis ask_followup). Max 5 itérations.
+  // ====================================================================
   const actions: Array<{ tool: string; args: any }> = []
-  for (const tc of toolCalls) {
-    const fnName = tc.function?.name
-    let fnArgs: any = {}
-    try { fnArgs = JSON.parse(tc.function?.arguments || '{}') } catch {}
+  let simStep = currentStep                  // 'home' | 'select-target' | 'workshop'
+  let simWorkflow = currentWorkflow          // 'gerer_procedures' | ...
+  let simSubMode: 'create' | 'edit' | null = null
+  let simSelectedKind: string | null = null
+  let simSelectedId: number | null = null
+  let prefilledOnce = false
+  let askedFollowup = false
+  let askedDirect = false
 
-    if (fnName === 'respond_directly') {
-      const text = String(fnArgs.text || '').trim().slice(0, 600)
-      if (text) actions.push({ tool: 'respond_directly', args: { text } })
-    } else if (fnName === 'enter_workflow') {
-      const wf = String(fnArgs.workflow || '')
-      if (allowedWorkflows.includes(wf)) actions.push({ tool: 'enter_workflow', args: { workflow: wf } })
-    } else if (fnName === 'start_create') {
-      actions.push({ tool: 'start_create', args: {} })
-    } else if (fnName === 'select_procedure') {
-      const id = parseInt(fnArgs.id)
-      if (id > 0) actions.push({ tool: 'select_procedure', args: { id } })
-    } else if (fnName === 'select_info') {
-      const id = parseInt(fnArgs.id)
-      if (id > 0) actions.push({ tool: 'select_info', args: { id } })
-    } else if (fnName === 'select_task') {
-      const id = parseInt(fnArgs.id)
-      const kind = String(fnArgs.kind || '')
-      if (id > 0 && (kind === 'template' || kind === 'instance')) {
-        actions.push({ tool: 'select_task', args: { id, kind } })
-      }
-    } else if (fnName === 'prefill_form') {
-      const patches = fnArgs.patches && typeof fnArgs.patches === 'object' ? fnArgs.patches : null
-      if (patches) actions.push({ tool: 'prefill_form', args: { patches } })
-    } else if (fnName === 'ask_followup') {
-      const text = String(fnArgs.text || '').trim().slice(0, 600)
-      if (text) actions.push({ tool: 'ask_followup', args: { text } })
-    } else if (fnName === 'back_to_home') {
-      actions.push({ tool: 'back_to_home', args: {} })
+  // États simulés ↔ aides au LLM
+  const findProcedureById = (id: number) => procedures.find(p => p.id === id)
+  const findInfoById = (id: number) => infos.find(p => p.id === id)
+  const findTaskById = (kind: string, id: number) =>
+    (kind === 'template' ? taskTemplates.find(t => t.id === id) : taskInstances.find(t => t.id === id))
+
+  // Étapes du planner
+  const MAX_ITERS = 5
+  let iter = 0
+  let lastAssistantContent = ''
+
+  while (iter < MAX_ITERS) {
+    iter++
+
+    // Au-delà de l'itération 1, on ré-injecte un système d'état dynamique
+    // pour que le LLM voie où l'a mené sa précédente action et continue.
+    if (iter > 1) {
+      const stateBrief = `# ÉTAT UI APRÈS TES PRÉCÉDENTES ACTIONS
+- step = ${simStep}
+- workflow_mode = ${simWorkflow || 'aucun'}
+- sub_mode = ${simSubMode || 'aucun'}
+- target = ${simSelectedKind ? simSelectedKind + '#' + simSelectedId : 'aucune'}
+- prefill déjà fait ? ${prefilledOnce ? 'oui' : 'non'}
+- question de raffinage déjà posée ? ${askedFollowup ? 'oui' : 'non'}
+
+# CONSIGNE
+Continue d'exécuter la demande utilisateur jusqu'au bout. Si tu viens d'ouvrir un atelier (step=workshop) sans prefill, fais MAINTENANT le prefill_form puis ask_followup. Si tout est fait, renvoie juste un respond_directly de confirmation court (1 phrase). N'ouvre PAS un nouveau workflow sauf si l'user le demande explicitement.`
+      messages.push({ role: 'system', content: stateBrief })
     }
+
+    let resp
+    try {
+      resp = await callOpenRouter(apiKey, messages, tools)
+    } catch (e: any) {
+      console.error('[wikot:router] openrouter_error iter=' + iter + ' msg=' + e.message)
+      // Si on a déjà des actions, on les renvoie ; sinon erreur
+      if (actions.length > 0) break
+      return c.json({ error: 'Erreur Back Wikot : ' + e.message }, 500)
+    }
+
+    const choice = resp.choices?.[0]
+    const msg = choice?.message
+    const toolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : []
+    if (msg?.content) lastAssistantContent = String(msg.content)
+
+    // Pas de tool_call : on s'arrête et on utilise le contenu textuel comme fallback
+    if (toolCalls.length === 0) {
+      if (actions.length === 0) {
+        const fallback = lastAssistantContent.trim() || "Peux-tu reformuler ? Je gère procédures, infos, conversations et tâches."
+        actions.push({ tool: 'respond_directly', args: { text: fallback } })
+      }
+      break
+    }
+
+    // On enregistre la réponse de l'assistant (avec ses tool_calls) pour la prochaine boucle
+    const assistantMessage: any = {
+      role: 'assistant',
+      content: msg?.content || '',
+      tool_calls: toolCalls
+    }
+    messages.push(assistantMessage)
+
+    // Parse, valide, applique
+    let didStructuralAction = false
+    let didTerminal = false
+    for (const tc of toolCalls) {
+      const fnName = tc.function?.name
+      let fnArgs: any = {}
+      try { fnArgs = JSON.parse(tc.function?.arguments || '{}') } catch {}
+      const tcId = tc.id || ('call_' + Math.random().toString(36).slice(2, 10))
+      let toolResultText = 'ok'
+
+      if (fnName === 'respond_directly') {
+        const text = String(fnArgs.text || '').trim().slice(0, 600)
+        if (text) { actions.push({ tool: 'respond_directly', args: { text } }); askedDirect = true; didTerminal = true }
+      } else if (fnName === 'enter_workflow') {
+        const wf = String(fnArgs.workflow || '')
+        if (allowedWorkflows.includes(wf)) {
+          actions.push({ tool: 'enter_workflow', args: { workflow: wf } })
+          simWorkflow = wf
+          simStep = 'select-target'
+          simSubMode = null
+          simSelectedKind = null
+          simSelectedId = null
+          didStructuralAction = true
+          toolResultText = `Atelier ${wf} ouvert. step=select-target. Tu peux maintenant start_create() ou select_${wf.replace('gerer_', '')}(id).`
+        } else {
+          toolResultText = `Workflow ${wf} non autorisé.`
+        }
+      } else if (fnName === 'start_create') {
+        if (simWorkflow) {
+          actions.push({ tool: 'start_create', args: {} })
+          simStep = 'workshop'
+          simSubMode = 'create'
+          didStructuralAction = true
+          toolResultText = `Formulaire vierge ouvert dans ${simWorkflow}. step=workshop, sub_mode=create. Enchaîne avec prefill_form puis ask_followup.`
+        } else {
+          toolResultText = `Ouvre d'abord un workflow.`
+        }
+      } else if (fnName === 'select_procedure') {
+        const id = parseInt(fnArgs.id)
+        const proc = id > 0 ? findProcedureById(id) : null
+        if (proc) {
+          if (simWorkflow !== 'gerer_procedures') {
+            actions.push({ tool: 'enter_workflow', args: { workflow: 'gerer_procedures' } })
+            simWorkflow = 'gerer_procedures'
+          }
+          actions.push({ tool: 'select_procedure', args: { id } })
+          simStep = 'workshop'
+          simSubMode = 'edit'
+          simSelectedKind = 'procedure'
+          simSelectedId = id
+          didStructuralAction = true
+          toolResultText = `Procédure "${proc.title}" (id=${id}) chargée en édition. Catégorie=${proc.category_id}. Enchaîne avec prefill_form puis ask_followup.`
+        } else {
+          toolResultText = `Procédure id=${fnArgs.id} introuvable. Choisis dans la liste ou propose start_create.`
+        }
+      } else if (fnName === 'select_info') {
+        const id = parseInt(fnArgs.id)
+        const inf = id > 0 ? findInfoById(id) : null
+        if (inf) {
+          if (simWorkflow !== 'gerer_infos') {
+            actions.push({ tool: 'enter_workflow', args: { workflow: 'gerer_infos' } })
+            simWorkflow = 'gerer_infos'
+          }
+          actions.push({ tool: 'select_info', args: { id } })
+          simStep = 'workshop'
+          simSubMode = 'edit'
+          simSelectedKind = 'info_item'
+          simSelectedId = id
+          didStructuralAction = true
+          toolResultText = `Info "${inf.title}" (id=${id}) chargée en édition. Enchaîne avec prefill_form puis ask_followup.`
+        } else {
+          toolResultText = `Info id=${fnArgs.id} introuvable.`
+        }
+      } else if (fnName === 'select_task') {
+        const id = parseInt(fnArgs.id)
+        const kind = String(fnArgs.kind || '')
+        const tsk = id > 0 && (kind === 'template' || kind === 'instance') ? findTaskById(kind, id) : null
+        if (tsk) {
+          if (simWorkflow !== 'gerer_taches') {
+            actions.push({ tool: 'enter_workflow', args: { workflow: 'gerer_taches' } })
+            simWorkflow = 'gerer_taches'
+          }
+          actions.push({ tool: 'select_task', args: { id, kind } })
+          simStep = 'workshop'
+          simSubMode = 'edit'
+          simSelectedKind = 'task_' + kind
+          simSelectedId = id
+          didStructuralAction = true
+          toolResultText = `Tâche ${kind} "${tsk.title}" (id=${id}) chargée. Enchaîne avec prefill_form puis ask_followup.`
+        } else {
+          toolResultText = `Tâche ${kind}#${fnArgs.id} introuvable.`
+        }
+      } else if (fnName === 'prefill_form') {
+        const patches = fnArgs.patches && typeof fnArgs.patches === 'object' ? fnArgs.patches : null
+        if (patches && simStep === 'workshop') {
+          actions.push({ tool: 'prefill_form', args: { patches } })
+          prefilledOnce = true
+          toolResultText = `Form prérempli avec ${Object.keys(patches).length} champ(s). Pose maintenant ta question de raffinage via ask_followup.`
+        } else if (!patches) {
+          toolResultText = `patches manquant.`
+        } else {
+          toolResultText = `Pas en workshop, prefill ignoré. Ouvre d'abord un atelier (start_create ou select_*).`
+        }
+      } else if (fnName === 'ask_followup') {
+        const text = String(fnArgs.text || '').trim().slice(0, 600)
+        if (text) { actions.push({ tool: 'ask_followup', args: { text } }); askedFollowup = true; didTerminal = true }
+      } else if (fnName === 'back_to_home') {
+        actions.push({ tool: 'back_to_home', args: {} })
+        simStep = 'home'
+        simWorkflow = null
+        simSubMode = null
+        simSelectedKind = null
+        simSelectedId = null
+        didStructuralAction = true
+        toolResultText = `Retour au menu. Tu peux ouvrir un autre workflow si besoin.`
+      } else {
+        toolResultText = `Tool ${fnName} inconnu.`
+      }
+
+      // Ajout du tool_result pour la prochaine itération
+      messages.push({ role: 'tool', tool_call_id: tcId, content: toolResultText })
+    }
+
+    // Conditions d'arrêt :
+    // - L'assistant a terminé (ask_followup OU respond_directly comme dernière action)
+    // - Aucune action structurante → on suppose qu'il a fini
+    if (didTerminal) break
+    if (!didStructuralAction) break
+    // Si on est en workshop avec prefill + followup déjà faits, on s'arrête
+    if (prefilledOnce && askedFollowup) break
   }
 
   if (actions.length === 0) {
     return c.json({ actions: [{ tool: 'respond_directly', args: { text: "Peux-tu reformuler ta demande ?" } }] })
   }
 
-  console.log('[wikot:router] actions_count=' + actions.length + ' tools=' + actions.map(a => a.tool).join(','))
+  console.log('[wikot:router] iters=' + iter + ' actions_count=' + actions.length + ' tools=' + actions.map(a => a.tool).join(','))
   return c.json({ actions })
 })
 
@@ -3805,15 +3958,23 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const tools = buildWikotTools(mode, canEditProc, canEditInf, workflowMode)
 
   // Construire les messages OpenAI-compatible
-  // Pour le DERNIER message utilisateur uniquement, si audio présent, on inline en multimodal.
-  // (On évite d'inliner toute la conversation pour éviter de payer le coût audio à chaque tour.)
+  // On inline en multimodal les N derniers messages user avec audio (par défaut 3).
+  // Ça permet à Gemini de comprendre les questions de suivi qui réfèrent à un vocal précédent
+  // sans payer le coût audio sur toute la conversation.
   const historyArr = history.results as any[]
   const oaiMessages: any[] = [{ role: 'system', content: systemPrompt }]
+  // Repérer les index des N derniers user-messages avec audio_key
+  const MAX_INLINED_AUDIOS = 3
+  const audioUserIdx: number[] = []
+  for (let i = historyArr.length - 1; i >= 0 && audioUserIdx.length < MAX_INLINED_AUDIOS; i--) {
+    const m = historyArr[i]
+    if (m.role === 'user' && m.audio_key) audioUserIdx.push(i)
+  }
+  const inlineSet = new Set<number>(audioUserIdx)
   for (let i = 0; i < historyArr.length; i++) {
     const m = historyArr[i]
-    const isLastUser = (i === historyArr.length - 1) && m.role === 'user' && m.audio_key
     if (m.role === 'user') {
-      if (isLastUser && c.env.AUDIO_BUCKET) {
+      if (inlineSet.has(i) && c.env.AUDIO_BUCKET) {
         // Construit un message multimodal avec parts texte + audio
         const audio = await r2AudioToDataUri(c.env.AUDIO_BUCKET, m.audio_key)
         const parts: any[] = []
@@ -3825,8 +3986,8 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         }
         oaiMessages.push({ role: 'user', content: parts })
       } else {
-        // Si message ancien avec audio mais pas inliné, on l'indique en texte pour le contexte
-        const prefix = m.audio_key ? '[message vocal] ' : ''
+        // Si message ancien avec audio mais pas inliné (au-delà des N derniers), on l'indique en texte
+        const prefix = m.audio_key ? '[message vocal précédent] ' : ''
         oaiMessages.push({ role: 'user', content: prefix + (m.content || '') })
       }
     } else if (m.role === 'assistant') {

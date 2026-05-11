@@ -2154,25 +2154,43 @@ async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName
     return `Tu es **Wikot**, le moteur de recherche conversationnel du **${hotelName}**.
 
 ## Ta mission UNIQUE
-Tu reçois une question d'employé. Tu identifies LE OU LES bloc(s) le(s) plus pertinent(s) parmi : procédures, informations, MESSAGES de chat, TÂCHES. Tu les retournes via l'outil \`select_answer\` sous forme de tableau \`blocks\`. **Tu NE rédiges JAMAIS de texte de réponse.** L'interface affiche directement les cartes des ressources sélectionnées.
+Tu reçois une question d'employé. Tu cherches la réponse dans les **4 univers** de l'hôtel :
+1. **Procédures** (manuels opérationnels, étapes)
+2. **Informations** (données de l'hôtel : horaires, codes, contacts, etc.)
+3. **Conversations** (messages du chat interne)
+4. **Tâches** (récurrentes ou ponctuelles, assignées ou non)
+
+Tu retournes 1 à 5 blocs pertinents via \`select_answer\`. **Tu NE rédiges JAMAIS de texte de réponse.** L'interface affiche directement les cartes des ressources sélectionnées.
 
 ## Contexte utilisateur
-- ID utilisateur courant : **${user.id}** (à utiliser pour "mes tâches", "messages qui m'ont été destinés", etc.)
-- Nom : ${user.name}
+- ID utilisateur courant : **${user.id}** (déjà résolu — n'appelle PAS \`list_employees\` pour te trouver)
+- Nom : **${user.name}**
 - Date du jour : **${todayISO}**
 
-## Outils disponibles
+## Outils — UTILISE LES SHORTCUTS EN PRIORITÉ
+Les "shortcuts" résolvent les questions perso fréquentes en 1 SEUL appel (identité résolue côté serveur). **Préfère-les systématiquement** quand la question est centrée sur l'utilisateur :
+
+### SHORTCUTS (priorité absolue)
+- **\`get_my_tasks\`** → "ma prochaine tâche", "mes tâches du jour", "qu'est-ce que je dois faire". Param \`when\`: \`next\` (LA prochaine, 1 résultat) / \`today\` / \`tomorrow\` / \`this_week\` / \`overdue\` / \`upcoming\` / \`all\`. Param \`status\`: \`pending\` (défaut) / \`done\` / \`all\`.
+- **\`get_messages_for_me\`** → "dernier message qui m'est destiné", "messages qui me concernent", "qui m'a écrit". Retourne directement les messages avec mention @${user.name.split(' ')[0]} OU début "${user.name.split(' ')[0]}," OU "Pour ${user.name.split(' ')[0]}" OU "À ${user.name.split(' ')[0]}".
+- **\`get_my_recent_messages\`** → "mon dernier message", "qu'est-ce que j'ai dit récemment".
+- **\`get_latest_messages\`** → "derniers messages dans le salon X", "quoi de neuf dans le chat".
+
+### Procédures & Infos
 - \`search_procedures\` / \`search_procedure_steps\` / \`get_procedure\` : procédures et étapes
 - \`search_hotel_info\` / \`list_info_categories\` / \`get_hotel_info_item\` : informations de l'hôtel
-- \`list_groups\` : arborescence des salons/channels (à appeler AVANT \`search_messages\` si besoin de filtrer par salon)
-- \`list_employees\` : annuaire (à appeler AVANT \`search_messages\` ou \`search_tasks\` pour résoudre un prénom en \`user_id\`)
-- \`search_messages\` : messages du chat. Filtres : \`q\`, \`channel_id\`, \`group_id\`, \`author_id\`, \`mentions_user_id\` (← pour "messages qui m'ont été destinés", passe \`mentions_user_id: ${user.id}\`), \`after\`, \`before\`
-- \`search_tasks\` : tâches (templates récurrents + instances ponctuelles). Filtres : \`q\`, \`assignee_id\` (← pour "mes tâches", passe \`assignee_id: ${user.id}\`), \`status\` (pending/done/all), \`after\`, \`before\`
+
+### Recherches avancées (si shortcut insuffisant)
+- \`search_messages\` : par mot-clé / auteur / mention d'un AUTRE user. Triés par récent d'abord. Param \`mentions_user_id\` détecte @prénom, "Prénom,", "Pour Prénom", "À Prénom".
+- \`search_tasks\` : pour qui doit faire X, tâches contenant tel mot-clé. Param \`when\` (today/tomorrow/this_week/overdue/upcoming/all) évite de calculer des dates.
+- \`list_groups\` : arborescence salons/channels (uniquement si besoin de filtrer par salon précis)
+- \`list_employees\` : annuaire (uniquement pour résoudre le prénom d'un AUTRE utilisateur en user_id)
 
 ## Protocole strict
-1. Appelle les outils de recherche pertinents selon le sujet de la question.
-2. Si plusieurs résultats possibles, affine avec \`get_procedure\` / \`get_hotel_info_item\`.
-3. Termine TOUJOURS par UN appel à \`select_answer\` avec un tableau \`blocks\` (1 à 5 blocs).
+1. **Si la question parle de TOI** (mes tâches, mes messages, qui m'a écrit…) → 1 SEUL shortcut, pas de chaînage.
+2. **Si la question parle d'un autre user nommé** → \`list_employees\` → \`search_messages\` / \`search_tasks\`.
+3. **Si la question est procédure/info** → \`search_*\` directs.
+4. Termine TOUJOURS par UN appel à \`select_answer\` avec un tableau \`blocks\` (1 à 5 blocs).
 
 ## Types de blocs disponibles dans \`blocks\`
 - \`{type:"procedure", id}\` → procédure ENTIÈRE (« Comment je fais un check-in ? »)
@@ -2549,7 +2567,7 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
       type: 'function',
       function: {
         name: 'search_messages',
-        description: 'Recherche dans l\'historique des messages du chat de l\'hôtel. Utile pour répondre à "qui a dit X", "quel est le dernier message qui m\'est destiné", "qui était responsable de Y". Retourne {results: [{id, channel_id, channel_name, group_name, author_id, author_name, created_at, content}]}.',
+        description: 'Recherche dans l\'historique des messages du chat de l\'hôtel. Utile pour "qui a dit X", "qui était responsable de Y", "messages contenant tel mot-clé". POUR "messages qui me sont destinés" préfère `get_messages_for_me`. POUR "mon dernier message" préfère `get_my_recent_messages`. POUR "derniers messages globaux" préfère `get_latest_messages`. Résultats triés du plus récent au plus ancien par défaut.',
         parameters: {
           type: 'object',
           properties: {
@@ -2557,7 +2575,7 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
             channel_id: { type: 'integer' },
             group_id: { type: 'integer' },
             author_id: { type: 'integer' },
-            mentions_user_id: { type: 'integer', description: 'Restreindre aux messages qui mentionnent ce user_id (utilisé pour "messages qui me sont destinés")' },
+            mentions_user_id: { type: 'integer', description: 'Restreindre aux messages qui mentionnent ce user_id (détecte @prénom, "Prénom,", "Pour Prénom", "À Prénom")' },
             after: { type: 'string', description: 'YYYY-MM-DD' },
             before: { type: 'string', description: 'YYYY-MM-DD' },
             limit: { type: 'integer', description: '1-50, défaut 10' }
@@ -2569,16 +2587,78 @@ function buildWikotTools(mode: 'standard' | 'max', canEditProc: boolean, canEdit
       type: 'function',
       function: {
         name: 'search_tasks',
-        description: 'Recherche dans les tâches (templates récurrents + instances ponctuelles). Utile pour répondre à "quelle est ma prochaine tâche", "qui doit faire X", "quelles tâches sont en retard". Retourne {results: [{kind, id, title, description, task_date, suggested_time, priority, status, assignees}]}. kind = "template" ou "instance".',
+        description: 'Recherche dans les tâches (templates récurrents + instances ponctuelles). Utile pour "qui doit faire X", "quelles tâches contiennent telle action". POUR "MES TÂCHES" préfère `get_my_tasks` (plus rapide).',
         parameters: {
           type: 'object',
           properties: {
             q: { type: 'string', description: 'Mot-clé sur titre/description' },
-            assignee_id: { type: 'integer', description: 'Restreindre aux tâches attribuées à ce user_id (utiliser pour "mes tâches")' },
+            assignee_id: { type: 'integer', description: 'Restreindre aux tâches attribuées à ce user_id' },
             status: { type: 'string', enum: ['pending', 'done', 'all'], description: 'Filtre par statut (instances). défaut: all' },
+            when: { type: 'string', enum: ['today', 'tomorrow', 'this_week', 'overdue', 'upcoming', 'all'], description: 'Raccourci période. today/tomorrow/this_week/overdue/upcoming. Si fourni, ignore after/before.' },
             after: { type: 'string', description: 'YYYY-MM-DD (instances : task_date >= after)' },
             before: { type: 'string', description: 'YYYY-MM-DD (instances : task_date <= before)' },
             limit: { type: 'integer', description: '1-30, défaut 10' }
+          }
+        }
+      }
+    })
+    // ============================================
+    // TOOLS SHORTCUT — résolvent en 1 seul appel les questions perso fréquentes
+    // (évite de chaîner list_employees → search_*)
+    // ============================================
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'get_my_tasks',
+        description: 'SHORTCUT : retourne directement les tâches assignées à l\'UTILISATEUR COURANT (toi-même). À utiliser pour "ma prochaine tâche", "mes tâches du jour", "qu\'est-ce que je dois faire", etc. Pas besoin d\'appeler list_employees. Retourne {results: [...]} avec mêmes champs que search_tasks. Trié par date/heure croissante.',
+        parameters: {
+          type: 'object',
+          properties: {
+            when: { type: 'string', enum: ['next', 'today', 'tomorrow', 'this_week', 'overdue', 'upcoming', 'all'], description: 'Période. "next" = la PROCHAINE tâche à faire (1 résultat) ; "today" = aujourd\'hui ; "overdue" = en retard. Défaut: upcoming (toutes les tâches futures + aujourd\'hui).' },
+            status: { type: 'string', enum: ['pending', 'done', 'all'], description: 'Filtre statut. Défaut: pending (uniquement les non-faites)' },
+            limit: { type: 'integer', description: '1-20, défaut 10' }
+          }
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'get_messages_for_me',
+        description: 'SHORTCUT : retourne les derniers messages du chat qui te sont DESTINÉS (mentions @prénom, "Prénom,", "Pour Prénom", "À Prénom"). À utiliser pour "dernier message qui m\'est destiné", "messages qui me concernent", "qui m\'a écrit récemment". Pas besoin d\'appeler list_employees. Trié du plus récent au plus ancien.',
+        parameters: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', description: '1-20, défaut 5' },
+            after: { type: 'string', description: 'YYYY-MM-DD (optionnel)' }
+          }
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'get_my_recent_messages',
+        description: 'SHORTCUT : retourne tes DERNIERS messages envoyés (auteur = utilisateur courant). Pour "qu\'est-ce que j\'ai dit récemment", "mon dernier message", etc. Trié du plus récent au plus ancien.',
+        parameters: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', description: '1-20, défaut 5' }
+          }
+        }
+      }
+    })
+    tools.push({
+      type: 'function',
+      function: {
+        name: 'get_latest_messages',
+        description: 'SHORTCUT : retourne les derniers messages du chat (tous salons ou un salon précis). Pour "qu\'est-ce qui s\'est dit récemment", "dernières news dans le salon X". Trié du plus récent au plus ancien.',
+        parameters: {
+          type: 'object',
+          properties: {
+            channel_id: { type: 'integer', description: 'Filtrer sur un salon précis (optionnel)' },
+            group_id: { type: 'integer', description: 'Filtrer sur un groupe (optionnel)' },
+            limit: { type: 'integer', description: '1-20, défaut 5' }
           }
         }
       }
@@ -3504,7 +3584,7 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
         oaiMessages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ ok: true, message: 'Proposition enregistrée, l\'utilisateur va voir un diff et pouvoir valider.' }) })
       }
       // === READ TOOLS PARTAGÉS (multi-workflows Phase 4) ===
-      else if (['list_groups', 'list_employees', 'search_messages', 'search_tasks', 'list_tasks', 'get_task'].includes(fnName)) {
+      else if (['list_groups', 'list_employees', 'search_messages', 'search_tasks', 'list_tasks', 'get_task', 'get_my_tasks', 'get_messages_for_me', 'get_my_recent_messages', 'get_latest_messages'].includes(fnName)) {
         let toolResult: any = { ok: false }
         try {
           if (fnName === 'list_groups') {
@@ -3546,14 +3626,22 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
             if (fnArgs.mentions_user_id) {
               const mid = parseInt(String(fnArgs.mentions_user_id))
               if (Number.isFinite(mid)) {
-                // Pas de colonne mentions_json : on détecte les mentions par pattern textuel @<prénom>
-                // On récupère le prénom/nom de l'utilisateur ciblé puis on filtre via LIKE.
+                // Détection multi-pattern (pas de colonne mentions_json) :
+                //  - @Prénom ou @Nom complet
+                //  - "Prénom," / "Prénom :" en début de message
+                //  - "Pour Prénom" / "À Prénom" anywhere
                 const target = await c.env.DB.prepare('SELECT name FROM users WHERE id = ? AND hotel_id = ?').bind(mid, user.hotel_id).first<any>()
                 const fullName = (target?.name || '').trim()
                 if (fullName) {
                   const firstName = fullName.split(/\s+/)[0]
-                  conds.push('(m.content LIKE ? OR m.content LIKE ?)')
-                  params.push(`%@${firstName}%`, `%@${fullName}%`)
+                  const patterns = [
+                    `%@${firstName}%`, `%@${fullName}%`,
+                    `${firstName},%`, `${firstName} ,%`, `${firstName}:%`, `${firstName} :%`,
+                    `%Pour ${firstName}%`, `%pour ${firstName}%`,
+                    `%À ${firstName}%`, `%à ${firstName}%`, `%A ${firstName}%`
+                  ]
+                  conds.push('(' + patterns.map(() => 'm.content LIKE ?').join(' OR ') + ')')
+                  params.push(...patterns)
                 } else {
                   // Cible introuvable : on force un résultat vide pour éviter de leak
                   conds.push('1 = 0')
@@ -3587,8 +3675,25 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
             const q = fnArgs.q && String(fnArgs.q).trim() ? '%' + String(fnArgs.q).trim() + '%' : null
             const assigneeId = fnArgs.assignee_id ? parseInt(String(fnArgs.assignee_id)) : null
             const statusFilter = ['pending', 'done'].includes(String(fnArgs.status)) ? String(fnArgs.status) : null
-            const after = /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.after || '')) ? String(fnArgs.after) : null
-            const before = /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.before || '')) ? String(fnArgs.before) : null
+            // Shortcut "when" : convertit en after/before
+            const whenPreset = String(fnArgs.when || '').toLowerCase()
+            let after: string | null = /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.after || '')) ? String(fnArgs.after) : null
+            let before: string | null = /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.before || '')) ? String(fnArgs.before) : null
+            if (['today', 'tomorrow', 'this_week', 'overdue', 'upcoming'].includes(whenPreset)) {
+              const today = new Date(); today.setHours(0,0,0,0)
+              const toISO = (d: Date) => d.toISOString().slice(0,10)
+              if (whenPreset === 'today') { after = toISO(today); before = toISO(today) }
+              else if (whenPreset === 'tomorrow') { const t = new Date(today); t.setDate(t.getDate()+1); after = toISO(t); before = toISO(t) }
+              else if (whenPreset === 'this_week') {
+                // Du lundi au dimanche
+                const dow = today.getDay() || 7
+                const monday = new Date(today); monday.setDate(monday.getDate() - (dow - 1))
+                const sunday = new Date(monday); sunday.setDate(sunday.getDate() + 6)
+                after = toISO(monday); before = toISO(sunday)
+              }
+              else if (whenPreset === 'overdue') { before = toISO(new Date(today.getTime() - 86400000)) /* hier */ }
+              else if (whenPreset === 'upcoming') { after = toISO(today) }
+            }
             const limit = Math.max(1, Math.min(30, parseInt(String(fnArgs.limit || 10))))
 
             const results: any[] = []
@@ -3659,7 +3764,120 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
             }
 
             toolResult = { results }
-          } else if (fnName === 'list_tasks') {
+          }
+          // ============================================
+          // SHORTCUTS — 1 seul appel, identité résolue côté serveur
+          // ============================================
+          else if (fnName === 'get_my_tasks') {
+            const whenPreset = String(fnArgs.when || 'upcoming').toLowerCase()
+            const statusFilter = ['pending', 'done'].includes(String(fnArgs.status)) ? String(fnArgs.status) : 'pending'
+            const limit = Math.max(1, Math.min(20, parseInt(String(fnArgs.limit || (whenPreset === 'next' ? 1 : 10)))))
+            const today = new Date(); today.setHours(0,0,0,0)
+            const toISO = (d: Date) => d.toISOString().slice(0,10)
+            let after: string | null = null
+            let before: string | null = null
+            if (whenPreset === 'today') { after = toISO(today); before = toISO(today) }
+            else if (whenPreset === 'tomorrow') { const t = new Date(today); t.setDate(t.getDate()+1); after = toISO(t); before = toISO(t) }
+            else if (whenPreset === 'this_week') {
+              const dow = today.getDay() || 7
+              const monday = new Date(today); monday.setDate(monday.getDate() - (dow - 1))
+              const sunday = new Date(monday); sunday.setDate(sunday.getDate() + 6)
+              after = toISO(monday); before = toISO(sunday)
+            }
+            else if (whenPreset === 'overdue') { before = toISO(new Date(today.getTime() - 86400000)) }
+            else if (whenPreset === 'next' || whenPreset === 'upcoming') { after = toISO(today) }
+            // 'all' = pas de filtre date
+            const instConds: string[] = ['ti.hotel_id = ?']
+            const instParams: any[] = [user.hotel_id]
+            if (statusFilter !== 'all') { instConds.push('ti.status = ?'); instParams.push(statusFilter) }
+            if (after) { instConds.push('ti.task_date >= ?'); instParams.push(after) }
+            if (before) { instConds.push('ti.task_date <= ?'); instParams.push(before) }
+            instConds.push('EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_instance_id = ti.id AND ta.user_id = ?)')
+            instParams.push(user.id)
+            const inst = await c.env.DB.prepare(`
+              SELECT ti.id, ti.title, ti.description, ti.task_date, ti.suggested_time,
+                     ti.priority, ti.status, ti.category, ti.template_id
+              FROM task_instances ti
+              WHERE ${instConds.join(' AND ')}
+              ORDER BY ti.task_date ASC, ti.suggested_time ASC, ti.id ASC
+              LIMIT ?
+            `).bind(...instParams, limit).all()
+            const results = (inst.results as any[]).map(r => ({
+              kind: 'instance', id: r.id, title: r.title, description: r.description,
+              task_date: r.task_date, suggested_time: r.suggested_time, priority: r.priority,
+              status: r.status, category: r.category, template_id: r.template_id,
+              assignees: [{ user_id: user.id, name: user.name }]
+            }))
+            toolResult = { results, user_id: user.id, when: whenPreset }
+          }
+          else if (fnName === 'get_messages_for_me') {
+            const limit = Math.max(1, Math.min(20, parseInt(String(fnArgs.limit || 5))))
+            const fullName = (user.name || '').trim()
+            const firstName = fullName.split(/\s+/)[0]
+            const conds: string[] = ['m.hotel_id = ?', 'm.user_id != ?']
+            const params: any[] = [user.hotel_id, user.id]
+            const patterns = [
+              `%@${firstName}%`, `%@${fullName}%`,
+              `${firstName},%`, `${firstName} ,%`, `${firstName}:%`, `${firstName} :%`,
+              `%Pour ${firstName}%`, `%pour ${firstName}%`,
+              `%À ${firstName}%`, `%à ${firstName}%`, `%A ${firstName}%`
+            ]
+            conds.push('(' + patterns.map(() => 'm.content LIKE ?').join(' OR ') + ')')
+            params.push(...patterns)
+            if (fnArgs.after && /^\d{4}-\d{2}-\d{2}$/.test(String(fnArgs.after))) {
+              conds.push('date(m.created_at) >= ?'); params.push(String(fnArgs.after))
+            }
+            const rows = await c.env.DB.prepare(`
+              SELECT m.id, m.channel_id, m.user_id, m.content, m.created_at,
+                     ch.name as channel_name, ch.group_id, g.name as group_name,
+                     u.name as author_name
+              FROM chat_messages m
+              JOIN chat_channels ch ON ch.id = m.channel_id
+              JOIN chat_groups g ON g.id = ch.group_id
+              LEFT JOIN users u ON u.id = m.user_id
+              WHERE ${conds.join(' AND ')}
+              ORDER BY m.created_at DESC, m.id DESC
+              LIMIT ?
+            `).bind(...params, limit).all()
+            toolResult = { results: rows.results, user_id: user.id, looked_up_first_name: firstName }
+          }
+          else if (fnName === 'get_my_recent_messages') {
+            const limit = Math.max(1, Math.min(20, parseInt(String(fnArgs.limit || 5))))
+            const rows = await c.env.DB.prepare(`
+              SELECT m.id, m.channel_id, m.user_id, m.content, m.created_at,
+                     ch.name as channel_name, ch.group_id, g.name as group_name,
+                     u.name as author_name
+              FROM chat_messages m
+              JOIN chat_channels ch ON ch.id = m.channel_id
+              JOIN chat_groups g ON g.id = ch.group_id
+              LEFT JOIN users u ON u.id = m.user_id
+              WHERE m.hotel_id = ? AND m.user_id = ?
+              ORDER BY m.created_at DESC, m.id DESC
+              LIMIT ?
+            `).bind(user.hotel_id, user.id, limit).all()
+            toolResult = { results: rows.results, user_id: user.id }
+          }
+          else if (fnName === 'get_latest_messages') {
+            const limit = Math.max(1, Math.min(20, parseInt(String(fnArgs.limit || 5))))
+            const conds: string[] = ['m.hotel_id = ?']
+            const params: any[] = [user.hotel_id]
+            if (fnArgs.channel_id) { conds.push('m.channel_id = ?'); params.push(parseInt(String(fnArgs.channel_id))) }
+            if (fnArgs.group_id) { conds.push('ch.group_id = ?'); params.push(parseInt(String(fnArgs.group_id))) }
+            const rows = await c.env.DB.prepare(`
+              SELECT m.id, m.channel_id, m.user_id, m.content, m.created_at,
+                     ch.name as channel_name, ch.group_id, g.name as group_name,
+                     u.name as author_name
+              FROM chat_messages m
+              JOIN chat_channels ch ON ch.id = m.channel_id
+              JOIN chat_groups g ON g.id = ch.group_id
+              LEFT JOIN users u ON u.id = m.user_id
+              WHERE ${conds.join(' AND ')}
+              ORDER BY m.created_at DESC, m.id DESC
+              LIMIT ?
+            `).bind(...params, limit).all()
+            toolResult = { results: rows.results }
+          }
+          else if (fnName === 'list_tasks') {
             const tpl = await c.env.DB.prepare(`SELECT id, title, recurrence_type, recurrence_days, monthly_day, priority, suggested_time, duration_min, is_active, category FROM task_templates WHERE hotel_id = ? ORDER BY is_active DESC, title`).bind(user.hotel_id).all()
             const today = new Date().toISOString().slice(0, 10)
             const inst = await c.env.DB.prepare(`SELECT id, template_id, task_date, title, suggested_time, priority, status, category FROM task_instances WHERE hotel_id = ? AND task_date >= ? ORDER BY task_date, suggested_time LIMIT 50`).bind(user.hotel_id, today).all()

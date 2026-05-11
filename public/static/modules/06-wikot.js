@@ -870,7 +870,7 @@ const WIKOT_MODE_CONFIG = {
     inputId: 'wikot-input',
     messagesId: 'wikot-messages',
     emptyTitle: 'Bonjour, je suis Wikot',
-    emptyText: "Je connais toutes les procédures et informations de l'hôtel. Pose-moi une question, je cherche dans la base et je te donne le bouton pour aller voir le détail.",
+    emptyText: "Je connais toutes les procédures, informations, conversations et tâches de l'hôtel. Pose-moi une question — je cherche dans les quatre univers et je te renvoie directement la ou les cartes qui répondent.",
     quickButtons: [
       { label: 'Comment faire un check-in ?', q: 'Comment je fais un check-in ?' },
       { label: 'Horaires de la piscine ?', q: 'Quelles sont les horaires de la piscine ?' },

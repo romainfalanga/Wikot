@@ -4,64 +4,57 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
    APP SHELL — Layout principal (sidebar + main)
    ========================================================= */
 
-/* Conteneur racine : flex horizontal pleine hauteur */
+/* ============== MOBILE FIRST (< 1024px) ==============
+   Stratégie : pas de flex du tout en mobile. Le conteneur racine est
+   un simple bloc pleine largeur. La sidebar est un overlay fixed pur.
+   Le main occupe naturellement 100% du viewport.
+   Aucun moteur flex à exploiter -> aucun moyen de pousser le contenu. */
+
 .app-shell-row {
-  display: flex;
+  display: block;                /* PAS de flex en mobile */
+  width: 100vw;
+  max-width: 100vw;
   height: 100vh;
   height: 100dvh;
-  overflow: hidden;
-  width: 100%;
+  overflow-x: hidden;            /* aucun debordement horizontal possible */
+  overflow-y: hidden;
+  position: relative;
 }
 
-/* Main : prend tout l'espace restant. CRUCIAL :
-   - min-width: 0   → empêche un enfant large de pousser le main
-   - width: 100%    → en mobile, force le main à occuper exactement le viewport
-                       même quand la sidebar est en position:fixed (sortie du flux flex)
-   - overflow-x: hidden → coupe tout débordement horizontal d'un enfant rebelle */
 .app-main {
-  flex: 1 1 0%;
-  min-width: 0;
-  min-height: 0;
+  display: block;
   width: 100%;
   max-width: 100%;
+  height: 100%;
   overflow-x: hidden;
+  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
 }
 
-/* En mobile : on neutralise tout mx-auto + max-w-7xl qui centrerait
-   le contenu dans une zone élargie et le décalerait à droite.
-   Le conteneur de contenu doit être 100% du viewport, marges nulles. */
-@media (max-width: 1023px) {
-  .app-main > #main-content-container {
-    margin-left: 0 !important;
-    margin-right: 0 !important;
-    max-width: 100% !important;
-    width: 100% !important;
-  }
-}
-
-/* === SIDEBAR ===
-   Mobile (< 1024px) : overlay fixe hors écran, sortie complète du flux flex.
-   Desktop (≥ 1024px) : enfant flex statique, largeur fixe 256px. */
+/* Sidebar mobile = overlay fixe hors-écran par défaut */
 .app-sidebar {
   position: fixed;
   top: 0;
   left: 0;
   height: 100vh;
   height: 100dvh;
-  width: 288px;            /* 18rem = w-72 */
+  width: 288px;
+  max-width: 85vw;               /* sur tres petit ecran (<340px) on plafonne */
   z-index: 40;
   display: flex;
   flex-direction: column;
   transform: translateX(-100%);
   transition: transform 0.3s ease;
   will-change: transform;
+  overflow-y: auto;
 }
 
 .app-sidebar.is-open {
   transform: translateX(0);
 }
 
-/* Overlay sombre derrière la sidebar mobile */
+/* Overlay sombre sous la sidebar mobile */
 .app-sidebar-overlay {
   position: fixed;
   inset: 0;
@@ -77,18 +70,44 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   pointer-events: auto;
 }
 
+/* Neutralise le mx-auto + max-w-7xl en mobile :
+   le conteneur de contenu doit etre colle a gauche, 100% de largeur. */
+@media (max-width: 1023px) {
+  .app-main > #main-content-container {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+}
+
+/* ============== DESKTOP (≥ 1024px) ==============
+   La : on REPASSE en flex horizontal classique. La sidebar reprend
+   sa place dans le flux a 256px, le main prend tout le reste. */
+
 @media (min-width: 1024px) {
+  .app-shell-row {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    overflow: hidden;
+  }
   .app-sidebar {
-    position: static;            /* sort du fixed → reprend sa place dans le flex */
-    transform: none !important;  /* annule translate quel que soit l'état */
-    width: 256px;                /* 16rem = lg:w-64 */
-    height: auto;
+    position: static;
+    transform: none !important;
+    width: 256px;
+    max-width: 256px;
+    height: 100%;
     flex-shrink: 0;
     z-index: auto;
     transition: none;
   }
+  .app-main {
+    flex: 1 1 0%;
+    height: 100%;
+  }
   .app-sidebar-overlay {
-    display: none;               /* jamais d'overlay sur desktop */
+    display: none;
   }
 }
 

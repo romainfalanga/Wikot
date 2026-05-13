@@ -3,39 +3,30 @@
 // ============================================
 //
 // Concept : un VRAI tableau Veleda numerique.
-// - L'utilisateur ecrit une info brute (pas de titre).
-// - Choix de la duree de vie : boutons rapides OU date precise.
-// - Une fois sur le tableau, la note peut etre DEPLACEE (drag) et REDIMENSIONNEE
-//   (poignee en bas a droite) par son auteur (ou un admin).
+// - L'utilisateur ayant la permission can_use_veleda peut TOUT faire sur le
+//   tableau : creer, modifier le contenu, deplacer, redimensionner, supprimer
+//   N'IMPORTE QUELLE note (pas seulement les siennes).
+// - Les autres utilisateurs voient le tableau en LECTURE SEULE.
+// - La duree de vie d'une note se choisit obligatoirement via un selecteur
+//   date + heure (datetime-local).
 // - A son expiration, la note disparait automatiquement (lazy cleanup serveur).
 //
 // Etat dans state :
 //   state.veledaNotes        : array des notes actives (avec pos_x, pos_y, width, height)
 //   state.veledaLoading      : bool
 //   state.veledaError        : string|null
-//   state.veledaMe           : { id, role }
+//   state.veledaMe           : { id, role, can_use_veleda }
 //   state.veledaPollingId    : interval id (polling 60s)
 //   state.veledaDraftContent : brouillon en cours de saisie
-//   state.veledaDraftHours   : duree choisie (heures) — null si custom
-//   state.veledaDraftCustomDate : date custom (ISO local) — null sinon
-//   state.veledaShowDatePicker : bool pour afficher le datetime-local
+//   state.veledaDraftExpiresLocal : date+heure choisie pour la nouvelle note (YYYY-MM-DDTHH:mm)
 //   state.veledaDragging     : { id, startX, startY, origX, origY } pendant un drag
 //   state.veledaResizing     : { id, startX, startY, origW, origH } pendant un resize
-
-// Durees rapides proposees (en heures)
-const VELEDA_QUICK_DURATIONS = [
-  { label: '6h',      hours: 6 },
-  { label: '24h',     hours: 24 },
-  { label: '3 jours', hours: 72 },
-  { label: '7 jours', hours: 168 },
-  { label: '14 jours', hours: 336 },
-  { label: '1 mois',  hours: 720 },
-];
+//   state.veledaEditingId    : id de la note en cours d'edition inline (null sinon)
 
 // Limites (alignees avec le backend)
 const VELEDA_MAX_CONTENT_LEN = 2000;
 
-// Couleurs de feutre disponibles (stables par id)
+// Couleurs de feutre (stables par id)
 const VELEDA_INK_COLORS = ['black', 'blue', 'red', 'green'];
 
 // Angles de rotation (stables par id)
@@ -73,13 +64,13 @@ function veledaExpiresLabel(expiresAtIso) {
   const remainingMs = new Date(expiresAtIso).getTime() - Date.now();
   if (remainingMs <= 0) return 'expiree';
   const minutes = Math.floor(remainingMs / 60000);
-  if (minutes < 60) return `expire dans ${minutes} min`;
+  if (minutes < 60) return `disparait dans ${minutes} min`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `expire dans ${hours}h`;
+  if (hours < 24) return `disparait dans ${hours}h`;
   const days = Math.floor(hours / 24);
-  if (days < 30) return `expire dans ${days}j`;
+  if (days < 30) return `disparait dans ${days}j`;
   const months = Math.floor(days / 30);
-  return `expire dans ${months} mois`;
+  return `disparait dans ${months} mois`;
 }
 
 function veledaInkFor(noteId) {
@@ -98,11 +89,21 @@ function veledaToDatetimeLocal(d) {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Recherche d'un emplacement libre (algo simple : on parcourt une grille virtuelle)
-// pour positionner automatiquement une nouvelle note sans chevauchement.
+// Detection de permission cote front (l'autorite reelle est cote serveur)
+function veledaUserCanEdit() {
+  // L'API renvoie can_use_veleda dans state.veledaMe (source de verite serveur).
+  // Fallback sur le state.user pour les cas avant chargement.
+  if (state.veledaMe && state.veledaMe.can_use_veleda !== undefined) {
+    return Number(state.veledaMe.can_use_veleda) === 1;
+  }
+  if (typeof userCanUseVeleda === 'function') return userCanUseVeleda();
+  if (!state.user) return false;
+  return state.user.role === 'admin' || state.user.role === 'super_admin' || Number(state.user.can_use_veleda) === 1;
+}
+
+// Recherche d'un emplacement libre (algo AABB)
 function veledaFindFreeSpot(notes, boardWidth, boardHeight, w, h) {
   const padding = 12;
-  // On essaie en bandes horizontales (top a top), de gauche a droite
   for (let y = padding; y < boardHeight - h - padding; y += 40) {
     for (let x = padding; x < boardWidth - w - padding; x += 40) {
       let collision = false;
@@ -111,7 +112,6 @@ function veledaFindFreeSpot(notes, boardWidth, boardHeight, w, h) {
         const ny = n.pos_y ?? 0;
         const nw = n.width ?? VELEDA_DEFAULT_WIDTH;
         const nh = n.height ?? VELEDA_DEFAULT_HEIGHT;
-        // Test AABB
         if (x < nx + nw + padding && x + w + padding > nx && y < ny + nh + padding && y + h + padding > ny) {
           collision = true;
           break;
@@ -120,7 +120,6 @@ function veledaFindFreeSpot(notes, boardWidth, boardHeight, w, h) {
       if (!collision) return { x, y };
     }
   }
-  // Fallback : en bas a gauche avec un decalage aleatoire
   return { x: 20 + Math.random() * 40, y: boardHeight - h - 40 };
 }
 
@@ -140,7 +139,7 @@ async function loadVeledaNotes() {
     }
     const data = await res.json();
     state.veledaNotes = Array.isArray(data.notes) ? data.notes : [];
-    state.veledaMe = data.me || { id: state.user?.id, role: state.user?.role };
+    state.veledaMe = data.me || { id: state.user?.id, role: state.user?.role, can_use_veleda: state.user?.can_use_veleda };
   } catch (e) {
     state.veledaError = e.message || 'Erreur inconnue';
     state.veledaNotes = state.veledaNotes || [];
@@ -156,11 +155,13 @@ function startVeledaPolling() {
       stopVeledaPolling();
       return;
     }
-    // Si l'utilisateur est en train de taper / dragger / resizer, on skip
+    // Skip si l'utilisateur est en train de taper / dragger / resizer / editer
     const inputEl = document.getElementById('veleda-write-input');
     const isTyping = inputEl && document.activeElement === inputEl;
+    const editingEl = document.querySelector('.veleda-note-editing textarea');
+    const isEditing = editingEl && document.activeElement === editingEl;
     const isInteracting = !!state.veledaDragging || !!state.veledaResizing;
-    if (isTyping || isInteracting) return;
+    if (isTyping || isEditing || isInteracting) return;
 
     const prevJson = JSON.stringify(state.veledaNotes || []);
     await loadVeledaNotes();
@@ -183,9 +184,11 @@ function renderVeledaView() {
   if (state.veledaNotes === undefined) {
     state.veledaNotes = [];
     state.veledaDraftContent = state.veledaDraftContent || '';
-    state.veledaDraftHours = state.veledaDraftHours || 24;
-    state.veledaDraftCustomDate = state.veledaDraftCustomDate || null;
-    state.veledaShowDatePicker = false;
+    // Default datetime : 24h dans le futur
+    if (!state.veledaDraftExpiresLocal) {
+      state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+    }
+    state.veledaEditingId = null;
     loadVeledaNotes().then(() => {
       startVeledaPolling();
       renderApp();
@@ -194,16 +197,18 @@ function renderVeledaView() {
   }
 
   if (state.veledaDraftContent === undefined) state.veledaDraftContent = '';
-  if (state.veledaDraftHours === undefined) state.veledaDraftHours = 24;
-  if (state.veledaDraftCustomDate === undefined) state.veledaDraftCustomDate = null;
-  if (state.veledaShowDatePicker === undefined) state.veledaShowDatePicker = false;
+  if (!state.veledaDraftExpiresLocal) {
+    state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+  }
+  if (state.veledaEditingId === undefined) state.veledaEditingId = null;
 
   startVeledaPolling();
   return renderVeledaShell(state.veledaNotes || []);
 }
 
 function renderVeledaShell(notes) {
-  const me = state.veledaMe || { id: state.user?.id, role: state.user?.role };
+  const me = state.veledaMe || { id: state.user?.id, role: state.user?.role, can_use_veleda: state.user?.can_use_veleda };
+  const canEdit = veledaUserCanEdit();
 
   return `
     <div class="max-w-7xl mx-auto">
@@ -212,7 +217,10 @@ function renderVeledaShell(notes) {
         <i class="fas fa-clipboard mr-2" style="color: var(--c-gold, #C9A961);"></i>Tableau Veleda
       </h2>
       <p class="veleda-page-subtitle">
-        Ce qu'il faut avoir en tete maintenant. Place les notes ou tu veux, redimensionne-les. Elles s'effacent toutes seules a la date choisie.
+        ${canEdit
+          ? 'Ce qu\'il faut avoir en tete maintenant. Place les notes ou tu veux, redimensionne-les, modifie-les. Elles s\'effacent toutes seules a la date choisie.'
+          : 'Ce qu\'il faut avoir en tete maintenant. Vous consultez le tableau en lecture seule. Demandez a l\'admin la permission d\'ecrire dessus.'
+        }
       </p>
 
       ${state.veledaError ? `
@@ -222,10 +230,15 @@ function renderVeledaShell(notes) {
         </div>
       ` : ''}
 
-      <!-- ZONE DE SAISIE (au-dessus du tableau pour ne pas etre genee par les notes positionnees) -->
-      ${renderVeledaWriteZone()}
+      <!-- ZONE DE SAISIE (visible uniquement pour ceux qui ont la permission) -->
+      ${canEdit ? renderVeledaWriteZone() : `
+        <div class="veleda-readonly-banner">
+          <i class="fas fa-eye"></i>
+          <span>Lecture seule — vous n'avez pas la permission d'ecrire sur ce tableau.</span>
+        </div>
+      `}
 
-      <!-- LE TABLEAU (positionnement absolu des notes) -->
+      <!-- LE TABLEAU -->
       <div class="veleda-board" id="veleda-board">
         <span class="veleda-rivet tl"></span>
         <span class="veleda-rivet tr"></span>
@@ -234,11 +247,15 @@ function renderVeledaShell(notes) {
 
         ${notes.length === 0 ? `
           <div class="veleda-empty">
-            Le tableau est vide. Ecris une premiere info la-haut <i class="fas fa-arrow-up" style="opacity:0.4;"></i>
+            ${canEdit
+              ? 'Le tableau est vide. Ecris une premiere info la-haut'
+              : 'Le tableau est vide pour l\'instant.'
+            }
+            ${canEdit ? '<i class="fas fa-arrow-up" style="opacity:0.4; margin-left:8px;"></i>' : ''}
           </div>
         ` : `
           <div class="veleda-notes-layer">
-            ${notes.map(n => renderVeledaNote(n, me)).join('')}
+            ${notes.map(n => renderVeledaNote(n, me, canEdit)).join('')}
           </div>
         `}
       </div>
@@ -246,15 +263,12 @@ function renderVeledaShell(notes) {
   `;
 }
 
-// Zone de saisie : champ texte + duree rapide + bouton date precise
+// Zone de saisie : textarea + datetime-local obligatoire + bouton submit
 function renderVeledaWriteZone() {
   const draft = state.veledaDraftContent || '';
-  const selectedHours = state.veledaDraftHours;
-  const customDate = state.veledaDraftCustomDate;
-  const showDatePicker = state.veledaShowDatePicker;
-
-  // Default datetime-local : 24h dans le futur si pas defini
-  const defaultDate = customDate || veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+  const expiresLocal = state.veledaDraftExpiresLocal || veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+  // Min = maintenant (pour empecher selection passe via le picker)
+  const minLocal = veledaToDatetimeLocal(new Date(Date.now() + 60 * 1000));
 
   return `
     <div class="veleda-write-zone-standalone">
@@ -267,82 +281,85 @@ function renderVeledaWriteZone() {
         onkeydown="veledaOnKeyDown(event)"
       >${veledaEscape(draft)}</textarea>
 
-      <div class="veleda-write-actions">
-        <div class="veleda-duration-buttons">
-          <span class="veleda-write-hint" style="margin-right:4px;">disparait dans :</span>
-          ${VELEDA_QUICK_DURATIONS.map(d => `
-            <button type="button"
-              class="veleda-duration-btn ${selectedHours === d.hours && !customDate ? 'active' : ''}"
-              onclick="veledaSelectDuration(${d.hours})">
-              ${d.label}
-            </button>
-          `).join('')}
-          <button type="button"
-            class="veleda-duration-btn ${customDate ? 'active' : ''}"
-            onclick="veledaToggleDatePicker()"
-            title="Choisir une date precise">
-            <i class="fas fa-calendar-day"></i> ${customDate ? veledaFormatCustomDate(customDate) : 'date precise'}
-          </button>
+      <div class="veleda-write-row">
+        <div class="veleda-date-block">
+          <label class="veleda-date-label">
+            <i class="fas fa-calendar-day" style="margin-right:4px;"></i>
+            disparait le :
+          </label>
+          <input id="veleda-expires-input"
+            type="datetime-local"
+            class="veleda-custom-date-input"
+            min="${minLocal}"
+            value="${expiresLocal}"
+            onchange="veledaSetExpires(this.value)">
         </div>
         <button class="veleda-write-submit" id="veleda-submit-btn" onclick="submitVeledaCreate()">
           <i class="fas fa-marker"></i> Ecrire sur le tableau
         </button>
       </div>
-
-      ${showDatePicker ? `
-        <div class="veleda-datepicker-row">
-          <label class="veleda-write-hint">Disparait le :</label>
-          <input id="veleda-custom-date" type="datetime-local"
-            class="veleda-custom-date-input"
-            value="${defaultDate}"
-            onchange="veledaSetCustomDate(this.value)">
-          ${customDate ? `<button type="button" class="veleda-clear-date" onclick="veledaClearCustomDate()" title="Annuler la date precise"><i class="fas fa-times"></i></button>` : ''}
-        </div>
-      ` : ''}
     </div>
   `;
 }
 
-// Affichage compact d'une date custom dans le bouton (ex: "mar. 14 a 14h30")
-function veledaFormatCustomDate(localStr) {
-  try {
-    const d = new Date(localStr);
-    if (isNaN(d.getTime())) return 'date precise';
-    return d.toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-  } catch (e) {
-    return 'date precise';
-  }
-}
-
-// Une note posee sur le tableau (positionnement absolu + drag + resize)
-function renderVeledaNote(note, me) {
+// Une note posee sur le tableau
+function renderVeledaNote(note, me, canEdit) {
   const urgency = veledaUrgency(note.expires_at);
   const ink = veledaInkFor(note.id);
   const rotation = veledaRotationFor(note.id);
-  const canEdit = (note.created_by === me.id) || me.role === 'admin' || me.role === 'super_admin';
   const expiresLabel = veledaExpiresLabel(note.expires_at);
   const authorName = (note.created_by_name || '?').split(' ')[0];
+  const isEditing = state.veledaEditingId === note.id;
 
-  // Position et taille (avec fallback si non defini)
   const x = note.pos_x ?? 20;
   const y = note.pos_y ?? 20;
   const w = note.width ?? VELEDA_DEFAULT_WIDTH;
   const h = note.height ?? VELEDA_DEFAULT_HEIGHT;
 
-  // Sur les notes draggables, on attache un onmousedown sur le corps (pas sur l'effaceur ni la poignee)
+  // En mode edition : on affiche un textarea inline (rotation supprimee)
+  if (isEditing) {
+    return `
+      <div class="veleda-note veleda-ink-${ink} veleda-note-editing"
+        style="left:${x}px; top:${y}px; width:${w}px; min-height:${h}px; transform: rotate(0deg); z-index: 50;"
+        data-note-id="${note.id}">
+        <textarea class="veleda-inline-edit-input"
+          maxlength="${VELEDA_MAX_CONTENT_LEN}"
+          onkeydown="veledaOnInlineEditKey(event, ${note.id})"
+        >${veledaEscape(note.content)}</textarea>
+        <div class="veleda-inline-edit-actions">
+          <button class="veleda-inline-btn veleda-inline-cancel" onclick="veledaCancelEdit()">
+            <i class="fas fa-times"></i> Annuler
+          </button>
+          <button class="veleda-inline-btn veleda-inline-save" onclick="veledaSaveEdit(${note.id})">
+            <i class="fas fa-check"></i> Enregistrer
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Mode normal : avec drag/resize/erase si canEdit
   const dragHandler = canEdit ? `onmousedown="veledaStartDrag(event, ${note.id})"` : '';
+  const dblClickHandler = canEdit ? `ondblclick="veledaStartEdit(${note.id})"` : '';
 
   return `
     <div class="veleda-note veleda-ink-${ink} ${canEdit ? 'veleda-note-draggable' : ''}"
       style="left:${x}px; top:${y}px; width:${w}px; min-height:${h}px; transform: rotate(${rotation}deg);"
       data-note-id="${note.id}"
-      ${dragHandler}>
+      ${dragHandler}
+      ${dblClickHandler}>
       ${canEdit ? `
         <button class="veleda-eraser"
           onmousedown="event.stopPropagation();"
           onclick="deleteVeledaNote(${note.id})"
           title="Effacer cette note">
           <i class="fas fa-eraser"></i>
+        </button>
+        <button class="veleda-edit-btn"
+          onmousedown="event.stopPropagation();"
+          onclick="veledaStartEdit(${note.id})"
+          title="Modifier le contenu">
+          <i class="fas fa-pen"></i>
         </button>
       ` : ''}
       <div class="veleda-note-content">${veledaEscape(note.content)}</div>
@@ -363,7 +380,7 @@ function renderVeledaNote(note, me) {
 }
 
 // ============================================
-// INTERACTIONS — saisie / duree / date custom / submit
+// INTERACTIONS — saisie & creation
 // ============================================
 function veledaOnInputChange(value) {
   state.veledaDraftContent = value;
@@ -376,61 +393,13 @@ function veledaOnKeyDown(event) {
   }
 }
 
-// Selection d'une duree rapide : annule la date custom, met a jour le state, toggle visuel sans rerender
-function veledaSelectDuration(hours) {
-  state.veledaDraftHours = hours;
-  state.veledaDraftCustomDate = null;
-  // Toggle visuel sans rerender (preserve focus du textarea)
-  document.querySelectorAll('.veleda-duration-btn').forEach(btn => btn.classList.remove('active'));
-  const lbl = VELEDA_QUICK_DURATIONS.find(d => d.hours === hours)?.label;
-  document.querySelectorAll('.veleda-duration-btn').forEach(btn => {
-    if (btn.textContent.trim() === lbl) btn.classList.add('active');
-  });
-  // Si le datepicker est ouvert, on le ferme
-  if (state.veledaShowDatePicker) {
-    state.veledaShowDatePicker = false;
-    renderApp();
-  }
+function veledaSetExpires(localStr) {
+  state.veledaDraftExpiresLocal = localStr;
 }
 
-// Ouvre/ferme le date picker
-function veledaToggleDatePicker() {
-  state.veledaShowDatePicker = !state.veledaShowDatePicker;
-  renderApp();
-  // Focus auto sur le champ date
-  setTimeout(() => {
-    const el = document.getElementById('veleda-custom-date');
-    if (el) el.focus();
-  }, 50);
-}
-
-// Set une date precise (depuis le datetime-local)
-function veledaSetCustomDate(localStr) {
-  if (!localStr) {
-    state.veledaDraftCustomDate = null;
-    renderApp();
-    return;
-  }
-  const d = new Date(localStr);
-  if (isNaN(d.getTime()) || d.getTime() <= Date.now()) {
-    alert('La date doit etre dans le futur.');
-    return;
-  }
-  state.veledaDraftCustomDate = localStr;
-  state.veledaDraftHours = null;
-  renderApp();
-}
-
-// Annule la date precise
-function veledaClearCustomDate() {
-  state.veledaDraftCustomDate = null;
-  state.veledaDraftHours = 24;
-  renderApp();
-}
-
-// Creation d'une note
 async function submitVeledaCreate() {
   const content = (state.veledaDraftContent || '').trim();
+  const expiresLocal = state.veledaDraftExpiresLocal;
   const btn = document.getElementById('veleda-submit-btn');
 
   if (!content) {
@@ -442,25 +411,21 @@ async function submitVeledaCreate() {
     }
     return;
   }
-
-  // Calcul de la date d'expiration : custom ou via hours
-  let expiresIso;
-  if (state.veledaDraftCustomDate) {
-    const d = new Date(state.veledaDraftCustomDate);
-    if (isNaN(d.getTime()) || d.getTime() <= Date.now()) {
-      alert('La date d\'expiration doit etre dans le futur.');
-      return;
-    }
-    expiresIso = d.toISOString();
-  } else {
-    const hours = state.veledaDraftHours || 24;
-    expiresIso = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+  if (!expiresLocal) {
+    alert('Choisis une date et une heure de disparition.');
+    return;
   }
+  const expiresDate = new Date(expiresLocal);
+  if (isNaN(expiresDate.getTime()) || expiresDate.getTime() <= Date.now()) {
+    alert('La date de disparition doit etre dans le futur.');
+    return;
+  }
+  const expiresIso = expiresDate.toISOString();
 
-  // Calcul de la position initiale (emplacement libre sur le tableau)
+  // Position initiale (emplacement libre)
   const board = document.getElementById('veleda-board');
   const boardRect = board ? board.getBoundingClientRect() : { width: 1000, height: 600 };
-  const boardW = boardRect.width - 80; // marge interne du board
+  const boardW = boardRect.width - 80;
   const boardH = boardRect.height - 80;
   const spot = veledaFindFreeSpot(state.veledaNotes || [], boardW, boardH, VELEDA_DEFAULT_WIDTH, VELEDA_DEFAULT_HEIGHT);
 
@@ -486,11 +451,9 @@ async function submitVeledaCreate() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erreur d\'ecriture');
 
-    // Reset du brouillon
+    // Reset du brouillon (on remet la date par defaut a +24h)
     state.veledaDraftContent = '';
-    state.veledaDraftHours = 24;
-    state.veledaDraftCustomDate = null;
-    state.veledaShowDatePicker = false;
+    state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
 
     await loadVeledaNotes();
     renderApp();
@@ -520,13 +483,83 @@ async function deleteVeledaNote(noteId) {
 }
 
 // ============================================
-// DRAG & DROP — deplacement des notes sur le tableau
+// EDITION INLINE DU CONTENU
+// ============================================
+function veledaStartEdit(noteId) {
+  if (!veledaUserCanEdit()) return;
+  state.veledaEditingId = noteId;
+  renderApp();
+  // Focus sur le textarea apres rerender
+  setTimeout(() => {
+    const ta = document.querySelector('.veleda-note-editing textarea');
+    if (ta) {
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
+  }, 50);
+}
+
+function veledaCancelEdit() {
+  state.veledaEditingId = null;
+  renderApp();
+}
+
+function veledaOnInlineEditKey(event, noteId) {
+  // Echap = annuler, Cmd/Ctrl+Entree = enregistrer
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    veledaCancelEdit();
+  } else if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+    event.preventDefault();
+    veledaSaveEdit(noteId);
+  }
+}
+
+async function veledaSaveEdit(noteId) {
+  const ta = document.querySelector('.veleda-note-editing textarea');
+  if (!ta) return;
+  const newContent = ta.value.trim();
+  if (!newContent) {
+    alert('Le contenu ne peut pas etre vide.');
+    return;
+  }
+  // Si rien n'a change, on ferme simplement
+  const note = (state.veledaNotes || []).find(n => n.id === noteId);
+  if (note && newContent === note.content) {
+    veledaCancelEdit();
+    return;
+  }
+  try {
+    const res = await fetch('/api/veleda-notes/' + noteId, {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: newContent })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Erreur de modification');
+    // Met a jour le state local
+    if (note) note.content = newContent;
+    state.veledaEditingId = null;
+    renderApp();
+  } catch (e) {
+    alert(e.message || 'Erreur inconnue');
+  }
+}
+
+// ============================================
+// DRAG & DROP
 // ============================================
 function veledaStartDrag(event, noteId) {
-  // On ne demarre pas le drag si on clique sur la poignee de resize ou l'effaceur
-  if (event.target.closest('.veleda-resize-handle') || event.target.closest('.veleda-eraser')) return;
-  // Ignore les clics droits / autres
+  // Pas de drag si on clique sur un controle interne
+  if (event.target.closest('.veleda-resize-handle') ||
+      event.target.closest('.veleda-eraser') ||
+      event.target.closest('.veleda-edit-btn') ||
+      event.target.closest('.veleda-inline-edit-input') ||
+      event.target.closest('.veleda-inline-edit-actions')) return;
   if (event.button !== 0) return;
+  if (!veledaUserCanEdit()) return;
+  // Pas de drag si en mode edition
+  if (state.veledaEditingId === noteId) return;
 
   const note = (state.veledaNotes || []).find(n => n.id === noteId);
   if (!note) return;
@@ -542,11 +575,9 @@ function veledaStartDrag(event, noteId) {
 
   document.addEventListener('mousemove', veledaOnDragMove);
   document.addEventListener('mouseup', veledaOnDragEnd);
-  // Cursor global pendant le drag
   document.body.style.cursor = 'grabbing';
   document.body.style.userSelect = 'none';
 
-  // On enleve la rotation pendant le drag pour un mouvement plus net
   const el = document.querySelector(`.veleda-note[data-note-id="${noteId}"]`);
   if (el) {
     el.dataset.origRotation = el.style.transform;
@@ -579,7 +610,6 @@ async function veledaOnDragEnd(event) {
   let newX = Math.round(origX + dx);
   let newY = Math.round(origY + dy);
 
-  // Bornage : on garde la note dans le tableau (avec une marge negative tolerable)
   const board = document.getElementById('veleda-board');
   if (board) {
     const boardRect = board.getBoundingClientRect();
@@ -589,7 +619,6 @@ async function veledaOnDragEnd(event) {
     newY = Math.max(-20, Math.min(newY, boardRect.height - noteRect.height + 20));
   }
 
-  // Restaure le style original (rotation + ombre + transition)
   const el = document.querySelector(`.veleda-note[data-note-id="${id}"]`);
   if (el) {
     el.style.left = newX + 'px';
@@ -605,7 +634,6 @@ async function veledaOnDragEnd(event) {
   document.body.style.cursor = '';
   document.body.style.userSelect = '';
 
-  // Met a jour le state local + persiste cote serveur
   const note = (state.veledaNotes || []).find(n => n.id === id);
   if (note) {
     note.pos_x = newX;
@@ -613,18 +641,17 @@ async function veledaOnDragEnd(event) {
   }
   state.veledaDragging = null;
 
-  // Persistance silencieuse (PUT) — pas de rerender pour ne pas casser le visuel
-  // On ne persiste que si la position a vraiment change (eviter PUT inutile sur simple clic)
   if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
     await persistVeledaLayout(id, { pos_x: newX, pos_y: newY });
   }
 }
 
 // ============================================
-// RESIZE — redimensionnement via poignee bas-droit
+// RESIZE
 // ============================================
 function veledaStartResize(event, noteId) {
   if (event.button !== 0) return;
+  if (!veledaUserCanEdit()) return;
   event.preventDefault();
   event.stopPropagation();
 
@@ -705,7 +732,7 @@ async function veledaOnResizeEnd(event) {
   }
 }
 
-// Persistance silencieuse du layout (position et/ou taille)
+// Persistance silencieuse du layout
 async function persistVeledaLayout(noteId, payload) {
   try {
     const res = await fetch('/api/veleda-notes/' + noteId, {
@@ -729,12 +756,13 @@ window.renderVeledaView = renderVeledaView;
 window.loadVeledaNotes = loadVeledaNotes;
 window.veledaOnInputChange = veledaOnInputChange;
 window.veledaOnKeyDown = veledaOnKeyDown;
-window.veledaSelectDuration = veledaSelectDuration;
-window.veledaToggleDatePicker = veledaToggleDatePicker;
-window.veledaSetCustomDate = veledaSetCustomDate;
-window.veledaClearCustomDate = veledaClearCustomDate;
+window.veledaSetExpires = veledaSetExpires;
 window.submitVeledaCreate = submitVeledaCreate;
 window.deleteVeledaNote = deleteVeledaNote;
 window.veledaStartDrag = veledaStartDrag;
 window.veledaStartResize = veledaStartResize;
+window.veledaStartEdit = veledaStartEdit;
+window.veledaCancelEdit = veledaCancelEdit;
+window.veledaSaveEdit = veledaSaveEdit;
+window.veledaOnInlineEditKey = veledaOnInlineEditKey;
 window.stopVeledaPolling = stopVeledaPolling;

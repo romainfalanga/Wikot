@@ -147,6 +147,14 @@ function userCanAssignTasks() {
   return state.user.role === 'admin' || Number(state.user.can_assign_tasks) === 1;
 }
 
+// Permission "peut tout faire sur le tableau Veleda" :
+// = admin OU super_admin OU employee avec can_use_veleda = 1
+// Tous les autres peuvent voir le tableau (lecture seule).
+function userCanUseVeleda() {
+  if (!state.user) return false;
+  return state.user.role === 'admin' || state.user.role === 'super_admin' || Number(state.user.can_use_veleda) === 1;
+}
+
 // Note: la permission can_edit_settings est conservée en DB pour compat,
 // mais la page Paramètres hôtel n'existe plus côté UI.
 

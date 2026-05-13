@@ -388,7 +388,8 @@ async function togglePermission(userId, permKey, newValue) {
     can_edit_info: 'modifier les informations',
     can_manage_chat: 'gérer les salons et conversations',
     can_create_tasks: 'créer et modifier des tâches',
-    can_assign_tasks: 'attribuer des tâches aux employés'
+    can_assign_tasks: 'attribuer des tâches aux employés',
+    can_use_veleda: 'écrire sur le tableau Véléda'
   };
   // Optimistic update : on met à jour le state local immédiatement
   const list = state.users || [];
@@ -418,7 +419,8 @@ function permissionCheckboxes(u, compact = false) {
     { key: 'can_edit_info',        label: 'Informations',        icon: 'fa-circle-info' },
     { key: 'can_manage_chat',      label: 'Salons / chat',       icon: 'fa-comments' },
     { key: 'can_create_tasks',     label: 'Créer des tâches',    icon: 'fa-list-check' },
-    { key: 'can_assign_tasks',     label: 'Attribuer des tâches',icon: 'fa-user-tag' }
+    { key: 'can_assign_tasks',     label: 'Attribuer des tâches',icon: 'fa-user-tag' },
+    { key: 'can_use_veleda',       label: 'Tableau Véléda',       icon: 'fa-clipboard' }
   ];
   return `
     <div class="flex flex-col gap-1.5">

@@ -19,6 +19,7 @@ type WikotUser = {
   can_edit_settings: number
   can_create_tasks: number
   can_assign_tasks: number
+  can_use_veleda: number
 }
 
 type Variables = {
@@ -292,6 +293,7 @@ const authMiddleware = async (c: any, next: any) => {
            u.can_edit_procedures, u.can_edit_info, u.can_manage_chat,
            u.can_edit_settings,
            u.can_create_tasks, u.can_assign_tasks,
+           u.can_use_veleda,
            u.is_active
     FROM user_sessions s
     JOIN users u ON s.user_id = u.id
@@ -317,6 +319,7 @@ const authMiddleware = async (c: any, next: any) => {
     can_edit_procedures: row.can_edit_procedures, can_edit_info: row.can_edit_info,
     can_manage_chat: row.can_manage_chat, can_edit_settings: row.can_edit_settings,
     can_create_tasks: row.can_create_tasks, can_assign_tasks: row.can_assign_tasks,
+    can_use_veleda: row.can_use_veleda,
     is_active: row.is_active
   })
   await next()
@@ -346,6 +349,7 @@ app.post('/api/auth/login', async (c) => {
            can_edit_procedures, can_edit_info, can_manage_chat,
            can_edit_settings,
            can_create_tasks, can_assign_tasks,
+           can_use_veleda,
            password_hash, password_hash_v2, password_salt, password_algo
     FROM users WHERE LOWER(email) = ? AND is_active = 1
   `).bind(emailKey).first() as any
@@ -397,7 +401,8 @@ app.post('/api/auth/login', async (c) => {
       id: user.id, hotel_id: user.hotel_id, email: user.email, name: user.name, role: user.role,
       can_edit_procedures: user.can_edit_procedures, can_edit_info: user.can_edit_info,
       can_manage_chat: user.can_manage_chat, can_edit_settings: user.can_edit_settings,
-      can_create_tasks: user.can_create_tasks, can_assign_tasks: user.can_assign_tasks
+      can_create_tasks: user.can_create_tasks, can_assign_tasks: user.can_assign_tasks,
+      can_use_veleda: user.can_use_veleda
     }
   })
 })
@@ -621,9 +626,9 @@ app.get('/api/users', authMiddleware, async (c) => {
   let users
   if (user.role === 'super_admin') {
     // PERF: LIMIT 2000 — table globale qui peut grossir avec tous les hôtels
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name LIMIT 2000').all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name LIMIT 2000').all()
   } else if (user.role === 'admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name LIMIT 500').bind(user.hotel_id).all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name LIMIT 500').bind(user.hotel_id).all()
   } else {
     return c.json({ error: 'Non autorisé' }, 403)
   }
@@ -643,6 +648,7 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
     can_edit_settings?: boolean | number
     can_create_tasks?: boolean | number
     can_assign_tasks?: boolean | number
+    can_use_veleda?: boolean | number
   }
 
   // Check the target user belongs to same hotel (for admin)
@@ -660,6 +666,7 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
   if (body.can_edit_settings !== undefined)   { fields.push('can_edit_settings = ?');   values.push(body.can_edit_settings ? 1 : 0) }
   if (body.can_create_tasks !== undefined)    { fields.push('can_create_tasks = ?');    values.push(body.can_create_tasks ? 1 : 0) }
   if (body.can_assign_tasks !== undefined)    { fields.push('can_assign_tasks = ?');    values.push(body.can_assign_tasks ? 1 : 0) }
+  if (body.can_use_veleda !== undefined)      { fields.push('can_use_veleda = ?');      values.push(body.can_use_veleda ? 1 : 0) }
   if (fields.length === 0) return c.json({ error: 'Aucune permission à mettre à jour' }, 400)
 
   values.push(id)
@@ -5359,6 +5366,14 @@ async function cleanupExpiredVeledaNotes(db: D1Database, hotelId: number) {
   ).bind(hotelId).run()
 }
 
+// Helper : permission "peut tout faire sur le tableau Veleda"
+// = admin de l'hôtel OU super_admin OU employee ayant can_use_veleda = 1
+// Quiconque a cette permission peut creer/modifier/deplacer/redimensionner/supprimer
+// N'IMPORTE QUELLE note (pas seulement les siennes) du tableau de SON hotel.
+function canUseVeleda(user: WikotUser): boolean {
+  return user.role === 'admin' || user.role === 'super_admin' || user.can_use_veleda === 1
+}
+
 // GET /api/veleda-notes — liste des notes actives de l'hôtel, triées par expiration croissante
 app.get('/api/veleda-notes', authMiddleware, async (c) => {
   const user = c.get('user')
@@ -5378,14 +5393,18 @@ app.get('/api/veleda-notes', authMiddleware, async (c) => {
 
   return c.json({
     notes: rows.results || [],
-    me: { id: user.id, role: user.role }
+    me: { id: user.id, role: user.role, can_use_veleda: canUseVeleda(user) ? 1 : 0 }
   })
 })
 
 // POST /api/veleda-notes — crée une nouvelle note
+// Permission : admin OU can_use_veleda = 1
 app.post('/api/veleda-notes', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  if (!canUseVeleda(user)) {
+    return c.json({ error: 'Vous n\'avez pas la permission d\'écrire sur le tableau Véléda' }, 403)
+  }
 
   const body = await c.req.json().catch(() => ({})) as any
   const title = typeof body.title === 'string' ? body.title.trim() : ''
@@ -5471,11 +5490,14 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
   })
 })
 
-// PUT /api/veleda-notes/:id — édite une note (titre/contenu/expiration)
-// Autorisé : auteur de la note OU admin de l'hôtel
+// PUT /api/veleda-notes/:id — édite une note (contenu / expiration / position / taille)
+// Permission : admin OU can_use_veleda = 1 (peuvent modifier N'IMPORTE QUELLE note de leur hotel)
 app.put('/api/veleda-notes/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  if (!canUseVeleda(user)) {
+    return c.json({ error: 'Vous n\'avez pas la permission de modifier les notes du tableau Véléda' }, 403)
+  }
 
   const id = Number(c.req.param('id'))
   if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID invalide' }, 400)
@@ -5485,13 +5507,6 @@ app.put('/api/veleda-notes/:id', authMiddleware, async (c) => {
     'SELECT id, created_by FROM veleda_notes WHERE id = ? AND hotel_id = ?'
   ).bind(id, user.hotel_id).first() as any
   if (!existing) return c.json({ error: 'Note introuvable' }, 404)
-
-  // Permission : auteur ou admin
-  const isAuthor = existing.created_by === user.id
-  const isAdmin = user.role === 'admin' || user.role === 'super_admin'
-  if (!isAuthor && !isAdmin) {
-    return c.json({ error: 'Vous n\'avez pas le droit de modifier cette note' }, 403)
-  }
 
   const body = await c.req.json().catch(() => ({})) as any
   const fields: string[] = []
@@ -5566,10 +5581,13 @@ app.put('/api/veleda-notes/:id', authMiddleware, async (c) => {
 })
 
 // DELETE /api/veleda-notes/:id — supprime une note
-// Autorisé : auteur OU admin de l'hôtel
+// Permission : admin OU can_use_veleda = 1 (peuvent supprimer N'IMPORTE QUELLE note de leur hotel)
 app.delete('/api/veleda-notes/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  if (!canUseVeleda(user)) {
+    return c.json({ error: 'Vous n\'avez pas la permission de supprimer les notes du tableau Véléda' }, 403)
+  }
 
   const id = Number(c.req.param('id'))
   if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID invalide' }, 400)
@@ -5578,12 +5596,6 @@ app.delete('/api/veleda-notes/:id', authMiddleware, async (c) => {
     'SELECT created_by FROM veleda_notes WHERE id = ? AND hotel_id = ?'
   ).bind(id, user.hotel_id).first() as any
   if (!existing) return c.json({ error: 'Note introuvable' }, 404)
-
-  const isAuthor = existing.created_by === user.id
-  const isAdmin = user.role === 'admin' || user.role === 'super_admin'
-  if (!isAuthor && !isAdmin) {
-    return c.json({ error: 'Vous n\'avez pas le droit de supprimer cette note' }, 403)
-  }
 
   await c.env.DB.prepare('DELETE FROM veleda_notes WHERE id = ? AND hotel_id = ?')
     .bind(id, user.hotel_id).run()

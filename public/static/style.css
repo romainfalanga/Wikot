@@ -457,6 +457,143 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   border-top: 1px dashed rgba(0,0,0,0.1);
 }
 
+/* Nouvelle disposition : datetime obligatoire sur la meme ligne que le submit */
+.veleda-write-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.veleda-date-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.veleda-date-label {
+  font-family: 'Caveat', cursive;
+  font-size: 1.1rem;
+  color: rgba(0,0,0,0.6);
+  font-style: italic;
+}
+
+/* Banner lecture seule (pour ceux sans la permission) */
+.veleda-readonly-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  margin-bottom: 20px;
+  background: rgba(15,27,40,0.04);
+  border: 1px solid rgba(15,27,40,0.1);
+  border-radius: 10px;
+  font-family: 'Caveat', cursive;
+  font-size: 1.15rem;
+  color: rgba(15,27,40,0.6);
+  font-style: italic;
+}
+.veleda-readonly-banner i {
+  font-size: 1rem;
+}
+
+/* Bouton "modifier" (icone stylo) en haut a gauche de la note au survol */
+.veleda-edit-btn {
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  width: 30px;
+  height: 30px;
+  background: linear-gradient(135deg, #FEF3C7 0%, #F59E0B 100%);
+  border: 2px solid #fff;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.7);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  font-size: 11px;
+  color: #78350F;
+  z-index: 6;
+}
+.veleda-edit-btn:hover {
+  background: linear-gradient(135deg, #F59E0B 0%, #B45309 100%);
+  color: #fff;
+  transform: scale(1.1) !important;
+}
+.veleda-note:hover .veleda-edit-btn {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Mode edition inline : la note se transforme en formulaire */
+.veleda-note-editing {
+  background: #FFFEF7 !important;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 0 0 2px rgba(245,158,11,0.4);
+  padding: 8px 8px 8px 8px !important;
+}
+
+.veleda-inline-edit-input {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  border: 1.5px dashed rgba(0,0,0,0.2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: 'Kalam', cursive;
+  font-weight: 700;
+  font-size: 1.25rem;
+  line-height: 1.4;
+  color: inherit;
+  background: rgba(255,255,255,0.6);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.veleda-inline-edit-input:focus {
+  border-color: rgba(245,158,11,0.7);
+  background: #fff;
+}
+
+.veleda-inline-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.veleda-inline-btn {
+  font-family: 'Kalam', cursive;
+  font-weight: 700;
+  font-size: 0.85rem;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+.veleda-inline-cancel {
+  background: rgba(0,0,0,0.06);
+  color: rgba(0,0,0,0.6);
+}
+.veleda-inline-cancel:hover {
+  background: rgba(0,0,0,0.12);
+}
+.veleda-inline-save {
+  background: #15803D;
+  color: #fff;
+}
+.veleda-inline-save:hover {
+  background: #166534;
+}
+
 .veleda-custom-date-input {
   font-family: 'Kalam', cursive;
   font-size: 1.05rem;
@@ -486,6 +623,125 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
 }
 .veleda-clear-date:hover {
   background: rgba(220,38,38,0.18);
+}
+
+/* === LIGNE DATETIME OBLIGATOIRE (zone de saisie) === */
+.veleda-expires-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.veleda-expires-label {
+  font-family: 'Caveat', cursive;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: rgba(0,0,0,0.65);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* === BOUTON EDIT (haut-gauche de la note) === */
+.veleda-edit-btn {
+  position: absolute;
+  top: -8px;
+  left: -8px;
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, #FFF 0%, #F3F4F6 100%);
+  border: 2px solid #fff;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.7);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  font-size: 11px;
+  color: #1A1A1A;
+  z-index: 6;
+}
+.veleda-note:hover .veleda-edit-btn {
+  opacity: 1;
+  transform: scale(1);
+}
+.veleda-edit-btn:hover {
+  background: #1A1A1A;
+  color: #fff;
+  transform: scale(1.1) !important;
+}
+
+/* === MODE EDITION INLINE === */
+.veleda-note-editing {
+  cursor: default !important;
+  background: rgba(255,255,255,0.95);
+  outline: 2px dashed rgba(0,0,0,0.3);
+  outline-offset: 4px;
+  z-index: 50;
+}
+.veleda-inline-edit-textarea {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  font-weight: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+  resize: none;
+  padding: 0;
+  min-height: 60px;
+}
+.veleda-inline-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(0,0,0,0.15);
+}
+.veleda-inline-expires {
+  flex: 1;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  border: 1px solid rgba(0,0,0,0.15);
+  border-radius: 6px;
+  background: #fff;
+  outline: none;
+  color: #1A1A1A;
+}
+.veleda-inline-cancel,
+.veleda-inline-save {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.veleda-inline-cancel {
+  background: rgba(220,38,38,0.1);
+  color: #B91C1C;
+}
+.veleda-inline-cancel:hover {
+  background: rgba(220,38,38,0.22);
+}
+.veleda-inline-save {
+  background: #1A1A1A;
+  color: #fff;
+}
+.veleda-inline-save:hover {
+  background: #000;
 }
 
 /* === POIGNEE DE REDIMENSIONNEMENT (bas-droit de la note) === */

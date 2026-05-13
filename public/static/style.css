@@ -319,18 +319,17 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
 .veleda-rivet.bl { bottom: 8px; left: 8px; }
 .veleda-rivet.br { bottom: 8px; right: 8px; }
 
-/* Grille des notes */
-.veleda-notes-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 28px 24px;
-  align-items: start;
+/* Couche des notes : positionnement absolu sur le tableau */
+.veleda-notes-layer {
+  position: relative;
+  width: 100%;
+  min-height: 520px;
 }
 
-/* Une note sur le tableau (effet feutre manuscrit) */
+/* Une note sur le tableau : positionnement absolu, drag & resize */
 .veleda-note {
-  position: relative;
-  padding: 8px 10px 28px 10px;
+  position: absolute;
+  padding: 10px 12px 32px 12px;
   font-family: 'Kalam', 'Caveat', 'Permanent Marker', cursive;
   font-weight: 700;
   font-size: 1.35rem;
@@ -338,18 +337,25 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   word-wrap: break-word;
   overflow-wrap: break-word;
   white-space: pre-wrap;
-  transition: transform 0.2s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
   cursor: default;
-  /* Effet "trace de feutre" subtil derriere le texte */
   text-shadow: 0 0 1px rgba(0,0,0,0.03);
+  box-sizing: border-box;
 }
 
-/* Survol : la note se redresse legerement + agrandit, le bouton effaceur apparait */
-.veleda-note:hover {
-  transform: rotate(0deg) scale(1.04) !important;
-  z-index: 5;
+/* Note dragable : curseur "main qui peut attraper" */
+.veleda-note-draggable { cursor: grab; }
+.veleda-note-draggable:active { cursor: grabbing; }
+
+/* Contenu textuel de la note */
+.veleda-note-content {
+  pointer-events: none; /* permet au drag de fonctionner meme en cliquant sur le texte */
+  user-select: none;
 }
-.veleda-note:hover .veleda-eraser {
+
+/* Survol : effaceur + poignee de resize apparaissent */
+.veleda-note:hover .veleda-eraser,
+.veleda-note:hover .veleda-resize-handle {
   opacity: 1;
   transform: scale(1);
 }
@@ -427,6 +433,86 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   border: 2px dashed rgba(0,0,0,0.15);
   border-radius: 10px;
   backdrop-filter: blur(2px);
+}
+
+/* === ZONE DE SAISIE STANDALONE (au-dessus du tableau, hors du board) === */
+.veleda-write-zone-standalone {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-bottom: 20px;
+  padding: 22px 24px;
+  background: linear-gradient(180deg, #FFFFFF 0%, #FAFAF7 100%);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+}
+
+/* Ligne du datepicker (apparait sous les boutons quand on choisit date precise) */
+.veleda-datepicker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(0,0,0,0.1);
+}
+
+.veleda-custom-date-input {
+  font-family: 'Kalam', cursive;
+  font-size: 1.05rem;
+  padding: 6px 12px;
+  border: 1.5px solid rgba(0,0,0,0.15);
+  border-radius: 8px;
+  background: #fff;
+  color: #1A1A1A;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.veleda-custom-date-input:focus {
+  border-color: #1A1A1A;
+}
+
+.veleda-clear-date {
+  width: 28px; height: 28px;
+  border: none;
+  background: rgba(220,38,38,0.08);
+  color: #B91C1C;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.veleda-clear-date:hover {
+  background: rgba(220,38,38,0.18);
+}
+
+/* === POIGNEE DE REDIMENSIONNEMENT (bas-droit de la note) === */
+.veleda-resize-handle {
+  position: absolute;
+  bottom: -6px;
+  right: -6px;
+  width: 24px;
+  height: 24px;
+  background: rgba(26,26,26,0.85);
+  color: #fff;
+  border: 2px solid #fff;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: nwse-resize;
+  opacity: 0;
+  transform: scale(0.7);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  font-size: 10px;
+  z-index: 5;
+}
+.veleda-resize-handle:hover {
+  background: #000;
+  transform: scale(1.15) !important;
 }
 
 .veleda-write-input {

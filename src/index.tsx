@@ -5333,6 +5333,25 @@ const VELEDA_MAX_TITLE_LEN = 100
 const VELEDA_MAX_CONTENT_LEN = 2000
 const VELEDA_HARD_LIMIT = 200   // garde-fou : pas plus de 200 notes actives par hôtel
 
+// Bornes raisonnables pour le positionnement/dimensionnement des notes
+const VELEDA_MIN_POS = -200       // permet un léger débord négatif (UX drag fluide)
+const VELEDA_MAX_POS = 10000      // largeur/hauteur max du tableau
+const VELEDA_MIN_SIZE = 80        // taille minimale d'une note (sinon illisible)
+const VELEDA_MAX_SIZE = 2000      // taille max
+
+// Helper : valide un entier optionnel dans une plage donnée. Retourne :
+//  - { ok: true, value: number|null }  si valide (null = non fourni)
+//  - { ok: false, error: string }      si invalide
+function validateOptionalInt(val: any, min: number, max: number, fieldName: string):
+  { ok: true, value: number | null } | { ok: false, error: string } {
+  if (val === undefined || val === null) return { ok: true, value: null }
+  const n = Number(val)
+  if (!Number.isFinite(n)) return { ok: false, error: `${fieldName} doit être un nombre` }
+  const i = Math.round(n)
+  if (i < min || i > max) return { ok: false, error: `${fieldName} hors limites` }
+  return { ok: true, value: i }
+}
+
 // Helper : nettoyage des notes expirées d'un hôtel (idempotent, peu coûteux grâce à l'index)
 async function cleanupExpiredVeledaNotes(db: D1Database, hotelId: number) {
   await db.prepare(
@@ -5349,7 +5368,8 @@ app.get('/api/veleda-notes', authMiddleware, async (c) => {
   await cleanupExpiredVeledaNotes(c.env.DB, user.hotel_id)
 
   const rows = await c.env.DB.prepare(
-    `SELECT id, title, content, expires_at, created_by, created_by_name, created_at, updated_at
+    `SELECT id, title, content, expires_at, created_by, created_by_name, created_at, updated_at,
+            pos_x, pos_y, width, height
      FROM veleda_notes
      WHERE hotel_id = ?
      ORDER BY expires_at ASC, id DESC
@@ -5395,6 +5415,16 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
     return c.json({ error: 'Date d\'expiration trop lointaine (1 an maximum)' }, 400)
   }
 
+  // Validation des champs de layout (optionnels)
+  const posXv = validateOptionalInt(body.pos_x, VELEDA_MIN_POS, VELEDA_MAX_POS, 'pos_x')
+  if (!posXv.ok) return c.json({ error: posXv.error }, 400)
+  const posYv = validateOptionalInt(body.pos_y, VELEDA_MIN_POS, VELEDA_MAX_POS, 'pos_y')
+  if (!posYv.ok) return c.json({ error: posYv.error }, 400)
+  const widthV = validateOptionalInt(body.width, VELEDA_MIN_SIZE, VELEDA_MAX_SIZE, 'width')
+  if (!widthV.ok) return c.json({ error: widthV.error }, 400)
+  const heightV = validateOptionalInt(body.height, VELEDA_MIN_SIZE, VELEDA_MAX_SIZE, 'height')
+  if (!heightV.ok) return c.json({ error: heightV.error }, 400)
+
   // Cleanup avant insertion (libère des slots si nécessaire)
   await cleanupExpiredVeledaNotes(c.env.DB, user.hotel_id)
 
@@ -5407,15 +5437,19 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
   }
 
   const result = await c.env.DB.prepare(
-    `INSERT INTO veleda_notes (hotel_id, title, content, expires_at, created_by, created_by_name)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO veleda_notes (hotel_id, title, content, expires_at, created_by, created_by_name, pos_x, pos_y, width, height)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     user.hotel_id,
     title || null,
     content,
     expiresDate.toISOString(),
     user.id,
-    user.name
+    user.name,
+    posXv.value,
+    posYv.value,
+    widthV.value,
+    heightV.value
   ).run()
 
   return c.json({
@@ -5428,7 +5462,11 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
       created_by: user.id,
       created_by_name: user.name,
       created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
+      pos_x: posXv.value,
+      pos_y: posYv.value,
+      width: widthV.value,
+      height: heightV.value
     }
   })
 })
@@ -5487,6 +5525,32 @@ app.put('/api/veleda-notes/:id', authMiddleware, async (c) => {
     }
     fields.push('expires_at = ?')
     values.push(d.toISOString())
+  }
+
+  // Champs de layout (pos_x, pos_y, width, height) — optionnels et indépendants
+  if (body.pos_x !== undefined) {
+    const v = validateOptionalInt(body.pos_x, VELEDA_MIN_POS, VELEDA_MAX_POS, 'pos_x')
+    if (!v.ok) return c.json({ error: v.error }, 400)
+    fields.push('pos_x = ?')
+    values.push(v.value)
+  }
+  if (body.pos_y !== undefined) {
+    const v = validateOptionalInt(body.pos_y, VELEDA_MIN_POS, VELEDA_MAX_POS, 'pos_y')
+    if (!v.ok) return c.json({ error: v.error }, 400)
+    fields.push('pos_y = ?')
+    values.push(v.value)
+  }
+  if (body.width !== undefined) {
+    const v = validateOptionalInt(body.width, VELEDA_MIN_SIZE, VELEDA_MAX_SIZE, 'width')
+    if (!v.ok) return c.json({ error: v.error }, 400)
+    fields.push('width = ?')
+    values.push(v.value)
+  }
+  if (body.height !== undefined) {
+    const v = validateOptionalInt(body.height, VELEDA_MIN_SIZE, VELEDA_MAX_SIZE, 'height')
+    if (!v.ok) return c.json({ error: v.error }, 400)
+    fields.push('height = ?')
+    values.push(v.value)
   }
 
   if (fields.length === 0) return c.json({ error: 'Aucune modification' }, 400)

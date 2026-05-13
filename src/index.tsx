@@ -5429,6 +5429,10 @@ function canUseVeleda(user: WikotUser): boolean {
 }
 
 // GET /api/veleda-notes — liste des notes actives de l'hôtel, triées par expiration croissante
+// Query params :
+//   ?parent=<id>   → notes d'un sous-tableau (filles d'une note-tableau)
+//   ?parent=null  ou absent → notes du tableau racine (parent_note_id IS NULL)
+// Retourne aussi `breadcrumb` : chaine d'ancetres si on est dans un sous-tableau.
 app.get('/api/veleda-notes', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
@@ -5436,22 +5440,70 @@ app.get('/api/veleda-notes', authMiddleware, async (c) => {
   // Cleanup lazy : on supprime les notes expirées avant de lister
   await cleanupExpiredVeledaNotes(c.env.DB, user.hotel_id)
 
-  // On joint l'emoji de l'auteur pour afficher sa "signature visuelle" sur chaque note.
-  // LEFT JOIN car l'auteur peut avoir été supprimé entre-temps (la note reste).
-  const rows = await c.env.DB.prepare(
-    `SELECT n.id, n.title, n.content, n.expires_at, n.created_by, n.created_by_name,
-            n.created_at, n.updated_at,
-            n.pos_x, n.pos_y, n.width, n.height, n.color, n.font,
-            u.emoji as author_emoji
-     FROM veleda_notes n
-     LEFT JOIN users u ON n.created_by = u.id
-     WHERE n.hotel_id = ?
-     ORDER BY n.expires_at ASC, n.id DESC
-     LIMIT 200`
-  ).bind(user.hotel_id).all()
+  // Determine le parent demande
+  const parentParam = c.req.query('parent')
+  let parentId: number | null = null
+  if (parentParam && parentParam !== 'null' && parentParam !== '') {
+    const pid = Number(parentParam)
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return c.json({ error: 'parent invalide' }, 400)
+    }
+    // Verifie que la note-tableau parente existe, est bien un board et appartient a l'hotel
+    const parentNote = await c.env.DB.prepare(
+      'SELECT id, is_board FROM veleda_notes WHERE id = ? AND hotel_id = ?'
+    ).bind(pid, user.hotel_id).first() as any
+    if (!parentNote) return c.json({ error: 'Sous-tableau introuvable' }, 404)
+    if (!parentNote.is_board) return c.json({ error: 'Cette note n\'est pas un sous-tableau' }, 400)
+    parentId = pid
+  }
+
+  // Construit le breadcrumb : remonte parent_note_id jusqu'a la racine (max 20 niveaux par securite)
+  const breadcrumb: Array<{ id: number, content: string }> = []
+  if (parentId !== null) {
+    let cur: number | null = parentId
+    for (let i = 0; i < 20 && cur !== null; i++) {
+      const row = await c.env.DB.prepare(
+        'SELECT id, content, parent_note_id FROM veleda_notes WHERE id = ? AND hotel_id = ?'
+      ).bind(cur, user.hotel_id).first() as any
+      if (!row) break
+      breadcrumb.unshift({ id: row.id, content: row.content })
+      cur = row.parent_note_id
+    }
+  }
+
+  // Liste les notes du tableau demande
+  const query = parentId === null
+    ? `SELECT n.id, n.title, n.content, n.expires_at, n.created_by, n.created_by_name,
+              n.created_at, n.updated_at,
+              n.pos_x, n.pos_y, n.width, n.height, n.color, n.font,
+              n.is_board, n.parent_note_id,
+              u.emoji as author_emoji
+       FROM veleda_notes n
+       LEFT JOIN users u ON n.created_by = u.id
+       WHERE n.hotel_id = ? AND n.parent_note_id IS NULL
+       ORDER BY n.expires_at ASC, n.id DESC
+       LIMIT 200`
+    : `SELECT n.id, n.title, n.content, n.expires_at, n.created_by, n.created_by_name,
+              n.created_at, n.updated_at,
+              n.pos_x, n.pos_y, n.width, n.height, n.color, n.font,
+              n.is_board, n.parent_note_id,
+              u.emoji as author_emoji
+       FROM veleda_notes n
+       LEFT JOIN users u ON n.created_by = u.id
+       WHERE n.hotel_id = ? AND n.parent_note_id = ?
+       ORDER BY n.expires_at ASC, n.id DESC
+       LIMIT 200`
+
+  const stmt = parentId === null
+    ? c.env.DB.prepare(query).bind(user.hotel_id)
+    : c.env.DB.prepare(query).bind(user.hotel_id, parentId)
+
+  const rows = await stmt.all()
 
   return c.json({
     notes: rows.results || [],
+    breadcrumb,
+    current_board_id: parentId,
     me: {
       id: user.id, role: user.role,
       can_use_veleda: canUseVeleda(user) ? 1 : 0,
@@ -5559,6 +5611,25 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
     font = body.font
   }
 
+  // is_board : la note devient elle-meme un sous-tableau (cliquable, lien bleu)
+  const isBoard = body.is_board === true || body.is_board === 1 ? 1 : 0
+
+  // parent_note_id : le tableau d'appartenance. null = tableau racine.
+  // On verifie que le parent existe, est un board, et appartient au meme hotel.
+  let parentNoteId: number | null = null
+  if (body.parent_note_id !== undefined && body.parent_note_id !== null && body.parent_note_id !== '') {
+    const pid = Number(body.parent_note_id)
+    if (!Number.isInteger(pid) || pid <= 0) {
+      return c.json({ error: 'parent_note_id invalide' }, 400)
+    }
+    const parentNote = await c.env.DB.prepare(
+      'SELECT id, is_board FROM veleda_notes WHERE id = ? AND hotel_id = ?'
+    ).bind(pid, user.hotel_id).first() as any
+    if (!parentNote) return c.json({ error: 'Sous-tableau parent introuvable' }, 404)
+    if (!parentNote.is_board) return c.json({ error: 'La note parente n\'est pas un sous-tableau' }, 400)
+    parentNoteId = pid
+  }
+
   // Cleanup avant insertion (libère des slots si nécessaire)
   await cleanupExpiredVeledaNotes(c.env.DB, user.hotel_id)
 
@@ -5571,8 +5642,8 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
   }
 
   const result = await c.env.DB.prepare(
-    `INSERT INTO veleda_notes (hotel_id, title, content, expires_at, created_by, created_by_name, pos_x, pos_y, width, height, color, font)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO veleda_notes (hotel_id, title, content, expires_at, created_by, created_by_name, pos_x, pos_y, width, height, color, font, is_board, parent_note_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     user.hotel_id,
     title || null,
@@ -5585,7 +5656,9 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
     widthV.value,
     heightV.value,
     color,
-    font
+    font,
+    isBoard,
+    parentNoteId
   ).run()
 
   return c.json({
@@ -5605,9 +5678,30 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
       height: heightV.value,
       color,
       font,
+      is_board: isBoard,
+      parent_note_id: parentNoteId,
       author_emoji: user.emoji
     }
   })
+})
+
+// GET /api/veleda-notes/:id — recupere une note unique (utile pour resoudre un breadcrumb cote client)
+app.get('/api/veleda-notes/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID invalide' }, 400)
+  const row = await c.env.DB.prepare(
+    `SELECT n.id, n.title, n.content, n.expires_at, n.created_by, n.created_by_name,
+            n.pos_x, n.pos_y, n.width, n.height, n.color, n.font,
+            n.is_board, n.parent_note_id,
+            u.emoji as author_emoji
+     FROM veleda_notes n
+     LEFT JOIN users u ON n.created_by = u.id
+     WHERE n.id = ? AND n.hotel_id = ?`
+  ).bind(id, user.hotel_id).first()
+  if (!row) return c.json({ error: 'Note introuvable' }, 404)
+  return c.json({ note: row })
 })
 
 // PUT /api/veleda-notes/:id — édite une note (contenu / expiration / position / taille)
@@ -5704,6 +5798,28 @@ app.put('/api/veleda-notes/:id', authMiddleware, async (c) => {
     }
     fields.push('font = ?')
     values.push(body.font)
+  }
+
+  // is_board : peut etre bascule apres coup (note → note-tableau ou inverse)
+  // ATTENTION : si on retire le statut "board" d'une note qui a des enfants,
+  // les enfants sont detruits (ON DELETE CASCADE va se declencher cote frontend
+  // si on supprime, mais ici on bascule seulement le flag, les enfants RESTENT
+  // attaches a parent_note_id et deviennent "orphelins visuels"). Pour eviter
+  // ce piege, on REFUSE de retirer is_board si la note a des enfants.
+  if (body.is_board !== undefined) {
+    const newIsBoard = body.is_board === true || body.is_board === 1 ? 1 : 0
+    if (newIsBoard === 0) {
+      const childCount = await c.env.DB.prepare(
+        'SELECT COUNT(*) as n FROM veleda_notes WHERE parent_note_id = ? AND hotel_id = ?'
+      ).bind(id, user.hotel_id).first() as any
+      if (childCount && childCount.n > 0) {
+        return c.json({
+          error: `Impossible de retirer le statut "sous-tableau" : cette note contient ${childCount.n} note(s). Supprimez d'abord son contenu.`
+        }, 400)
+      }
+    }
+    fields.push('is_board = ?')
+    values.push(newIsBoard)
   }
 
   if (fields.length === 0) return c.json({ error: 'Aucune modification' }, 400)

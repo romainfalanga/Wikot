@@ -1759,3 +1759,248 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
     grid-template-columns: 1fr;
   }
 }
+
+/* =========================================================
+   TABLEAU VELEDA — V4 : cadre visible, notes serrees,
+   breadcrumb (titre), notes-tableaux (sous-tableaux cliquables)
+   ========================================================= */
+
+/* ----- Cadre du tableau VRAIMENT visible (on retablit l'effet ardoise) ----- */
+.veleda-board-fullpage {
+  /* On laisse un peu d'espace exterieur pour qu'on voie le cadre */
+  margin: 6px;
+  width: calc(100% - 12px);
+  height: calc(100vh - 76px);
+  min-height: calc(100vh - 76px);
+  border: 8px solid #B0B8C0;
+  border-radius: 12px;
+  background-color: #FAFAF7;
+  background-image:
+    linear-gradient(135deg, rgba(255,255,255,0.6) 0%, rgba(240,240,235,0.3) 50%, rgba(255,255,255,0.5) 100%),
+    radial-gradient(circle at 1px 1px, rgba(0,0,0,0.025) 1px, transparent 0);
+  background-size: 100% 100%, 8px 8px;
+  box-shadow:
+    inset 0 0 60px rgba(0,0,0,0.05),
+    inset 0 2px 8px rgba(0,0,0,0.07),
+    0 8px 24px rgba(0,0,0,0.14),
+    0 2px 4px rgba(0,0,0,0.08);
+  padding: 56px 28px 32px 28px; /* haut plus grand pour laisser place au breadcrumb */
+}
+/* On reactive le liseré metallique en pseudo-element */
+.veleda-board-fullpage::before {
+  content: '';
+  display: block;
+  position: absolute;
+  top: -8px; left: -8px; right: -8px; bottom: -8px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #DDE2E7 0%, #B0B8C0 25%, #DDE2E7 50%, #9DA5AD 75%, #C5CDD4 100%);
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* ----- Notes VRAIMENT serrees autour du texte (fix bug selection au drag) ----- */
+.veleda-board-fullpage .veleda-note {
+  width: auto;
+  height: auto;
+  max-width: 320px;
+  min-width: 0;
+  /* Padding TRES serre : le hitbox de la note = la taille du texte */
+  padding: 2px 8px;
+  font-size: 1.1rem;
+  line-height: 1.2;
+  /* Le bloc ne doit plus avoir de "zone morte" verticale */
+}
+
+/* En mode INSPECT seulement, on agrandit un peu le bloc pour caser la meta */
+.veleda-board-fullpage .veleda-note.veleda-note-inspecting {
+  padding: 4px 10px 8px 10px;
+}
+
+/* En mode EDIT, on a besoin d'un peu plus d'air pour la toolbar */
+.veleda-board-fullpage .veleda-note.veleda-note-editing {
+  padding: 6px 10px 8px 10px;
+}
+
+/* ----- Breadcrumb en haut a gauche (titre du tableau courant) ----- */
+.veleda-breadcrumb {
+  position: absolute;
+  top: 14px;
+  left: 18px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 220px); /* pour ne pas chevaucher le FAB "Ecrire" en haut a droite */
+  padding: 6px 14px;
+  background: rgba(255,255,255,0.85);
+  border: 1.5px solid rgba(0,0,0,0.1);
+  border-radius: 999px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  backdrop-filter: blur(4px);
+  font-family: 'Permanent Marker', cursive;
+  letter-spacing: 0.3px;
+}
+.veleda-breadcrumb-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 1.1rem;
+  color: #0A1628;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.veleda-breadcrumb-current i {
+  color: #C9A961;
+}
+.veleda-breadcrumb-link {
+  font-family: 'Permanent Marker', cursive;
+  letter-spacing: 0.3px;
+  font-size: 1rem;
+  color: rgba(10,22,40,0.65);
+  background: transparent;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.veleda-breadcrumb-link:hover {
+  color: #0A1628;
+  background: rgba(0,0,0,0.05);
+  text-decoration: underline;
+}
+.veleda-breadcrumb-link i {
+  color: #C9A961;
+}
+.veleda-breadcrumb-sep {
+  color: rgba(0,0,0,0.3);
+  font-size: 0.85rem;
+}
+
+/* ----- Notes-tableaux : soulignement bleu type "lien cliquable" ----- */
+.veleda-note.veleda-note-is-board .veleda-note-content {
+  color: #1D4ED8;
+  text-decoration: underline;
+  text-decoration-color: #2563EB;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.veleda-note.veleda-note-is-board:hover .veleda-note-content {
+  color: #1E40AF;
+  text-decoration-thickness: 3px;
+  text-shadow: 0 0 8px rgba(37,99,235,0.18);
+}
+/* Quand la note-tableau utilise un feutre de couleur (red/green), on garde
+   le code couleur d'importance via le souligne, mais on impose le bleu sur le texte
+   pour qu'on voie tout de suite que c'est un lien. */
+.veleda-note.veleda-note-is-board.veleda-ink-red .veleda-note-content,
+.veleda-note.veleda-note-is-board.veleda-ink-green .veleda-note-content,
+.veleda-note.veleda-note-is-board.veleda-ink-black .veleda-note-content {
+  color: #1D4ED8;
+}
+/* Bouton "Ouvrir" dans inspect (couleur bleue) */
+.veleda-inspect-open {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%) !important;
+  color: #fff !important;
+  border-color: #1D4ED8 !important;
+}
+.veleda-inspect-open:hover {
+  background: linear-gradient(135deg, #1D4ED8 0%, #1E3A8A 100%) !important;
+}
+.veleda-inspect-board-hint {
+  color: #1D4ED8 !important;
+  font-style: italic;
+  font-size: 0.85rem !important;
+}
+.veleda-inspect-board-hint i {
+  color: #2563EB;
+}
+
+/* ----- Checkbox "Faire de cette note un sous-tableau" dans la modale ----- */
+.veleda-isboard-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1.5px solid rgba(37,99,235,0.18);
+  border-radius: 10px;
+  background: rgba(37,99,235,0.04);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.veleda-isboard-row:hover {
+  border-color: rgba(37,99,235,0.4);
+  background: rgba(37,99,235,0.07);
+}
+.veleda-isboard-row.is-checked {
+  border-color: #2563EB;
+  background: rgba(37,99,235,0.1);
+  box-shadow: 0 0 0 2px rgba(37,99,235,0.15);
+}
+.veleda-isboard-checkbox {
+  margin: 4px 0 0 0;
+  width: 18px;
+  height: 18px;
+  accent-color: #2563EB;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.veleda-isboard-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.veleda-isboard-title {
+  font-family: 'Kalam', cursive;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #1E3A8A;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.veleda-isboard-title i {
+  color: #2563EB;
+}
+.veleda-isboard-hint {
+  font-family: 'Caveat', cursive;
+  font-size: 0.95rem;
+  color: rgba(30,58,138,0.7);
+  font-style: italic;
+  line-height: 1.3;
+}
+
+/* ----- Responsive : breadcrumb compact ----- */
+@media (max-width: 768px) {
+  .veleda-breadcrumb {
+    max-width: calc(100% - 90px);
+    top: 10px;
+    left: 12px;
+    padding: 4px 10px;
+    font-size: 0.9rem;
+  }
+  .veleda-breadcrumb-current {
+    font-size: 0.95rem;
+    max-width: 160px;
+  }
+  .veleda-breadcrumb-link {
+    font-size: 0.85rem;
+    max-width: 100px;
+  }
+  .veleda-board-fullpage {
+    padding-top: 50px;
+  }
+}

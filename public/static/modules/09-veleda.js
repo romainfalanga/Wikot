@@ -175,15 +175,27 @@ async function loadVeledaNotes() {
   state.veledaLoading = true;
   state.veledaError = null;
   try {
-    const res = await fetch('/api/veleda-notes', {
+    const parentId = state.veledaCurrentBoardId;
+    const url = parentId
+      ? '/api/veleda-notes?parent=' + encodeURIComponent(parentId)
+      : '/api/veleda-notes';
+    const res = await fetch(url, {
       headers: { 'Authorization': 'Bearer ' + state.token }
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
+      // Si le sous-tableau n'existe plus (a ete supprime), on retombe sur la racine
+      if (res.status === 404 && parentId) {
+        state.veledaCurrentBoardId = null;
+        state.veledaBreadcrumb = [];
+        return await loadVeledaNotes();
+      }
       throw new Error(err.error || 'Erreur de chargement');
     }
     const data = await res.json();
     state.veledaNotes = Array.isArray(data.notes) ? data.notes : [];
+    state.veledaBreadcrumb = Array.isArray(data.breadcrumb) ? data.breadcrumb : [];
+    state.veledaCurrentBoardId = data.current_board_id ?? null;
     state.veledaMe = data.me || {
       id: state.user?.id,
       role: state.user?.role,
@@ -196,6 +208,31 @@ async function loadVeledaNotes() {
   } finally {
     state.veledaLoading = false;
   }
+}
+
+// Navigation : ouvrir un sous-tableau (clic sur une note de type is_board)
+async function veledaOpenBoard(noteId) {
+  if (!noteId) return;
+  state.veledaCurrentBoardId = Number(noteId);
+  state.veledaInspectingId = null;
+  state.veledaEditingId = null;
+  state.veledaWriteModalOpen = false;
+  state.veledaNotes = [];
+  render();
+  await loadVeledaNotes();
+  render();
+}
+
+// Navigation : revenir a la racine ou a un ancetre via breadcrumb
+async function veledaNavigateTo(targetBoardId) {
+  state.veledaCurrentBoardId = targetBoardId ? Number(targetBoardId) : null;
+  state.veledaInspectingId = null;
+  state.veledaEditingId = null;
+  state.veledaWriteModalOpen = false;
+  state.veledaNotes = [];
+  render();
+  await loadVeledaNotes();
+  render();
 }
 
 function startVeledaPolling() {
@@ -236,12 +273,15 @@ function renderVeledaView() {
     state.veledaDraftContent = state.veledaDraftContent || '';
     state.veledaDraftColor = state.veledaDraftColor || 'black';
     state.veledaDraftFont = state.veledaDraftFont || VELEDA_DEFAULT_FONT;
+    state.veledaDraftIsBoard = state.veledaDraftIsBoard || false;
     if (!state.veledaDraftExpiresLocal) {
       state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
     }
     state.veledaEditingId = null;
     state.veledaInspectingId = null;
     state.veledaWriteModalOpen = false;
+    state.veledaCurrentBoardId = state.veledaCurrentBoardId ?? null;
+    state.veledaBreadcrumb = state.veledaBreadcrumb || [];
     loadVeledaNotes().then(() => {
       startVeledaPolling();
       render();
@@ -252,12 +292,15 @@ function renderVeledaView() {
   if (state.veledaDraftContent === undefined) state.veledaDraftContent = '';
   if (!state.veledaDraftColor) state.veledaDraftColor = 'black';
   if (!state.veledaDraftFont) state.veledaDraftFont = VELEDA_DEFAULT_FONT;
+  if (state.veledaDraftIsBoard === undefined) state.veledaDraftIsBoard = false;
   if (!state.veledaDraftExpiresLocal) {
     state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
   }
   if (state.veledaEditingId === undefined) state.veledaEditingId = null;
   if (state.veledaInspectingId === undefined) state.veledaInspectingId = null;
   if (state.veledaWriteModalOpen === undefined) state.veledaWriteModalOpen = false;
+  if (state.veledaCurrentBoardId === undefined) state.veledaCurrentBoardId = null;
+  if (state.veledaBreadcrumb === undefined) state.veledaBreadcrumb = [];
 
   startVeledaPolling();
   return renderVeledaShell(state.veledaNotes || []);
@@ -271,6 +314,55 @@ function renderVeledaShell(notes) {
   const canEdit = veledaUserCanEdit();
   const writeModalHtml = state.veledaWriteModalOpen ? renderVeledaWriteModal() : '';
 
+  // === Breadcrumb / titre du tableau courant en haut a gauche ===
+  // - Racine : "Tableau VELEDA"
+  // - Sous-tableau : "Tableau VELEDA > <texte de la note-tableau parente> > ..."
+  // Chaque ancetre est cliquable pour remonter.
+  const breadcrumb = state.veledaBreadcrumb || [];
+  const onRoot = !state.veledaCurrentBoardId;
+  let breadcrumbHtml = '';
+  if (onRoot) {
+    breadcrumbHtml = `
+      <div class="veleda-breadcrumb">
+        <span class="veleda-breadcrumb-current">
+          <i class="fas fa-chalkboard"></i>
+          Tableau VELEDA
+        </span>
+      </div>
+    `;
+  } else {
+    // racine cliquable, puis chaque niveau intermediaire cliquable,
+    // puis le dernier (= tableau courant) en evidence
+    const parts = [];
+    parts.push(`
+      <button type="button" class="veleda-breadcrumb-link"
+        onclick="event.stopPropagation(); veledaNavigateTo(null)">
+        <i class="fas fa-chalkboard"></i> Tableau VELEDA
+      </button>
+    `);
+    for (let i = 0; i < breadcrumb.length; i++) {
+      const item = breadcrumb[i];
+      const isLast = i === breadcrumb.length - 1;
+      parts.push(`<span class="veleda-breadcrumb-sep"><i class="fas fa-angle-right"></i></span>`);
+      if (isLast) {
+        parts.push(`
+          <span class="veleda-breadcrumb-current" title="${veledaEscape(item.content)}">
+            ${veledaEscape(item.content)}
+          </span>
+        `);
+      } else {
+        parts.push(`
+          <button type="button" class="veleda-breadcrumb-link"
+            onclick="event.stopPropagation(); veledaNavigateTo(${item.id})"
+            title="${veledaEscape(item.content)}">
+            ${veledaEscape(item.content)}
+          </button>
+        `);
+      }
+    }
+    breadcrumbHtml = `<div class="veleda-breadcrumb">${parts.join('')}</div>`;
+  }
+
   return `
     <div class="veleda-fullpage">
       <div class="veleda-board veleda-board-fullpage" id="veleda-board" onclick="veledaBoardClick(event)">
@@ -278,6 +370,8 @@ function renderVeledaShell(notes) {
         <span class="veleda-rivet tr"></span>
         <span class="veleda-rivet bl"></span>
         <span class="veleda-rivet br"></span>
+
+        ${breadcrumbHtml}
 
         ${state.veledaError ? `
           <div class="veleda-error-overlay">
@@ -289,7 +383,9 @@ function renderVeledaShell(notes) {
         ${notes.length === 0 ? `
           <div class="veleda-empty">
             ${canEdit
-              ? 'Le tableau est vide. Appuie sur "Ecrire" en haut a droite.'
+              ? (onRoot
+                  ? 'Le tableau est vide. Appuie sur "Ecrire" en haut a droite.'
+                  : 'Ce sous-tableau est vide. Appuie sur "Ecrire" pour ajouter une note ici.')
               : 'Le tableau est vide pour l\'instant.'
             }
           </div>
@@ -389,9 +485,11 @@ function renderVeledaNote(note, me, canEdit) {
   }
 
   // === MODE NORMAL / INSPECT ===
+  const isBoardNote = note.is_board === 1 || note.is_board === true;
   const dragHandler = canEdit ? `onmousedown="veledaStartDrag(event, ${note.id})"` : '';
   const dblClickHandler = `ondblclick="veledaOnNoteDblClick(event, ${note.id})"`;
   const inspectingClass = isInspecting ? 'veleda-note-inspecting' : '';
+  const boardClass = isBoardNote ? 'veleda-note-is-board' : '';
 
   // Bloc inspect : visible uniquement en mode inspect
   const inspectMeta = isInspecting ? `
@@ -404,8 +502,21 @@ function renderVeledaNote(note, me, canEdit) {
         ${note.author_emoji ? `<span class="veleda-inspect-emoji">${veledaEscape(note.author_emoji)}</span>` : ''}
         <span class="veleda-inspect-author">${veledaEscape((note.created_by_name || '?').split(' ')[0])}</span>
       </span>
+      ${isBoardNote ? `
+        <span class="veleda-inspect-row veleda-inspect-board-hint">
+          <i class="fas fa-chalkboard"></i>
+          Sous-tableau — clic simple pour ouvrir
+        </span>
+      ` : ''}
       ${canEdit ? `
         <span class="veleda-inspect-actions">
+          ${isBoardNote ? `
+            <button class="veleda-inspect-btn veleda-inspect-open"
+              onclick="event.stopPropagation(); veledaOpenBoard(${note.id})"
+              title="Ouvrir le sous-tableau">
+              <i class="fas fa-arrow-right"></i> Ouvrir
+            </button>
+          ` : ''}
           <button class="veleda-inspect-btn veleda-inspect-edit"
             onclick="event.stopPropagation(); veledaStartEdit(${note.id})"
             title="Modifier">
@@ -413,7 +524,7 @@ function renderVeledaNote(note, me, canEdit) {
           </button>
           <button class="veleda-inspect-btn veleda-inspect-delete"
             onclick="event.stopPropagation(); deleteVeledaNote(${note.id})"
-            title="Effacer">
+            title="${isBoardNote ? 'Effacer (supprime aussi tout son contenu)' : 'Effacer'}">
             <i class="fas fa-eraser"></i>
           </button>
         </span>
@@ -421,14 +532,25 @@ function renderVeledaNote(note, me, canEdit) {
     </div>
   ` : '';
 
+  // Clic simple sur le contenu :
+  //  - note normale : rien (le drag/dblclick gere)
+  //  - note-tableau : navigation vers le sous-tableau, MAIS uniquement si on ne drague pas
+  //    et qu'on ne vient pas de quitter un mode inspect.
+  // On expose un onclick uniquement sur le contenu (pas sur toute la note) pour ne pas
+  // interferer avec drag/inspect/edit.
+  const contentClickHandler = isBoardNote
+    ? `onclick="event.stopPropagation(); veledaTryOpenBoard(event, ${note.id})"`
+    : `onclick="event.stopPropagation();"`;
+
   return `
-    <div class="veleda-note veleda-ink-${color} ${canEdit ? 'veleda-note-draggable' : ''} ${inspectingClass}"
+    <div class="veleda-note veleda-ink-${color} ${canEdit ? 'veleda-note-draggable' : ''} ${inspectingClass} ${boardClass}"
       style="left:${x}px; top:${y}px; ${sizeStyle} transform: rotate(${rotation}deg); font-family: '${font}', cursive;"
       data-note-id="${note.id}"
+      data-is-board="${isBoardNote ? '1' : '0'}"
       ${dragHandler}
       ${dblClickHandler}
       onclick="event.stopPropagation();">
-      <div class="veleda-note-content">${veledaEscape(note.content)}</div>
+      <div class="veleda-note-content" ${contentClickHandler}>${veledaEscape(note.content)}</div>
       ${inspectMeta}
       ${canEdit && isInspecting ? `
         <div class="veleda-resize-handle"
@@ -441,6 +563,15 @@ function renderVeledaNote(note, me, canEdit) {
   `;
 }
 
+// Helper : sur une note-tableau, on n'ouvre le sous-tableau que si l'utilisateur
+// a vraiment fait un clic et pas un drag. On s'appuie sur le flag de drag.
+function veledaTryOpenBoard(event, noteId) {
+  if (state.veledaDragging || state.veledaResizing) return;
+  // Si on est en mode edit / inspect sur cette note, ne pas naviguer
+  if (state.veledaEditingId === noteId) return;
+  veledaOpenBoard(noteId);
+}
+
 // ============================================
 // MODALE "ECRIRE SUR LE TABLEAU"
 // ============================================
@@ -450,6 +581,7 @@ function renderVeledaWriteModal() {
   const minLocal = veledaToDatetimeLocal(new Date(Date.now() + 60 * 1000));
   const selectedColor = state.veledaDraftColor || 'black';
   const selectedFont = state.veledaDraftFont || VELEDA_DEFAULT_FONT;
+  const isBoardChecked = !!state.veledaDraftIsBoard;
 
   const colorButtons = VELEDA_COLORS.map(c => `
     <button type="button"
@@ -520,6 +652,22 @@ function renderVeledaWriteModal() {
             min="${minLocal}"
             value="${expiresLocal}"
             onchange="veledaSetExpires(this.value)">
+
+          <label class="veleda-isboard-row ${isBoardChecked ? 'is-checked' : ''}">
+            <input type="checkbox"
+              class="veleda-isboard-checkbox"
+              ${isBoardChecked ? 'checked' : ''}
+              onchange="veledaSetDraftIsBoard(this.checked)">
+            <span class="veleda-isboard-content">
+              <span class="veleda-isboard-title">
+                <i class="fas fa-chalkboard"></i>
+                Faire de cette note un sous-tableau
+              </span>
+              <span class="veleda-isboard-hint">
+                La note sera soulignee en bleu et cliquable. Elle ouvrira son propre tableau VELEDA pour organiser les idees liees.
+              </span>
+            </span>
+          </label>
         </div>
 
         <div class="veleda-modal-footer">
@@ -574,6 +722,15 @@ function veledaSetDraftColor(color) {
 function veledaSetDraftFont(font) {
   if (VELEDA_FONTS.indexOf(font) === -1) return;
   state.veledaDraftFont = font;
+  render();
+  setTimeout(() => {
+    const inp = document.getElementById('veleda-write-input');
+    if (inp) inp.focus();
+  }, 30);
+}
+
+function veledaSetDraftIsBoard(checked) {
+  state.veledaDraftIsBoard = !!checked;
   render();
   setTimeout(() => {
     const inp = document.getElementById('veleda-write-input');
@@ -640,6 +797,8 @@ async function submitVeledaCreate() {
   const expiresLocal = state.veledaDraftExpiresLocal;
   const color = state.veledaDraftColor || 'black';
   const font = state.veledaDraftFont || VELEDA_DEFAULT_FONT;
+  const isBoard = !!state.veledaDraftIsBoard;
+  const parentNoteId = state.veledaCurrentBoardId || null;
   const btn = document.getElementById('veleda-submit-btn');
 
   if (!content) {
@@ -694,7 +853,9 @@ async function submitVeledaCreate() {
         pos_y: Math.round(spot.y),
         // Pas de width/height : laisse la note s'adapter au texte
         color,
-        font
+        font,
+        is_board: isBoard,
+        parent_note_id: parentNoteId
       })
     });
     const data = await res.json();
@@ -705,6 +866,7 @@ async function submitVeledaCreate() {
     state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
     state.veledaDraftColor = 'black';
     state.veledaDraftFont = VELEDA_DEFAULT_FONT;
+    state.veledaDraftIsBoard = false;
     state.veledaWriteModalOpen = false;
 
     await loadVeledaNotes();
@@ -1070,6 +1232,7 @@ window.veledaOnKeyDown = veledaOnKeyDown;
 window.veledaSetExpires = veledaSetExpires;
 window.veledaSetDraftColor = veledaSetDraftColor;
 window.veledaSetDraftFont = veledaSetDraftFont;
+window.veledaSetDraftIsBoard = veledaSetDraftIsBoard;
 window.submitVeledaCreate = submitVeledaCreate;
 window.deleteVeledaNote = deleteVeledaNote;
 window.veledaStartDrag = veledaStartDrag;
@@ -1086,3 +1249,6 @@ window.closeVeledaWriteModal = closeVeledaWriteModal;
 window.closeVeledaWriteModalIfBackdrop = closeVeledaWriteModalIfBackdrop;
 window.veledaBoardClick = veledaBoardClick;
 window.veledaOnNoteDblClick = veledaOnNoteDblClick;
+window.veledaOpenBoard = veledaOpenBoard;
+window.veledaTryOpenBoard = veledaTryOpenBoard;
+window.veledaNavigateTo = veledaNavigateTo;

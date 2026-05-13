@@ -5958,11 +5958,13 @@ async function refreshInstanceStatus(db: D1Database, instanceId: number) {
 // ============================================
 // MAIN HTML PAGE
 // ============================================
-// BUILD_ID : timestamp régénéré à chaque build → cache-buster automatique sur
-// tous les assets statiques. Solution radicale au problème où le navigateur
-// mobile gardait l'ancien JS/CSS en cache après un déploiement, faisant
-// croire que le fix n'avait pas été appliqué (bug sidebar décalée à droite).
-const BUILD_ID = String(Date.now())
+// BUILD_ID : timestamp injecté par Vite à la compilation (cf. vite.config.ts).
+// IMPORTANT : `Date.now()` au top-level d'un Worker Cloudflare retourne 0
+// (interdit "I/O au module scope"), d'où le passage par `define` côté Vite.
+// Cache-buster automatique sur tous les assets statiques → le navigateur
+// mobile ne peut plus garder l'ancien JS/CSS après un déploiement.
+declare const __BUILD_ID__: string
+const BUILD_ID = typeof __BUILD_ID__ !== 'undefined' ? __BUILD_ID__ : String(Date.now())
 
 app.get('*', (c) => {
   const v = BUILD_ID

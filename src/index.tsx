@@ -5960,74 +5960,23 @@ app.get('*', (c) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Wikot - Gestion des procédures hôtelières</title>
 
-  <!-- === PERF : preconnect aux CDN externes pour gagner le DNS + TLS avant les requêtes === -->
+  <!-- === PERF : preconnect aux CDN restants (Font Awesome + Google Fonts) === -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="preconnect" href="https://cdn.tailwindcss.com">
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
 
-  <!-- === CSS CRITIQUE INLINE : la page a sa couleur et son squelette dès la 1ère frame === -->
-  <!-- (ces styles s'appliquent AVANT Tailwind, AVANT les fonts, AVANT les modules JS) -->
-  <style>
-    html, body { margin: 0; padding: 0; background-color: #FAF8F5; color: #0A1628; min-height: 100vh; -webkit-font-smoothing: antialiased; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
-    #app:empty::before {
-      content: '';
-      position: fixed; inset: 0;
-      background: #FAF8F5;
-      display: flex; align-items: center; justify-content: center;
-    }
-    /* Splash screen : visible dès la 1ère frame, masqué dès que #app reçoit du contenu */
-    .wikot-splash { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #FAF8F5; z-index: 9999; transition: opacity 0.3s ease; }
-    .wikot-splash.hidden { opacity: 0; pointer-events: none; }
-    .wikot-splash-logo { width: 56px; height: 56px; border-radius: 14px; background: #0A1628; color: #C9A961; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; box-shadow: 0 8px 24px rgba(10,22,40,0.12); margin-bottom: 18px; font-family: Georgia, serif; }
-    .wikot-splash-title { font-size: 14px; font-weight: 600; color: #0A1628; letter-spacing: -0.01em; margin-bottom: 16px; }
-    .wikot-splash-dots { display: flex; gap: 6px; }
-    .wikot-splash-dots span { width: 6px; height: 6px; border-radius: 50%; background: #C9A961; animation: wikot-splash-pulse 1.2s ease-in-out infinite; }
-    .wikot-splash-dots span:nth-child(2) { animation-delay: 0.15s; }
-    .wikot-splash-dots span:nth-child(3) { animation-delay: 0.3s; }
-    @keyframes wikot-splash-pulse { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
-  </style>
+  <!-- === TAILWIND PRÉ-COMPILÉ (100 KB statique) — remplace cdn.tailwindcss.com qui compilait en JS dans le navigateur (~1-2s perdus) === -->
+  <link rel="stylesheet" href="/static/tailwind.css">
 
-  <!-- === FONTS : preload non-bloquant (au lieu de @import dans <style> qui bloque le rendu) === -->
+  <!-- === FONT AWESOME (CDN, mais préchargé en parallèle) === -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
+
+  <!-- === FONTS Google : chargement non-bloquant (media=print + onload swap) === -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap" media="print" onload="this.media='all'">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap"></noscript>
 
-  <script src="https://cdn.tailwindcss.com"></script>
-  <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            // === PALETTE PREMIUM HÔTELLERIE ===
-            // brand = or champagne (CTA, badges premium, accents)
-            brand: { 50:'#FBF7EE',100:'#F5ECD2',200:'#EBD8A4',300:'#DFC076',400:'#D4AC54',500:'#C9A961',600:'#A68845',700:'#7E682F',800:'#56481F',900:'#2E2611' },
-            // navy = bleu nuit profond (texte, sidebar, éléments forts)
-            navy: { 50:'#F4F6F9',100:'#E2E7EE',200:'#C2CCD9',300:'#94A3B8',400:'#5C7185',500:'#3A4F66',600:'#1F3147',700:'#162536',800:'#0F1B28',900:'#0A1628' },
-            // cream = ivoire chaleureux (fond principal)
-            cream: { 50:'#FDFCF9',100:'#FAF8F5',200:'#F5F1EA',300:'#EDE7DB',400:'#DCD3C0',500:'#C8BCA3' },
-            // gold = synonyme brand pour clarté sémantique
-            gold: { 400:'#D4AC54',500:'#C9A961',600:'#A68845' },
-            // wine = bordeaux pour alertes premium
-            wine: { 500:'#8B2635',600:'#6E1E2A',700:'#52171F' }
-          },
-          fontFamily: {
-            display: ['Fraunces', 'Georgia', 'serif'],
-            sans: ['Inter', 'system-ui', 'sans-serif']
-          },
-          boxShadow: {
-            'premium-sm': '0 1px 2px rgba(15,27,40,0.04), 0 1px 3px rgba(15,27,40,0.06)',
-            'premium': '0 4px 12px rgba(15,27,40,0.06), 0 1px 3px rgba(15,27,40,0.04)',
-            'premium-lg': '0 8px 24px rgba(15,27,40,0.08), 0 2px 6px rgba(15,27,40,0.04)',
-            'premium-xl': '0 16px 40px rgba(15,27,40,0.10), 0 4px 12px rgba(15,27,40,0.05)'
-          }
-        }
-      }
-    }
-  </script>
   <style>
     /* === POLICES — Inter (UI) + Fraunces (titres premium) === */
-    /* Chargement non-bloquant via <link> en haut du <head> (cf preload plus haut). */
     * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
     .font-display { font-family: 'Fraunces', Georgia, serif; letter-spacing: -0.01em; }
 
@@ -6437,45 +6386,119 @@ app.get('*', (c) => {
   </style>
 </head>
 <body class="min-h-screen" style="background-color: #FAF8F5; color: #0A1628;">
-  <!-- Splash screen visible AVANT que le JS s'exécute (zéro page blanche) -->
-  <div id="wikot-splash" class="wikot-splash">
-    <div class="wikot-splash-logo">W</div>
-    <div class="wikot-splash-title">Wikot</div>
-    <div class="wikot-splash-dots"><span></span><span></span><span></span></div>
-  </div>
+  <!--
+    SSR : on pré-rend la page de login DIRECTEMENT dans le HTML servi.
+    Comme ça l'utilisateur non-connecté voit le form INSTANTANÉMENT, sans
+    attendre que les 422 KB de JS soient chargés et exécutés.
 
-  <div id="app"></div>
+    Si l'utilisateur est connecté (token en localStorage), le JS prendra
+    le relais et remplacera ce contenu par la vraie vue (dashboard/wikot/etc).
+  -->
+  <div id="app"><div id="ssr-login" class="min-h-screen flex flex-col lg:flex-row" style="background:#FAF8F5;">
+    <div class="hidden lg:flex lg:w-1/2 relative overflow-hidden" style="background:#0A1628;">
+      <div class="absolute inset-0" style="background-image:radial-gradient(circle at 1px 1px,#C9A961 1px,transparent 0);background-size:32px 32px;opacity:0.07;"></div>
+      <div class="absolute right-0 top-0 bottom-0" style="width:1px;background:linear-gradient(to bottom,transparent,#C9A961,transparent);"></div>
+      <div class="relative z-10 flex flex-col justify-between p-12 xl:p-16 w-full">
+        <div class="flex items-center gap-3">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center" style="background:#C9A961;">
+            <i class="fas fa-concierge-bell text-lg" style="color:#0A1628;"></i>
+          </div>
+          <span class="font-display text-2xl font-semibold text-white">Wikot</span>
+        </div>
+        <div class="max-w-md">
+          <h2 class="font-display text-4xl xl:text-5xl font-medium text-white leading-tight">
+            Chaque détail<br><span style="color:#C9A961;">soigneusement orchestré.</span>
+          </h2>
+        </div>
+        <div></div>
+      </div>
+    </div>
+    <div class="flex-1 flex items-center justify-center p-6 lg:p-12">
+      <div class="w-full max-w-md">
+        <div class="flex lg:hidden items-center justify-center gap-3 mb-8">
+          <div class="w-11 h-11 rounded-xl flex items-center justify-center" style="background:#C9A961;">
+            <i class="fas fa-concierge-bell text-lg" style="color:#0A1628;"></i>
+          </div>
+          <span class="font-display text-2xl font-semibold" style="color:#0A1628;">Wikot</span>
+        </div>
+        <div class="bg-white rounded-2xl overflow-hidden" style="border:1px solid rgba(15,27,40,0.08);box-shadow:0 8px 24px rgba(15,27,40,0.08),0 2px 6px rgba(15,27,40,0.04);">
+          <div class="p-7 sm:p-9">
+            <h2 class="font-display text-2xl font-semibold mb-1" style="color:#0A1628;">Connexion Équipe</h2>
+            <p class="text-xs mb-7" style="color:rgba(15,27,40,0.5);">Réservée au personnel et à la direction de l'hôtel.</p>
+            <form id="ssr-login-form" onsubmit="event.preventDefault(); if(typeof login==='function'){login(document.getElementById('email').value,document.getElementById('password').value);}else{document.getElementById('ssr-login-pending').textContent='Chargement en cours, réessayez dans 1s…';}">
+              <div class="mb-4">
+                <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color:#0A1628;opacity:0.7;">Email</label>
+                <div class="relative">
+                  <i class="fas fa-envelope absolute left-3.5 top-3.5 text-sm" style="color:#C9A961;"></i>
+                  <input id="email" type="email" required autocomplete="email" placeholder="votre@email.com"
+                    class="w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm"
+                    style="border:1px solid rgba(15,27,40,0.14);background:#fff;color:#0A1628;font-size:16px;">
+                </div>
+              </div>
+              <div class="mb-6">
+                <label class="block text-xs font-semibold mb-2 uppercase tracking-wider" style="color:#0A1628;opacity:0.7;">Mot de passe</label>
+                <div class="relative">
+                  <i class="fas fa-lock absolute left-3.5 top-3.5 text-sm" style="color:#C9A961;"></i>
+                  <input id="password" type="password" required autocomplete="current-password" placeholder="••••••••"
+                    class="w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm"
+                    style="border:1px solid rgba(15,27,40,0.14);background:#fff;color:#0A1628;font-size:16px;">
+                </div>
+              </div>
+              <button type="submit" class="w-full font-semibold py-3 rounded-lg transition-all" style="background:#0A1628;color:white;">
+                <i class="fas fa-sign-in-alt mr-2"></i>Se connecter
+              </button>
+              <p id="ssr-login-pending" class="text-center text-xs mt-3" style="color:rgba(15,27,40,0.4);"></p>
+            </form>
+          </div>
+        </div>
+        <p class="text-center text-xs mt-6" style="color:rgba(15,27,40,0.4);">
+          &copy; 2026 Wikot &middot; Conçu pour l'hôtellerie d'exception
+        </p>
+      </div>
+    </div>
+  </div></div>
 
-  <!-- Frontend découpé en 9 modules (scope global partagé). Chargement en cascade dans l'ordre des dépendances. -->
-  <script src="/static/modules/01-core.js"></script>
-  <script src="/static/modules/02-auth.js"></script>
-  <script src="/static/modules/03-layout.js"></script>
-  <script src="/static/modules/04-procedures.js"></script>
-  <script src="/static/modules/05-users-info.js"></script>
-  <script src="/static/modules/06-wikot.js"></script>
-  <script src="/static/modules/08-tasks.js"></script>
-  <script src="/static/modules/07-chat-modals.js"></script>
+  <!--
+    Scripts du frontend : tous en DEFER → ne bloquent plus le parsing HTML,
+    s'exécutent dans l'ordre une fois le HTML parsé. La page de login SSR
+    est donc affichée IMMÉDIATEMENT, sans attendre les 422 KB de modules.
+  -->
+  <script defer src="/static/modules/01-core.js"></script>
+  <script defer src="/static/modules/02-auth.js"></script>
+  <script defer src="/static/modules/03-layout.js"></script>
+  <script defer src="/static/modules/04-procedures.js"></script>
+  <script defer src="/static/modules/05-users-info.js"></script>
+  <script defer src="/static/modules/06-wikot.js"></script>
+  <script defer src="/static/modules/08-tasks.js"></script>
+  <script defer src="/static/modules/07-chat-modals.js"></script>
 
-  <!-- Masquage du splash dès que #app contient quelque chose (= render() a tourné) -->
+  <!--
+    Bootstrap : quand tous les modules sont chargés (DOMContentLoaded vu que
+    les scripts sont en defer), on appelle render(). Si l'user est connecté,
+    render() remplacera le HTML de login SSR par la vraie vue. S'il ne l'est
+    pas, render() régénérera la page de login (le HTML SSR sert juste à
+    occuper l'écran pendant le chargement).
+  -->
   <script>
     (function() {
-      var splash = document.getElementById('wikot-splash');
       var app = document.getElementById('app');
-      if (!splash || !app) return;
-      function hideSplash() {
-        splash.classList.add('hidden');
-        setTimeout(function() { splash.remove(); }, 350);
-      }
-      // Observe le #app : dès qu'il reçoit du contenu, on masque le splash.
-      var observer = new MutationObserver(function() {
-        if (app.children.length > 0 || app.textContent.trim().length > 0) {
-          observer.disconnect();
-          hideSplash();
+      // Si on a un token en localStorage, on retire le SSR login dès maintenant
+      // pour éviter le flash login → vue connectée
+      try {
+        if (localStorage.getItem('wikot_token') && localStorage.getItem('wikot_user')) {
+          var ssr = document.getElementById('ssr-login');
+          if (ssr) ssr.style.opacity = '0';
+        }
+      } catch(e) {}
+
+      // Quand les modules sont prêts (DOMContentLoaded déclenché APRÈS exécution
+      // des scripts defer, dans l'ordre), on lance render() qui remplace le SSR
+      // par la vraie vue (login régénéré ou vue connectée).
+      document.addEventListener('DOMContentLoaded', function() {
+        if (typeof render === 'function') {
+          try { render(); } catch(e) { console.error('[boot] render() error', e); }
         }
       });
-      observer.observe(app, { childList: true, subtree: false });
-      // Filet de sécurité : si jamais rien n'arrive en 8s, on masque quand même.
-      setTimeout(function() { observer.disconnect(); hideSplash(); }, 8000);
     })();
   </script>
 </body>

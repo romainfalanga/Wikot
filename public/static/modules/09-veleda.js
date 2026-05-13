@@ -89,16 +89,28 @@ function veledaToDatetimeLocal(d) {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// Detection de permission cote front (l'autorite reelle est cote serveur)
+// Detection de permission cote front (l'autorite reelle est cote serveur).
+// On essaie 3 sources dans l'ordre :
+//  1. La reponse API la plus recente (state.veledaMe.can_use_veleda) — source de verite serveur
+//  2. Le helper global userCanUseVeleda() s'il existe
+//  3. Le state.user local (fallback pour pre-chargement)
+// Toute exception est gobee silencieusement pour eviter de planter le rendu.
 function veledaUserCanEdit() {
-  // L'API renvoie can_use_veleda dans state.veledaMe (source de verite serveur).
-  // Fallback sur le state.user pour les cas avant chargement.
-  if (state.veledaMe && state.veledaMe.can_use_veleda !== undefined) {
-    return Number(state.veledaMe.can_use_veleda) === 1;
+  try {
+    if (typeof state === 'undefined' || !state) return false;
+    if (state.veledaMe && state.veledaMe.can_use_veleda !== undefined && state.veledaMe.can_use_veleda !== null) {
+      return Number(state.veledaMe.can_use_veleda) === 1;
+    }
+    if (typeof userCanUseVeleda === 'function') {
+      try { return !!userCanUseVeleda(); } catch (_) { /* fallback ci-dessous */ }
+    }
+    if (!state.user) return false;
+    return state.user.role === 'admin'
+        || state.user.role === 'super_admin'
+        || Number(state.user.can_use_veleda) === 1;
+  } catch (_) {
+    return false;
   }
-  if (typeof userCanUseVeleda === 'function') return userCanUseVeleda();
-  if (!state.user) return false;
-  return state.user.role === 'admin' || state.user.role === 'super_admin' || Number(state.user.can_use_veleda) === 1;
 }
 
 // Recherche d'un emplacement libre (algo AABB)

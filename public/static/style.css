@@ -1,6 +1,80 @@
 h1 { font-family: Arial, Helvetica, sans-serif; }
 
 /* =========================================================
+   APP SHELL — Layout principal (sidebar + main)
+   ========================================================= */
+
+/* Conteneur racine : flex horizontal pleine hauteur */
+.app-shell-row {
+  display: flex;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  width: 100%;
+}
+
+/* Main : prend tout l'espace restant. CRUCIAL : min-width: 0 pour
+   éviter que des enfants larges (tables, code) le fassent déborder. */
+.app-main {
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* === SIDEBAR ===
+   Mobile (< 1024px) : overlay fixe hors écran, sortie complète du flux flex.
+   Desktop (≥ 1024px) : enfant flex statique, largeur fixe 256px. */
+.app-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  height: 100dvh;
+  width: 288px;            /* 18rem = w-72 */
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(-100%);
+  transition: transform 0.3s ease;
+  will-change: transform;
+}
+
+.app-sidebar.is-open {
+  transform: translateX(0);
+}
+
+/* Overlay sombre derrière la sidebar mobile */
+.app-sidebar-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 30;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.app-sidebar-overlay.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (min-width: 1024px) {
+  .app-sidebar {
+    position: static;            /* sort du fixed → reprend sa place dans le flex */
+    transform: none !important;  /* annule translate quel que soit l'état */
+    width: 256px;                /* 16rem = lg:w-64 */
+    height: auto;
+    flex-shrink: 0;
+    z-index: auto;
+    transition: none;
+  }
+  .app-sidebar-overlay {
+    display: none;               /* jamais d'overlay sur desktop */
+  }
+}
+
+/* =========================================================
    MOBILE — Compensation de la bottom navigation
    ========================================================= */
 

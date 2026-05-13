@@ -164,11 +164,11 @@ function renderMainLayout() {
 
   return `
   <!-- Overlay mobile sidebar -->
-  <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden" onclick="closeSidebar()"></div>
+  <div id="sidebar-overlay" class="app-sidebar-overlay" onclick="closeSidebar()"></div>
 
-  <div class="flex app-shell overflow-hidden">
+  <div class="app-shell-row">
     <!-- Sidebar premium -->
-    <aside id="main-sidebar" class="sidebar-premium fixed lg:relative top-0 left-0 z-40 lg:z-auto transform -translate-x-full lg:translate-x-0 transition-transform duration-300 w-72 lg:w-64 flex flex-col shrink-0 h-full">
+    <aside id="main-sidebar" class="sidebar-premium app-sidebar">
       <div class="px-6 py-6" style="border-bottom: 1px solid rgba(201,169,97,0.12);">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">
@@ -216,7 +216,7 @@ function renderMainLayout() {
     </aside>
 
     <!-- Main Content premium -->
-    <main class="flex-1 overflow-y-auto flex flex-col" style="background: var(--c-cream);">
+    <main class="app-main flex-1 overflow-y-auto flex flex-col" style="background: var(--c-cream);">
       <!-- Header mobile premium avec burger + titre vue active + badges -->
       <div class="lg:hidden sticky top-0 z-20 px-3 sm:px-4 h-14 flex items-center gap-3 shrink-0" style="background: #fff; border-bottom: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04);">
         <button onclick="openSidebar()" class="w-9 h-9 flex items-center justify-center rounded-lg transition-colors shrink-0" style="background: var(--c-cream-deep); color: var(--c-navy);">
@@ -260,14 +260,14 @@ function renderMainLayout() {
 }
 
 function openSidebar() {
-  document.getElementById('main-sidebar')?.classList.remove('-translate-x-full');
-  document.getElementById('sidebar-overlay')?.classList.remove('hidden');
+  document.getElementById('main-sidebar')?.classList.add('is-open');
+  document.getElementById('sidebar-overlay')?.classList.add('is-visible');
   document.body.classList.add('sidebar-open');
 }
 
 function closeSidebar() {
-  document.getElementById('main-sidebar')?.classList.add('-translate-x-full');
-  document.getElementById('sidebar-overlay')?.classList.add('hidden');
+  document.getElementById('main-sidebar')?.classList.remove('is-open');
+  document.getElementById('sidebar-overlay')?.classList.remove('is-visible');
   document.body.classList.remove('sidebar-open');
 }
 

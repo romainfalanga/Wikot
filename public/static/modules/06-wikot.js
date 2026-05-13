@@ -1991,35 +1991,33 @@ function renderBackWikotView() {
   // depuis le sous-agent → on revient au home + on rejoue le routeur.
   if (step === 'workshop') return mainHtml;
 
-  // Sur home et select-target : panneau Back Wikot persistant
-  //  - Desktop (≥ lg) : panneau latéral droit fixe à côté du contenu
-  //  - Mobile/tablette : chat INLINE en haut, suivi du contenu (4 boutons "Gérer X")
-  //    → plus de bouton flottant ni de drawer, le chat est immédiatement utilisable.
+  // Sur home et select-target : panneau Back Wikot persistant.
+  //  - Desktop (≥ lg) : panneau latéral droit en sticky à côté du contenu.
+  //  - Mobile/tablette : chat INLINE en haut, suivi du contenu (4 boutons "Gérer X").
+  //
+  // IMPORTANT : on rend le panneau chat UNE SEULE FOIS dans le DOM (pour éviter
+  // les IDs dupliqués 'back-wikot-root-input' / 'back-wikot-root-messages' qui
+  // feraient échouer document.getElementById sur mobile). On utilise CSS Grid +
+  // l'ordre flex pour replacer les blocs selon la taille d'écran :
+  //   - Desktop : grid 12 cols → chat à droite (col-span-4), contenu à gauche (col-span-8).
+  //   - Mobile  : flex-col → chat en premier (order-1), contenu en second (order-2).
+  const chatPanel = renderBackWikotChatPanel({ inDrawer: false });
+
   return `
-    <div class="relative">
-      <!-- Layout desktop : 2 colonnes (chat à droite en sticky) -->
-      <div class="hidden lg:grid lg:grid-cols-12 lg:gap-5">
-        <div class="lg:col-span-8">
-          ${mainHtml}
-        </div>
-        <aside class="lg:col-span-4">
-          <div class="sticky" style="top: 1rem; height: calc(100vh - 2rem);">
-            ${renderBackWikotChatPanel({ inDrawer: false })}
-          </div>
-        </aside>
+    <div class="flex flex-col lg:grid lg:grid-cols-12 lg:gap-5 gap-5">
+      <!-- Contenu principal : à gauche en desktop (col-span-8), en bas en mobile (order-2) -->
+      <div class="order-2 lg:order-1 lg:col-span-8">
+        ${mainHtml}
       </div>
 
-      <!-- Layout mobile/tablette : chat ouvert en HAUT + contenu (4 boutons) en DESSOUS -->
-      <div class="lg:hidden flex flex-col gap-5">
-        <!-- Chat inline en haut, hauteur fixe pour rester compact et laisser voir les boutons -->
-        <div style="height: 60vh; min-height: 360px; max-height: 520px;">
-          ${renderBackWikotChatPanel({ inDrawer: false })}
+      <!-- Panneau chat Back Wikot : à droite sticky en desktop, en haut en mobile -->
+      <aside class="order-1 lg:order-2 lg:col-span-4">
+        <!-- Mobile : hauteur compacte (60vh) pour laisser voir les 4 boutons en dessous -->
+        <!-- Desktop : sticky en haut, hauteur viewport -->
+        <div class="back-wikot-chat-wrapper">
+          ${chatPanel}
         </div>
-        <!-- 4 boutons "Gérer X" (et reste du contenu home / select-target) -->
-        <div>
-          ${mainHtml}
-        </div>
-      </div>
+      </aside>
     </div>
   `;
 }

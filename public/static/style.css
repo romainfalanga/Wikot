@@ -39,3 +39,25 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
     max-height: calc(100vh - 7rem);
   }
 }
+
+/* =========================================================
+   BACK WIKOT — Wrapper du chat (responsive)
+   ========================================================= */
+
+/* Mobile : chat compact en haut, laisse voir les 4 boutons en dessous */
+@media (max-width: 1023px) {
+  .back-wikot-chat-wrapper {
+    height: 60vh;
+    min-height: 360px;
+    max-height: 520px;
+  }
+}
+
+/* Desktop : sticky à droite, occupe quasi tout le viewport */
+@media (min-width: 1024px) {
+  .back-wikot-chat-wrapper {
+    position: sticky;
+    top: 1rem;
+    height: calc(100vh - 2rem);
+  }
+}

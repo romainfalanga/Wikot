@@ -11,19 +11,10 @@
       "database_id": "be6ae379-24fd-4e06-9987-e3e2cb480289"
     }
   ],
-  "r2_buckets": [
-    {
-      "binding": "AUDIO_BUCKET",
-      "bucket_name": "wikot-audio"
-    }
-  ],
   "kv_namespaces": [
     {
       "binding": "WIKOT_CACHE",
       "id": "8bee31e777aa4d9184099b28727cd235"
     }
   ]
-  // NOTE: "triggers.crons" non supporté dans wrangler.jsonc pour Pages.
-  // Le CRON R2 cleanup doit être configuré via le dashboard Cloudflare
-  // (Workers > wikot > Triggers > Cron Triggers : "0 3 * * *")
 }

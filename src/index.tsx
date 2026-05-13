@@ -4,7 +4,6 @@ import { cors } from 'hono/cors'
 type Bindings = {
   DB: D1Database
   OPENROUTER_API_KEY?: string
-  AUDIO_BUCKET?: R2Bucket
   WIKOT_CACHE?: KVNamespace
 }
 
@@ -45,12 +44,11 @@ app.use('*', async (c, next) => {
   c.header('X-Content-Type-Options', 'nosniff')
   c.header('X-Frame-Options', 'DENY')
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
-  c.header('Permissions-Policy', 'geolocation=(), camera=(), microphone=(self), payment=()')
+  c.header('Permissions-Policy', 'geolocation=(), camera=(), microphone=(), payment=()')
   c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
   // Pas de cache pour les routes API (données sensibles, multi-tenant)
-  // Les audios R2 surchargent ce header avec leur propre Cache-Control private.
   const url = new URL(c.req.url)
-  if (url.pathname.startsWith('/api/') && !url.pathname.includes('/audio/')) {
+  if (url.pathname.startsWith('/api/')) {
     c.header('Cache-Control', 'private, no-store, no-cache, must-revalidate')
   }
 })
@@ -2062,7 +2060,7 @@ function rateLimitedResponse(c: any, retryAfter: number) {
 // ============================================
 
 const WIKOT_MODEL = 'google/gemini-2.0-flash-001'
-// Modèle multimodal (vision + audio) — utilisé dès qu'il y a une image/audio dans la requête.
+// Modèle multimodal (vision) — utilisé dès qu'il y a une image dans la requête.
 // Coût input ~$0.30/M tok (vs $0.10 pour 2.0 Flash) → on bascule auto seulement quand nécessaire.
 const WIKOT_MODEL_MULTIMODAL = 'google/gemini-2.5-flash'
 const WIKOT_API_URL = 'https://openrouter.ai/api/v1/chat/completions'
@@ -3138,13 +3136,13 @@ async function executeReadTool(db: D1Database, hotelId: number, toolName: string
   }
 }
 
-// Détecte si un message OpenAI contient au moins une partie multimodale
-// (image_url ou input_audio). Si oui, on doit basculer sur un modèle multimodal.
+// Détecte si un message OpenAI contient au moins une partie multimodale (image_url).
+// Si oui, on doit basculer sur un modèle multimodal.
 function messagesHaveMultimodalContent(messages: any[]): boolean {
   for (const m of messages) {
     if (Array.isArray(m?.content)) {
       for (const part of m.content) {
-        if (part && typeof part === 'object' && (part.type === 'image_url' || part.type === 'input_audio' || part.type === 'audio_url')) {
+        if (part && typeof part === 'object' && part.type === 'image_url') {
           return true
         }
       }
@@ -3155,7 +3153,7 @@ function messagesHaveMultimodalContent(messages: any[]): boolean {
 
 // Appelle OpenRouter — choisit automatiquement le modèle :
 // - texte pur : Gemini 2.0 Flash (rapide, $0.10/M)
-// - dès qu'il y a une image OU un audio : Gemini 2.5 Flash (multimodal, $0.30/M)
+// - dès qu'il y a une image : Gemini 2.5 Flash (multimodal, $0.30/M)
 async function callOpenRouter(apiKey: string, messages: any[], tools: any[]): Promise<any> {
   const useMultimodal = messagesHaveMultimodalContent(messages)
   const model = useMultimodal ? WIKOT_MODEL_MULTIMODAL : WIKOT_MODEL
@@ -3371,10 +3369,7 @@ app.post('/api/wikot/router', authMiddleware, async (c) => {
   let body: any = {}
   try { body = await c.req.json() } catch {}
   const content = String(body.content || '').trim()
-  // Audio optionnel : le frontend a uploadé l'audio puis nous passe la clé R2
-  const audioKey: string | null = body.audio_key || null
-  // Au moins du texte OU un audio
-  if (!content && !audioKey) return c.json({ error: 'Message vide' }, 400)
+  if (!content) return c.json({ error: 'Message vide' }, 400)
 
   // Contexte UI envoyé par le frontend (pour que l'orchestrateur sache où on est)
   const uiContext = body.ui_context || {}
@@ -3601,32 +3596,14 @@ Le content doit être structuré et complet (codes, horaires précis, contacts f
     }
   ]
 
-  // Messages : system + history + nouveau message (avec audio multimodal si présent)
+  // Messages : system + history + nouveau message
   const messages: any[] = [{ role: 'system', content: systemPrompt }]
   for (const h of history) {
     if (h && h.role && h.content) {
       messages.push({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.content).slice(0, 1000) })
     }
   }
-
-  if (audioKey) {
-    let audioData: { dataUri: string } | null = null
-    try {
-      audioData = await r2AudioToDataUri(c.env.AUDIO_BUCKET, audioKey)
-    } catch (e: any) {
-      console.error('[wikot:router] r2_audio_error msg=' + e.message + ' key=' + audioKey)
-    }
-    const txt = content && content.trim() ? content : 'Voici un message vocal. Écoute-le et réponds à son contenu en déclenchant les bons outils.'
-    const parts: any[] = [{ type: 'text', text: txt }]
-    if (audioData) {
-      // Format officiel OpenRouter : input_audio + data base64 brut + format
-      parts.push({ type: 'input_audio', input_audio: { data: audioData.base64, format: audioData.format } })
-    }
-    messages.push({ role: 'user', content: parts })
-    console.log('[wikot:router] audio_attached key=' + audioKey + ' has_data=' + (!!audioData) + ' fmt=' + (audioData?.format || 'none'))
-  } else {
-    messages.push({ role: 'user', content })
-  }
+  messages.push({ role: 'user', content })
 
   // ====================================================================
   // BOUCLE PLANNER-EXECUTOR — Gemini renvoie souvent UN seul tool_call par tour.
@@ -3867,7 +3844,7 @@ app.get('/api/wikot/conversations/:id', authMiddleware, async (c) => {
 
 // DELETE supprime définitivement une conversation (staff)
 // La mémoire des anciennes conversations Wikot a été retirée → on supprime
-// vraiment au lieu d'archiver, et on nettoie les audios R2 associés.
+// vraiment au lieu d'archiver.
 app.delete('/api/wikot/conversations/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   const id = parseInt(c.req.param('id'))
@@ -3880,8 +3857,7 @@ app.delete('/api/wikot/conversations/:id', authMiddleware, async (c) => {
     return c.json({ error: 'Accès refusé' }, 403)
   }
 
-  // STATELESS : on ne stocke plus les messages → plus d'audio_key persistés en DB
-  // (les audios R2 sont nettoyés par le cron cleanup périodique).
+  // STATELESS : on ne stocke plus les messages.
   // Suppression DB en cascade (pending_actions via FK CASCADE).
   await c.env.DB.prepare('DELETE FROM wikot_conversations WHERE id = ?').bind(id).run()
   return c.json({ success: true })
@@ -3896,28 +3872,12 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const convId = parseInt(c.req.param('id'))
   const body = await c.req.json() as any
   const content = body.content
-  // Audio optionnel : le frontend a uploadé l'audio puis nous passe la clé
-  const audioKey: string | null = body.audio_key || null
-  const audioMime: string | null = body.audio_mime || null
-  const audioDurationMs: number = parseInt(body.audio_duration_ms || 0, 10) || 0
-  const audioSizeBytes: number = parseInt(body.audio_size_bytes || 0, 10) || 0
   // Le frontend envoie l'état actuel du formulaire (Back Wikot uniquement) pour que
   // l'IA voie ce que voit l'utilisateur en ce moment et puisse écrire dedans.
   const formContext = body.form_context || null
 
-  // Au moins du texte OU un audio (un message vocal seul est valide)
-  const hasText = !!(content && String(content).trim())
-  const hasAudio = !!audioKey
-  if (!hasText && !hasAudio) return c.json({ error: 'Message vide' }, 400)
+  if (!content || !String(content).trim()) return c.json({ error: 'Message vide' }, 400)
   if (!user.hotel_id) return c.json({ error: 'Aucun hôtel' }, 400)
-
-  // Vérifier que l'audio (si fourni) appartient bien à cet hôtel
-  if (audioKey) {
-    const parts = audioKey.split('/')
-    if (parts.length < 3 || parts[1] !== String(user.hotel_id)) {
-      return c.json({ error: 'Audio non autorisé' }, 403)
-    }
-  }
 
   const apiKey = c.env.OPENROUTER_API_KEY
   if (!apiKey) return c.json({ error: 'Wikot indisponible : clé API non configurée' }, 503)
@@ -3931,11 +3891,9 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   // On garde uniquement le message courant (user) en mémoire pour l'envoyer au LLM.
   const history = { results: [{
     role: 'user',
-    content: hasText ? content : '',
+    content,
     tool_calls: null,
-    tool_call_id: null,
-    audio_key: audioKey,
-    audio_mime: audioMime
+    tool_call_id: null
   }] as any[] }
 
   // Récupérer infos hôtel
@@ -3957,39 +3915,13 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const canEditInf = wikotUserCanEditInfo(user)
   const tools = buildWikotTools(mode, canEditProc, canEditInf, workflowMode)
 
-  // Construire les messages OpenAI-compatible
-  // On inline en multimodal les N derniers messages user avec audio (par défaut 3).
-  // Ça permet à Gemini de comprendre les questions de suivi qui réfèrent à un vocal précédent
-  // sans payer le coût audio sur toute la conversation.
+  // Construire les messages OpenAI-compatible (texte uniquement)
   const historyArr = history.results as any[]
   const oaiMessages: any[] = [{ role: 'system', content: systemPrompt }]
-  // Repérer les index des N derniers user-messages avec audio_key
-  const MAX_INLINED_AUDIOS = 3
-  const audioUserIdx: number[] = []
-  for (let i = historyArr.length - 1; i >= 0 && audioUserIdx.length < MAX_INLINED_AUDIOS; i--) {
-    const m = historyArr[i]
-    if (m.role === 'user' && m.audio_key) audioUserIdx.push(i)
-  }
-  const inlineSet = new Set<number>(audioUserIdx)
   for (let i = 0; i < historyArr.length; i++) {
     const m = historyArr[i]
     if (m.role === 'user') {
-      if (inlineSet.has(i) && c.env.AUDIO_BUCKET) {
-        // Construit un message multimodal avec parts texte + audio
-        const audio = await r2AudioToDataUri(c.env.AUDIO_BUCKET, m.audio_key)
-        const parts: any[] = []
-        const txt = (m.content && m.content.trim()) ? m.content : 'Voici un message vocal. Réponds à son contenu.'
-        parts.push({ type: 'text', text: txt })
-        if (audio) {
-          // Format officiel OpenRouter : input_audio + data base64 brut + format
-          parts.push({ type: 'input_audio', input_audio: { data: audio.base64, format: audio.format } })
-        }
-        oaiMessages.push({ role: 'user', content: parts })
-      } else {
-        // Si message ancien avec audio mais pas inliné (au-delà des N derniers), on l'indique en texte
-        const prefix = m.audio_key ? '[message vocal précédent] ' : ''
-        oaiMessages.push({ role: 'user', content: prefix + (m.content || '') })
-      }
+      oaiMessages.push({ role: 'user', content: m.content || '' })
     } else if (m.role === 'assistant') {
       const msg: any = { role: 'assistant', content: m.content || '' }
       if (m.tool_calls) msg.tool_calls = JSON.parse(m.tool_calls)
@@ -6018,123 +5950,6 @@ async function refreshInstanceStatus(db: D1Database, instanceId: number) {
 }
 
 // ============================================
-// AUDIO — Upload et lecture des messages vocaux (R2 wikot-audio)
-// ============================================
-
-// Limites raisonnables pour un message vocal Wikot
-const AUDIO_MAX_BYTES = 8 * 1024 * 1024 // 8 MB → ~5 min en webm/opus
-const AUDIO_ALLOWED_MIME = new Set([
-  'audio/webm', 'audio/webm;codecs=opus',
-  'audio/ogg', 'audio/ogg;codecs=opus',
-  'audio/mp4', 'audio/mpeg', 'audio/mp3',
-  'audio/wav', 'audio/x-wav', 'audio/aac'
-])
-
-function genAudioKey(scope: string, hotelId: number, ownerId: number | string): string {
-  const ts = Date.now()
-  const rnd = Math.random().toString(36).slice(2, 10)
-  return `${scope}/${hotelId}/${ownerId}/${ts}-${rnd}.audio`
-}
-
-function normalizeAudioMime(raw: string | null): string {
-  if (!raw) return 'audio/webm'
-  const m = raw.toLowerCase().split(';')[0].trim()
-  return m || 'audio/webm'
-}
-
-// Upload audio (staff) — retourne audio_key à passer ensuite avec le message
-app.post('/api/audio/upload', authMiddleware, async (c) => {
-  const user = c.get('user')
-  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
-  if (!c.env.AUDIO_BUCKET) return c.json({ error: 'Stockage audio indisponible' }, 503)
-  // Rate-limit : max 30 uploads audio / minute / user
-  const rl = await checkRateLimit(c.env, 'audio_up', `u:${user.id}`, 30, 60)
-  if (!rl.ok) return rateLimitedResponse(c, 60)
-
-  const contentType = normalizeAudioMime(c.req.header('Content-Type'))
-  if (!AUDIO_ALLOWED_MIME.has(contentType)) {
-    return c.json({ error: `Format audio non supporté (${contentType})` }, 415)
-  }
-
-  const buf = await c.req.arrayBuffer()
-  if (!buf || buf.byteLength === 0) return c.json({ error: 'Audio vide' }, 400)
-  if (buf.byteLength > AUDIO_MAX_BYTES) {
-    return c.json({ error: `Audio trop volumineux (${Math.round(buf.byteLength/1024)} KB, max ${Math.round(AUDIO_MAX_BYTES/1024)} KB)` }, 413)
-  }
-
-  const durationMs = parseInt(c.req.header('X-Audio-Duration-Ms') || '0', 10) || 0
-  const key = genAudioKey('staff', user.hotel_id, user.id)
-
-  await c.env.AUDIO_BUCKET.put(key, buf, {
-    httpMetadata: { contentType },
-    customMetadata: {
-      hotel_id: String(user.hotel_id),
-      user_id: String(user.id),
-      duration_ms: String(durationMs),
-      origin: 'staff'
-    }
-  })
-
-  return c.json({
-    audio_key: key,
-    audio_mime: contentType,
-    audio_size_bytes: buf.byteLength,
-    audio_duration_ms: durationMs
-  })
-})
-
-// Lecture audio (staff authentifié) — restreint à son hôtel
-app.get('/api/audio/:key{.+}', authMiddleware, async (c) => {
-  const user = c.get('user')
-  if (!c.env.AUDIO_BUCKET) return c.json({ error: 'Stockage audio indisponible' }, 503)
-  const key = c.req.param('key')
-  if (!key) return c.json({ error: 'Clé manquante' }, 400)
-
-  // Sécurité : la clé doit contenir le hotel_id de l'utilisateur (pattern scope/hotelId/...)
-  const parts = key.split('/')
-  if (parts.length < 3 || String(user.hotel_id) !== parts[1]) {
-    return c.json({ error: 'Accès refusé' }, 403)
-  }
-
-  const obj = await c.env.AUDIO_BUCKET.get(key)
-  if (!obj) return c.json({ error: 'Audio introuvable' }, 404)
-
-  const headers = new Headers()
-  headers.set('Content-Type', obj.httpMetadata?.contentType || 'audio/webm')
-  headers.set('Cache-Control', 'private, max-age=3600')
-  headers.set('Content-Length', String(obj.size))
-  return new Response(obj.body, { headers })
-})
-
-// Helper : convertit un objet R2 audio en base64 + data-URI (pour l'envoyer au modèle multimodal)
-// Retourne aussi un `format` OpenRouter-compatible (wav, mp3, webm, ogg, m4a, aac, flac).
-async function r2AudioToDataUri(bucket: R2Bucket, key: string): Promise<{ dataUri: string; mime: string; base64: string; format: string } | null> {
-  const obj = await bucket.get(key)
-  if (!obj) return null
-  const mime = obj.httpMetadata?.contentType || 'audio/webm'
-  const buf = await obj.arrayBuffer()
-  // Encodage base64 — Workers supporte btoa avec un binary string
-  let binary = ''
-  const bytes = new Uint8Array(buf)
-  const chunk = 0x8000
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)) as any)
-  }
-  const b64 = btoa(binary)
-  // Déduit le format attendu par OpenRouter à partir du MIME
-  let format = 'webm'
-  const m = mime.toLowerCase()
-  if (m.includes('mp4') || m.includes('m4a')) format = 'm4a'
-  else if (m.includes('mpeg') || m.includes('mp3')) format = 'mp3'
-  else if (m.includes('wav') || m.includes('x-wav')) format = 'wav'
-  else if (m.includes('ogg')) format = 'ogg'
-  else if (m.includes('aac')) format = 'aac'
-  else if (m.includes('flac')) format = 'flac'
-  else if (m.includes('webm')) format = 'webm'
-  return { dataUri: `data:${mime};base64,${b64}`, mime, base64: b64, format }
-}
-
-// ============================================
 // MAIN HTML PAGE
 // ============================================
 app.get('*', (c) => {
@@ -6605,46 +6420,8 @@ app.get('*', (c) => {
 })
 
 // ============================================
-// CRON R2 CLEANUP — supprime les audios orphelins > 24h
-// ============================================
-// Mode STATELESS : aucun audio n'est référencé en DB après l'envoi du message
-// → tous les audios deviennent orphelins après usage. On les purge à 24h.
-// La clé contient le timestamp : {scope}/{hotelId}/{ownerId}/{ts}-{rnd}.audio
-async function scheduledCleanup(env: Bindings) {
-  if (!env.AUDIO_BUCKET) return
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000 // 24h
-  let cursor: string | undefined = undefined
-  let deleted = 0
-  let scanned = 0
-  // Limite de sécurité : 50 batches max (50 * 1000 = 50k objets/exécution)
-  for (let i = 0; i < 50; i++) {
-    const list: R2Objects = await env.AUDIO_BUCKET.list({ limit: 1000, cursor })
-    scanned += list.objects.length
-    const toDelete: string[] = []
-    for (const obj of list.objects) {
-      // Parse le timestamp depuis la clé : .../{ts}-{rnd}.audio
-      const m = obj.key.match(/\/(\d{13})-[a-z0-9]+\.audio$/)
-      if (m) {
-        const ts = parseInt(m[1], 10)
-        if (ts < cutoff) toDelete.push(obj.key)
-      } else if (obj.uploaded && obj.uploaded.getTime() < cutoff) {
-        // Fallback : ancien format → on se fie à uploaded
-        toDelete.push(obj.key)
-      }
-    }
-    if (toDelete.length > 0) {
-      await env.AUDIO_BUCKET.delete(toDelete)
-      deleted += toDelete.length
-    }
-    if (!list.truncated) break
-    cursor = list.cursor
-  }
-  console.log(`[cron] R2 cleanup: scanned=${scanned}, deleted=${deleted}`)
-}
+// Vocal supprimé : plus de cron R2 nécessaire.
 
 export default {
-  fetch: app.fetch,
-  scheduled: async (_event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) => {
-    ctx.waitUntil(scheduledCleanup(env))
-  }
+  fetch: app.fetch
 }

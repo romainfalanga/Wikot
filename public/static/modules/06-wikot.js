@@ -89,16 +89,8 @@ async function sendWikotMessage(mode) {
   if (!input) return;
   const content = (input ? input.value.trim() : '');
 
-  // Audio en attente (si l'utilisateur a enregistré pour cette zone)
-  const v = initVoiceState();
-  const hasVoiceForThisMode = v && v.active === 'staff' && v.mode === mode && v.blob && !v.recording;
-  if (!content && !hasVoiceForThisMode) return;
+  if (!content) return;
   if (s.sending) return;
-  // Si enregistrement en cours sur cette zone, on stoppe d'abord (l'utilisateur doit valider la preview)
-  if (v && v.active === 'staff' && v.mode === mode && v.recording) {
-    showToast('Termine l\'enregistrement avant d\'envoyer', 'warning');
-    return;
-  }
 
   // Mode max : on a TOUJOURS besoin d'un workflow + d'une conversation active
   // (créée par enterBackWikotWorkflow). Si rien, on bloque.
@@ -117,12 +109,8 @@ async function sendWikotMessage(mode) {
     s.currentConvId = data.id;
   }
 
-  // Affichage optimiste du message utilisateur (avec ref audio si présent)
+  // Affichage optimiste du message utilisateur
   const optimisticMsg = { id: 'temp-' + Date.now(), role: 'user', content, references: [] };
-  if (hasVoiceForThisMode) {
-    optimisticMsg.audio_pending = true;
-    optimisticMsg.audio_duration_ms = v.durationMs;
-  }
   s.messages.push(optimisticMsg);
   s.sending = true;
   if (input) { input.value = ''; autoResizeTextarea(input); }
@@ -133,24 +121,6 @@ async function sendWikotMessage(mode) {
   const body = { content };
   if (mode === 'max' && state.backWikotForm) {
     body.form_context = collectBackWikotFormContext();
-  }
-
-  // Upload audio si présent
-  if (hasVoiceForThisMode) {
-    const up = await uploadCurrentVoice('staff');
-    if (!up) {
-      // Échec upload : on retire l'optimiste et on rend la main
-      s.messages.pop();
-      s.sending = false;
-      render();
-      return;
-    }
-    body.audio_key = up.audio_key;
-    body.audio_mime = up.audio_mime;
-    body.audio_duration_ms = up.audio_duration_ms;
-    body.audio_size_bytes = up.audio_size_bytes;
-    // L'audio est maintenant uploadé côté serveur → on peut nettoyer le state local
-    discardVoiceRecording();
   }
 
   const result = await api(`/wikot/conversations/${s.currentConvId}/message`, {
@@ -215,59 +185,25 @@ async function sendWikotMessage(mode) {
 async function sendBackWikotRootMessage(forwardedText) {
   if (state.backWikotRootSending) return;
 
-  // Détection d'un message vocal prêt pour ce mode
-  const v = initVoiceState();
-  const hasVoice = v && v.active === 'staff' && v.mode === 'backwikot-root' && v.blob && !v.recording;
-
   let content = '';
   if (typeof forwardedText === 'string' && forwardedText.trim()) {
     content = forwardedText.trim();
   } else {
     const input = document.getElementById('back-wikot-root-input');
-    if (input) {
-      content = (input.value || '').trim();
-      if (input.value) { input.value = ''; autoResizeTextarea(input); }
-    }
-    // Si pas de texte ET pas de vocal → rien à envoyer
-    if (!content && !hasVoice) return;
+    if (!input) return;
+    content = (input.value || '').trim();
+    if (!content) return;
+    input.value = '';
+    autoResizeTextarea(input);
   }
 
   // Init
   if (!Array.isArray(state.backWikotRootMessages)) state.backWikotRootMessages = [];
 
-  // Push d'une bulle user provisoire — affiche un preview du vocal si présent
-  const userBubble = { role: 'user', content: content || '', ts: Date.now() };
-  if (hasVoice) {
-    userBubble._audioPreviewUrl = v.previewUrl;
-    userBubble._audioDurationMs = v.durationMs;
-    userBubble._audioPending = true;
-  }
-  state.backWikotRootMessages.push(userBubble);
+  state.backWikotRootMessages.push({ role: 'user', content, ts: Date.now() });
   state.backWikotRootSending = true;
   render();
   scrollBackWikotRootToBottom();
-
-  // Upload audio si présent
-  let audioMeta = null;
-  if (hasVoice) {
-    try {
-      audioMeta = await uploadCurrentVoice('staff');
-    } catch (e) {
-      audioMeta = null;
-    }
-    if (!audioMeta) {
-      // Échec upload : retirer la bulle, restituer la voix pour réessai
-      state.backWikotRootMessages.pop();
-      state.backWikotRootSending = false;
-      render();
-      alert('Impossible d\'envoyer le message vocal. Réessaye.');
-      return;
-    }
-    userBubble._audioPending = false;
-    userBubble._audioKey = audioMeta.audio_key;
-    discardVoiceRecording();
-    render();
-  }
 
   // Snapshot UI pour que l'orchestrateur sache où on est
   const uiContext = {
@@ -278,23 +214,15 @@ async function sendBackWikotRootMessage(forwardedText) {
 
   // Historique conv pour contexte (jusqu'à 8 derniers messages)
   const history = state.backWikotRootMessages
-    .slice(-9, -1)   // tous sauf le dernier user qu'on vient de pousser
+    .slice(-9, -1)
     .filter(m => !m._system)
     .map(m => ({ role: m.role, content: String(m.content || '').slice(0, 800) }));
-
-  const payload = { content, ui_context: uiContext, history };
-  if (audioMeta) {
-    payload.audio_key = audioMeta.audio_key;
-    payload.audio_mime = audioMeta.audio_mime;
-    payload.audio_duration_ms = audioMeta.audio_duration_ms;
-    payload.audio_size_bytes = audioMeta.audio_size_bytes;
-  }
 
   let data;
   try {
     data = await api('/wikot/router', {
       method: 'POST',
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ content, ui_context: uiContext, history })
     });
   } catch (e) {
     data = null;
@@ -400,14 +328,12 @@ async function executeBackWikotActions(actions) {
   scrollBackWikotRootToBottom();
 }
 
-// Helper : pousse une bulle assistant dans la conv root + incrémente unread si drawer fermé
+// Helper : pousse une bulle assistant dans la conv root.
+// Le chat est désormais toujours visible (inline mobile + sticky desktop),
+// donc plus de notion d'unread / drawer fermé à gérer.
 function pushBackWikotRootBubble(text) {
   if (!Array.isArray(state.backWikotRootMessages)) state.backWikotRootMessages = [];
   state.backWikotRootMessages.push({ role: 'assistant', content: text, ts: Date.now() });
-  // Sur mobile/tablette, si le drawer est fermé, on signale un nouveau message via le badge
-  if (typeof window !== 'undefined' && window.innerWidth < 1024 && !state.backWikotChatDrawerOpen) {
-    state.backWikotChatUnread = (state.backWikotChatUnread || 0) + 1;
-  }
 }
 
 // Quand un sous-agent (max) appelle return_to_root, on revient au home + on relance le routeur.
@@ -599,16 +525,12 @@ function formatWikotContent(text) {
 function renderWikotMessage(msg, mode) {
   mode = mode || activeWikotMode();
   if (msg.role === 'user') {
-    const hasAudio = !!msg.audio_key || !!msg.audio_pending;
-    const txt = msg.content && msg.content.trim() ? escapeHtml(msg.content) : (hasAudio ? '<span class="italic" style="opacity: 0.7;"><i class="fas fa-microphone mr-1.5"></i>Message vocal</span>' : '');
-    const audioBlock = msg.audio_key ? renderVoiceMessageBubble(msg, { isClient: false })
-      : (msg.audio_pending ? `<div class="flex items-center gap-2 mt-1.5 pt-1.5 text-xs italic" style="border-top: 1px solid rgba(255,255,255,0.15); opacity: 0.7;"><i class="fas fa-circle-notch fa-spin"></i>Envoi de l'audio (${formatVoiceDuration(msg.audio_duration_ms || 0)})...</div>` : '');
+    const txt = msg.content && msg.content.trim() ? escapeHtml(msg.content) : '';
     // id DOM sur la bulle user pour permettre le scroll-to-top après la réponse Wikot
     return `
       <div id="wikot-msg-${escapeHtml(String(msg.id))}" class="flex justify-end mb-4">
         <div class="max-w-[85%] sm:max-w-[75%] rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap" style="background: var(--c-navy); color: #fff; box-shadow: 0 1px 2px rgba(10,22,40,0.08);">
           ${txt}
-          ${audioBlock}
         </div>
       </div>
     `;
@@ -1977,7 +1899,7 @@ function renderWikotView(mode) {
   `;
 
   return `
-  <div class="fade-in flex flex-col" style="height: calc(100vh - 7rem); max-height: calc(100vh - 7rem);">
+  <div class="fade-in flex flex-col mobile-fullh">
     <!-- Header Wikot premium DESKTOP UNIQUEMENT (le titre est déjà dans la barre mobile globale) -->
     <div class="hidden lg:flex items-center justify-between mb-4 shrink-0">
       <div class="flex items-center gap-3 min-w-0">
@@ -2025,7 +1947,6 @@ function renderWikotView(mode) {
               onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('${mode}');}"
               ${isSending ? 'disabled' : ''}
               class="input-premium form-input-mobile flex-1 rounded-xl px-3.5 py-2.5 outline-none resize-none max-h-32 text-sm"></textarea>
-            ${renderVoiceWidget('staff', mode)}
             <button onclick="sendWikotMessage('${mode}')" ${isSending ? 'disabled' : ''} class="btn-premium w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);" title="Envoyer">
               <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
             </button>
@@ -2072,64 +1993,38 @@ function renderBackWikotView() {
 
   // Sur home et select-target : panneau Back Wikot persistant
   //  - Desktop (≥ lg) : panneau latéral droit fixe à côté du contenu
-  //  - Mobile/tablette : bouton flottant + drawer plein écran
-  const drawerOpen = state.backWikotChatDrawerOpen === true;
-  const unread = state.backWikotChatUnread || 0;
-
+  //  - Mobile/tablette : chat INLINE en haut, suivi du contenu (4 boutons "Gérer X")
+  //    → plus de bouton flottant ni de drawer, le chat est immédiatement utilisable.
   return `
     <div class="relative">
-      <!-- Layout desktop : 2 colonnes -->
-      <div class="lg:grid lg:grid-cols-12 lg:gap-5">
-        <!-- Contenu principal -->
+      <!-- Layout desktop : 2 colonnes (chat à droite en sticky) -->
+      <div class="hidden lg:grid lg:grid-cols-12 lg:gap-5">
         <div class="lg:col-span-8">
           ${mainHtml}
         </div>
-
-        <!-- Panneau Back Wikot (desktop only, sticky) -->
-        <aside class="hidden lg:block lg:col-span-4">
+        <aside class="lg:col-span-4">
           <div class="sticky" style="top: 1rem; height: calc(100vh - 2rem);">
             ${renderBackWikotChatPanel({ inDrawer: false })}
           </div>
         </aside>
       </div>
 
-      <!-- Bouton flottant mobile/tablette -->
-      <button
-        onclick="toggleBackWikotChatDrawer()"
-        class="lg:hidden fixed z-40 bottom-5 right-5 w-14 h-14 rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-105"
-        style="background: var(--c-navy); color: var(--c-gold);"
-        title="Discuter avec Back Wikot">
-        <i class="fas fa-comments text-lg"></i>
-        ${unread > 0 ? `<span class="absolute -top-1 -right-1 w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center" style="background: var(--c-gold); color: var(--c-navy);">${unread > 9 ? '9+' : unread}</span>` : ''}
-      </button>
-
-      <!-- Drawer mobile/tablette -->
-      ${drawerOpen ? `
-        <div class="lg:hidden fixed inset-0 z-50 flex flex-col" style="background: rgba(15,27,40,0.5);" onclick="if(event.target===this){toggleBackWikotChatDrawer()}">
-          <div class="mt-auto flex flex-col bg-white rounded-t-2xl shadow-2xl" style="height: 85vh; max-height: 85vh;">
-            ${renderBackWikotChatPanel({ inDrawer: true })}
-          </div>
+      <!-- Layout mobile/tablette : chat ouvert en HAUT + contenu (4 boutons) en DESSOUS -->
+      <div class="lg:hidden flex flex-col gap-5">
+        <!-- Chat inline en haut, hauteur fixe pour rester compact et laisser voir les boutons -->
+        <div style="height: 60vh; min-height: 360px; max-height: 520px;">
+          ${renderBackWikotChatPanel({ inDrawer: false })}
         </div>
-      ` : ''}
+        <!-- 4 boutons "Gérer X" (et reste du contenu home / select-target) -->
+        <div>
+          ${mainHtml}
+        </div>
+      </div>
     </div>
   `;
 }
 
-// Toggle drawer mobile/tablette + reset unread
-function toggleBackWikotChatDrawer() {
-  state.backWikotChatDrawerOpen = !state.backWikotChatDrawerOpen;
-  if (state.backWikotChatDrawerOpen) state.backWikotChatUnread = 0;
-  render();
-  if (state.backWikotChatDrawerOpen) {
-    setTimeout(() => {
-      const input = document.getElementById('back-wikot-root-input');
-      if (input) input.focus();
-      scrollBackWikotRootToBottom();
-    }, 100);
-  }
-}
-
-// PANNEAU CHAT BACK WIKOT (utilisé en sticky desktop + en drawer mobile)
+// PANNEAU CHAT BACK WIKOT (utilisé en sticky desktop + inline mobile)
 function renderBackWikotChatPanel({ inDrawer }) {
   const rootMessages = Array.isArray(state.backWikotRootMessages) ? state.backWikotRootMessages : [];
   const isSending = state.backWikotRootSending === true;
@@ -2165,11 +2060,7 @@ function renderBackWikotChatPanel({ inDrawer }) {
             <i class="fas fa-eraser"></i>
           </button>
         ` : ''}
-        ${inDrawer ? `
-          <button onclick="toggleBackWikotChatDrawer()" class="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors" style="color: rgba(255,255,255,0.7);" title="Fermer">
-            <i class="fas fa-xmark"></i>
-          </button>
-        ` : ''}
+
       </div>
 
       <!-- Zone messages -->
@@ -2191,21 +2082,9 @@ function renderBackWikotChatPanel({ inDrawer }) {
             </div>`;
           }
           if (m.role === 'user') {
-            // Bulle audio (preview blob URL pendant l'envoi) + texte éventuel
-            let audioBlock = '';
-            if (m._audioPreviewUrl) {
-              const dur = m._audioDurationMs ? formatVoiceDuration(m._audioDurationMs) : '';
-              audioBlock = `
-                <div class="flex items-center gap-2 mb-1.5 px-2 py-1.5 rounded-lg" style="background: rgba(255,255,255,0.12);">
-                  <audio src="${m._audioPreviewUrl}" controls preload="metadata" style="height: 30px; max-width: 200px;"></audio>
-                  ${dur ? `<span class="text-[10px] font-mono opacity-80">${dur}</span>` : ''}
-                  ${m._audioPending ? `<i class="fas fa-spinner fa-spin text-[10px] opacity-70"></i>` : ''}
-                </div>`;
-            }
-            const textBlock = m.content ? `<div>${escapeHtml(m.content)}</div>` : '';
             return `<div class="flex justify-end">
               <div class="max-w-[85%] px-3 py-2 rounded-2xl rounded-tr-sm text-sm leading-relaxed" style="background: var(--c-navy); color: #fff;">
-                ${audioBlock}${textBlock || (audioBlock ? '' : escapeHtml(m.content))}
+                ${escapeHtml(m.content)}
               </div>
             </div>`;
           }
@@ -2246,7 +2125,6 @@ function renderBackWikotChatPanel({ inDrawer }) {
           class="flex-1 resize-none px-3 py-2 text-sm rounded-xl border focus:outline-none focus:ring-2 transition-all"
           style="border-color: rgba(15,27,40,0.12); background: var(--c-cream); color: var(--c-navy); max-height: 120px;"
         ></textarea>
-        ${renderVoiceWidget('staff', 'backwikot-root')}
         <button
           onclick="sendBackWikotRootMessage()"
           ${isSending ? 'disabled' : ''}
@@ -2819,7 +2697,6 @@ function renderBackWikotWorkshop() {
                 onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('max');}"
                 ${isSending ? 'disabled' : ''}
                 class="form-input-mobile flex-1 border border-gray-200 rounded-xl px-3 py-2 outline-none focus:ring-2 focus:ring-orange-400 resize-none max-h-32 text-sm"></textarea>
-              ${renderVoiceWidget('staff', 'max')}
               <button onclick="sendWikotMessage('max')" ${isSending ? 'disabled' : ''}
                 class="w-10 h-10 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 text-white flex items-center justify-center shrink-0 transition-colors" title="Envoyer">
                 <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>

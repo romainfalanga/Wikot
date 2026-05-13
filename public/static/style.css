@@ -1,1 +1,41 @@
 h1 { font-family: Arial, Helvetica, sans-serif; }
+
+/* =========================================================
+   MOBILE — Compensation de la bottom navigation
+   ========================================================= */
+
+/* Hauteur de la bottom-nav mobile (constante CSS pour réutilisation) */
+:root {
+  --mobile-bottomnav-h: 64px;
+}
+
+/* Sous lg (mobile + tablette portrait) : on réserve l'espace pour le menu du bas
+   sur le main scrollable + safe-area iOS pour les iPhones à encoche. */
+@media (max-width: 1023px) {
+  /* Le conteneur principal scrollable doit pouvoir afficher son dernier élément
+     SANS être masqué par la bottom-nav fixe (h ~ 64px). */
+  .mobile-content-padding {
+    padding-bottom: calc(var(--mobile-bottomnav-h) + env(safe-area-inset-bottom, 0px) + 1rem) !important;
+  }
+
+  /* La bottom-nav elle-même respecte la safe-area iOS (notch / home indicator) */
+  .mobile-bottomnav {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    height: calc(var(--mobile-bottomnav-h) + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Toute zone qui se calcule en 100vh doit retirer la hauteur du menu mobile.
+     Les vues Wikot utilisent calc(100vh - 7rem) → on ajoute la nav en mobile. */
+  .mobile-fullh {
+    height: calc(100vh - 7rem - var(--mobile-bottomnav-h)) !important;
+    max-height: calc(100vh - 7rem - var(--mobile-bottomnav-h)) !important;
+  }
+}
+
+/* Sur desktop, la classe mobile-fullh garde le comportement d'origine */
+@media (min-width: 1024px) {
+  .mobile-fullh {
+    height: calc(100vh - 7rem);
+    max-height: calc(100vh - 7rem);
+  }
+}

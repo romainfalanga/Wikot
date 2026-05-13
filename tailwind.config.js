@@ -86,8 +86,17 @@ export default {
     'md:col-span-2','md:col-span-3','xl:col-span-3','xl:col-span-4',
 
     // --- TRANSFORMS critique pour sidebar mobile ---
-    'translate-x-0','-translate-x-full','translate-x-full',
-    'lg:translate-x-0',
+    // ⚠️ BUG CRITIQUE : si on whiteliste juste -translate-x-full SANS aussi
+    // 'transform', Tailwind compile la règle SANS la propriété `transform`
+    // de base (juste la variable --tw-translate-x), donc la translation
+    // n'est PAS appliquée → la sidebar reste à sa position d'origine.
+    // Solution : whitelister 'transform' aussi pour forcer la règle complète.
+    'transform','transform-none','transform-gpu',
+    'translate-x-0','-translate-x-full','translate-x-full','translate-x-1','translate-x-2','translate-x-3','translate-x-4',
+    'translate-y-0','-translate-y-1','-translate-y-2','translate-y-1','translate-y-2',
+    'lg:translate-x-0','lg:translate-x-full','lg:-translate-x-full',
+    'scale-95','scale-100','scale-105','scale-110',
+    'rotate-0','rotate-45','rotate-90','rotate-180','-rotate-45','-rotate-90',
 
     // --- HOVER / FOCUS dynamiques ---
     'hover:bg-white/10','hover:scale-105','hover:scale-110','hover:translate-x-0.5',

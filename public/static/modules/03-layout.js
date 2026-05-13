@@ -168,7 +168,7 @@ function renderMainLayout() {
 
   <div class="flex app-shell overflow-hidden">
     <!-- Sidebar premium -->
-    <aside id="main-sidebar" class="sidebar-premium fixed lg:relative z-40 lg:z-auto -translate-x-full lg:translate-x-0 transition-transform duration-300 w-72 lg:w-64 flex flex-col shrink-0 h-full">
+    <aside id="main-sidebar" class="sidebar-premium fixed lg:relative top-0 left-0 z-40 lg:z-auto transform -translate-x-full lg:translate-x-0 transition-transform duration-300 w-72 lg:w-64 flex flex-col shrink-0 h-full">
       <div class="px-6 py-6" style="border-bottom: 1px solid rgba(201,169,97,0.12);">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-3">

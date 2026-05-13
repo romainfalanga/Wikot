@@ -308,7 +308,7 @@ function renderVeledaShell(notes) {
           <div class="veleda-empty">
             ${canEdit
               ? 'Le tableau est vide. Appuie sur "Ecrire" en haut a droite pour ajouter une info.'
-              : 'Le tableau est vide pour l\\'instant.'
+              : 'Le tableau est vide pour l\'instant.'
             }
           </div>
         ` : `
@@ -473,7 +473,7 @@ function renderVeledaLegendModal() {
     <div class="veleda-legend-list">
       ${legend.map(u => `
         <div class="veleda-legend-item">
-          <span class="veleda-legend-emoji">${u.emoji ? veledaEscape(u.emoji) : '<i class=\\'fas fa-user-circle\\' style=\\'opacity:0.3;\\'></i>'}</span>
+          <span class="veleda-legend-emoji">${u.emoji ? veledaEscape(u.emoji) : '<i class="fas fa-user-circle" style="opacity:0.3;"></i>'}</span>
           <span class="veleda-legend-name">${veledaEscape(u.name || 'Sans nom')}</span>
           ${u.role === 'admin' ? '<span class="veleda-legend-badge">admin</span>' : ''}
           ${u.id === state.user?.id ? '<span class="veleda-legend-you">moi</span>' : ''}

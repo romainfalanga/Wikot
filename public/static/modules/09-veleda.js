@@ -1,25 +1,23 @@
 // ============================================
-// VIEW: TABLEAU VELEDA — Vrai whiteboard d'equipe
+// VIEW: TABLEAU VELEDA — Vrai whiteboard d'equipe (V3)
 // ============================================
 //
-// Concept : un VRAI tableau Veleda numerique, affiche EN GRAND par defaut.
-// - 2 boutons flottants (FAB) :
-//     * Haut-droite : "Ecrire sur le tableau" -> ouvre une modal formulaire
-//       (texte + couleur d'importance + date/heure de disparition)
-//     * Bas-droite  : "Legende" -> ouvre une modal qui liste tous les users
-//       avec leur emote-icone, et permet de changer son propre emoji
-// - Les utilisateurs avec can_use_veleda peuvent : creer / modifier le contenu /
-//   deplacer / redimensionner / supprimer / changer la couleur de N'IMPORTE
-//   QUELLE note du tableau.
-// - Les autres voient le tableau en LECTURE SEULE.
-// - Importance d'une note : 3 couleurs whitelistees serveur
-//     green = pas important
-//     black = importance intermediaire (defaut)
-//     red   = importance capitale
-// - Chaque note affiche l'emote-icone de son auteur (signature visuelle).
-// - Polling 60s avec skip si l'utilisateur interagit.
+// V3 : tableau VRAIMENT plein page, notes minimalistes au plus pres du texte.
+// - Pas de titre / pas de pill / pas de wrapper : le tableau prend toute la page
+// - 1 seul FAB : "Ecrire" en haut a droite (le FAB Legende a ete retire)
+// - Une note par defaut : juste le texte, taille auto au contenu, rien d'autre
+// - 3 etats d'une note :
+//     * normal  : juste le texte (police + couleur)
+//     * inspect : texte + petit overlay en bas avec "disparait dans X" + auteur (+ emoji)
+//     * edit    : textarea + sélecteurs couleur/police + actions
+// - Bascule :
+//     * 1er double-clic  -> inspect
+//     * 2e double-clic (sur une note deja en inspect) -> edit
+//     * clic en dehors / Echap -> retour normal
+//     * pour les non-editeurs : double-clic donne directement inspect (pas d'edit)
+// - 10 polices manuscrites Google Fonts a choisir a la creation (et en edition).
 
-// Limites (alignees avec le backend)
+// Limites alignees avec le backend
 const VELEDA_MAX_CONTENT_LEN = 2000;
 
 // Couleurs autorisees (whitelist front, doit matcher VELEDA_ALLOWED_COLORS serveur)
@@ -35,6 +33,21 @@ const VELEDA_COLOR_HEX = {
   red:   '#B91C1C'
 };
 
+// 10 polices autorisees (doit matcher VELEDA_ALLOWED_FONTS serveur)
+const VELEDA_FONTS = [
+  'Permanent Marker',
+  'Kalam',
+  'Caveat',
+  'Architects Daughter',
+  'Shadows Into Light',
+  'Indie Flower',
+  'Patrick Hand',
+  'Gloria Hallelujah',
+  'Reenie Beanie',
+  'Just Another Hand'
+];
+const VELEDA_DEFAULT_FONT = 'Kalam';
+
 // Banque de 50 emote-icones (doit matcher VELEDA_EMOJI_BANK serveur)
 const VELEDA_EMOJI_BANK = [
   '⭐','🌟','✨','💫','⚡',
@@ -48,11 +61,7 @@ const VELEDA_EMOJI_BANK = [
 // Angles de rotation (stables par id)
 const VELEDA_ROTATIONS = [-3, -2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3];
 
-// Dimensions par defaut d'une nouvelle note (px)
-const VELEDA_DEFAULT_WIDTH = 240;
-const VELEDA_DEFAULT_HEIGHT = 120;
-
-// Bornes (alignees avec backend)
+// Bornes pour le resize (le user peut quand meme agrandir s'il veut)
 const VELEDA_MIN_SIZE = 80;
 const VELEDA_MAX_SIZE = 2000;
 
@@ -127,18 +136,28 @@ function veledaNoteColor(note) {
   return 'black';
 }
 
-// Recherche d'un emplacement libre (algo AABB)
-function veledaFindFreeSpot(notes, boardWidth, boardHeight, w, h) {
+// Police fiable d'une note (defaut = Kalam si valeur inconnue)
+function veledaNoteFont(note) {
+  if (note && typeof note.font === 'string' && VELEDA_FONTS.indexOf(note.font) !== -1) {
+    return note.font;
+  }
+  return VELEDA_DEFAULT_FONT;
+}
+
+// Recherche d'un emplacement libre (algo AABB tres simple)
+function veledaFindFreeSpot(notes, boardWidth, boardHeight) {
   const padding = 12;
-  for (let y = padding; y < boardHeight - h - padding; y += 40) {
-    for (let x = padding; x < boardWidth - w - padding; x += 40) {
+  const tryW = 200;
+  const tryH = 60;
+  for (let y = padding; y < boardHeight - tryH - padding; y += 40) {
+    for (let x = padding; x < boardWidth - tryW - padding; x += 40) {
       let collision = false;
       for (const n of notes) {
         const nx = n.pos_x ?? 0;
         const ny = n.pos_y ?? 0;
-        const nw = n.width ?? VELEDA_DEFAULT_WIDTH;
-        const nh = n.height ?? VELEDA_DEFAULT_HEIGHT;
-        if (x < nx + nw + padding && x + w + padding > nx && y < ny + nh + padding && y + h + padding > ny) {
+        const nw = n.width ?? tryW;
+        const nh = n.height ?? tryH;
+        if (x < nx + nw + padding && x + tryW + padding > nx && y < ny + nh + padding && y + tryH + padding > ny) {
           collision = true;
           break;
         }
@@ -146,11 +165,11 @@ function veledaFindFreeSpot(notes, boardWidth, boardHeight, w, h) {
       if (!collision) return { x, y };
     }
   }
-  return { x: 20 + Math.random() * 40, y: boardHeight - h - 40 };
+  return { x: 20 + Math.random() * 40, y: 20 + Math.random() * 40 };
 }
 
 // ============================================
-// CHARGEMENT DES NOTES
+// CHARGEMENT
 // ============================================
 async function loadVeledaNotes() {
   state.veledaLoading = true;
@@ -179,27 +198,6 @@ async function loadVeledaNotes() {
   }
 }
 
-async function loadVeledaLegend() {
-  try {
-    const res = await fetch('/api/veleda-legend', {
-      headers: { 'Authorization': 'Bearer ' + state.token }
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'Erreur de chargement de la legende');
-    }
-    const data = await res.json();
-    state.veledaLegend = Array.isArray(data.users) ? data.users : [];
-    // On reflete le serveur sur state.user.emoji aussi (au cas ou)
-    if (state.user && data.me && data.me.emoji !== undefined) {
-      state.user.emoji = data.me.emoji;
-      if (state.veledaMe) state.veledaMe.emoji = data.me.emoji;
-    }
-  } catch (e) {
-    state.veledaLegendError = e.message || 'Erreur inconnue';
-  }
-}
-
 function startVeledaPolling() {
   if (state.veledaPollingId) return;
   state.veledaPollingId = setInterval(async () => {
@@ -207,14 +205,12 @@ function startVeledaPolling() {
       stopVeledaPolling();
       return;
     }
-    // Skip si l'utilisateur est en train de taper / dragger / resizer / editer
     const inputEl = document.getElementById('veleda-write-input');
     const isTyping = inputEl && document.activeElement === inputEl;
     const editingEl = document.querySelector('.veleda-note-editing textarea');
     const isEditing = editingEl && document.activeElement === editingEl;
     const isInteracting = !!state.veledaDragging || !!state.veledaResizing;
-    // Skip si une modale est ouverte
-    const modalOpen = state.veledaWriteModalOpen || state.veledaLegendModalOpen;
+    const modalOpen = state.veledaWriteModalOpen;
     if (isTyping || isEditing || isInteracting || modalOpen) return;
 
     const prevJson = JSON.stringify(state.veledaNotes || []);
@@ -235,17 +231,17 @@ function stopVeledaPolling() {
 // RENDU PRINCIPAL
 // ============================================
 function renderVeledaView() {
-  // Init state Veleda si premier rendu
   if (state.veledaNotes === undefined) {
     state.veledaNotes = [];
     state.veledaDraftContent = state.veledaDraftContent || '';
     state.veledaDraftColor = state.veledaDraftColor || 'black';
+    state.veledaDraftFont = state.veledaDraftFont || VELEDA_DEFAULT_FONT;
     if (!state.veledaDraftExpiresLocal) {
       state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
     }
     state.veledaEditingId = null;
+    state.veledaInspectingId = null;
     state.veledaWriteModalOpen = false;
-    state.veledaLegendModalOpen = false;
     loadVeledaNotes().then(() => {
       startVeledaPolling();
       render();
@@ -255,12 +251,13 @@ function renderVeledaView() {
 
   if (state.veledaDraftContent === undefined) state.veledaDraftContent = '';
   if (!state.veledaDraftColor) state.veledaDraftColor = 'black';
+  if (!state.veledaDraftFont) state.veledaDraftFont = VELEDA_DEFAULT_FONT;
   if (!state.veledaDraftExpiresLocal) {
     state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
   }
   if (state.veledaEditingId === undefined) state.veledaEditingId = null;
+  if (state.veledaInspectingId === undefined) state.veledaInspectingId = null;
   if (state.veledaWriteModalOpen === undefined) state.veledaWriteModalOpen = false;
-  if (state.veledaLegendModalOpen === undefined) state.veledaLegendModalOpen = false;
 
   startVeledaPolling();
   return renderVeledaShell(state.veledaNotes || []);
@@ -272,42 +269,27 @@ function renderVeledaShell(notes) {
     can_use_veleda: state.user?.can_use_veleda, emoji: state.user?.emoji
   };
   const canEdit = veledaUserCanEdit();
-
-  // Modales (rendues en overlay si ouvertes)
   const writeModalHtml = state.veledaWriteModalOpen ? renderVeledaWriteModal() : '';
-  const legendModalHtml = state.veledaLegendModalOpen ? renderVeledaLegendModal() : '';
 
   return `
-    <div class="veleda-page">
-      <div class="veleda-page-header">
-        <h2 class="veleda-page-title">
-          <i class="fas fa-clipboard mr-2" style="color: var(--c-gold, #C9A961);"></i>Tableau Veleda
-        </h2>
-        ${!canEdit ? `
-          <span class="veleda-readonly-pill">
-            <i class="fas fa-eye"></i> Lecture seule
-          </span>
-        ` : ''}
-      </div>
-
-      ${state.veledaError ? `
-        <div class="mb-3 p-3 rounded-lg flex items-center gap-2 text-sm" style="background:rgba(220,38,38,0.08); color:#B91C1C; border:1px solid rgba(220,38,38,0.2);">
-          <i class="fas fa-circle-exclamation"></i>
-          <span>${veledaEscape(state.veledaError)}</span>
-        </div>
-      ` : ''}
-
-      <!-- LE TABLEAU EN GRAND -->
-      <div class="veleda-board veleda-board-large" id="veleda-board">
+    <div class="veleda-fullpage">
+      <div class="veleda-board veleda-board-fullpage" id="veleda-board" onclick="veledaBoardClick(event)">
         <span class="veleda-rivet tl"></span>
         <span class="veleda-rivet tr"></span>
         <span class="veleda-rivet bl"></span>
         <span class="veleda-rivet br"></span>
 
+        ${state.veledaError ? `
+          <div class="veleda-error-overlay">
+            <i class="fas fa-circle-exclamation"></i>
+            <span>${veledaEscape(state.veledaError)}</span>
+          </div>
+        ` : ''}
+
         ${notes.length === 0 ? `
           <div class="veleda-empty">
             ${canEdit
-              ? 'Le tableau est vide. Appuie sur "Ecrire" en haut a droite pour ajouter une info.'
+              ? 'Le tableau est vide. Appuie sur "Ecrire" en haut a droite.'
               : 'Le tableau est vide pour l\'instant.'
             }
           </div>
@@ -317,27 +299,144 @@ function renderVeledaShell(notes) {
           </div>
         `}
 
-        <!-- FAB Ecrire (haut-droite) — visible uniquement si permission -->
         ${canEdit ? `
           <button class="veleda-fab veleda-fab-write"
-            onclick="openVeledaWriteModal()"
+            onclick="event.stopPropagation(); openVeledaWriteModal();"
             title="Ecrire sur le tableau">
             <i class="fas fa-marker"></i>
             <span>Ecrire</span>
           </button>
-        ` : ''}
-
-        <!-- FAB Legende (bas-droite) — toujours visible -->
-        <button class="veleda-fab veleda-fab-legend"
-          onclick="openVeledaLegendModal()"
-          title="Voir la legende (qui est qui)">
-          <i class="fas fa-users"></i>
-          <span>Legende</span>
-        </button>
+        ` : `
+          <div class="veleda-readonly-pill-fab" title="Lecture seule">
+            <i class="fas fa-eye"></i>
+            <span>Lecture seule</span>
+          </div>
+        `}
       </div>
 
       ${writeModalHtml}
-      ${legendModalHtml}
+    </div>
+  `;
+}
+
+// ============================================
+// RENDU D'UNE NOTE (3 etats : normal / inspect / edit)
+// ============================================
+function renderVeledaNote(note, me, canEdit) {
+  const color = veledaNoteColor(note);
+  const font = veledaNoteFont(note);
+  const rotation = veledaRotationFor(note.id);
+  const isEditing = state.veledaEditingId === note.id;
+  const isInspecting = state.veledaInspectingId === note.id && !isEditing;
+
+  // Position
+  const x = note.pos_x ?? 20;
+  const y = note.pos_y ?? 20;
+  // Size : on respecte width/height SEULEMENT si reellement defini ; sinon auto
+  const hasW = note.width != null;
+  const hasH = note.height != null;
+  const sizeStyle =
+    (hasW ? `width:${note.width}px;` : '') +
+    (hasH ? `height:${note.height}px;` : '');
+
+  // === MODE EDITION ===
+  if (isEditing) {
+    const colorBtns = VELEDA_COLORS.map(c => `
+      <button type="button"
+        class="veleda-color-pick-mini veleda-color-${c} ${color === c ? 'active' : ''}"
+        onclick="event.stopPropagation(); veledaChangeNoteColor(${note.id}, '${c}')"
+        title="${veledaEscape(VELEDA_COLOR_LABELS[c])}">
+        <span class="veleda-color-dot" style="background:${VELEDA_COLOR_HEX[c]};"></span>
+      </button>
+    `).join('');
+
+    const fontOpts = VELEDA_FONTS.map(f => `
+      <option value="${veledaEscape(f)}" ${font === f ? 'selected' : ''}
+        style="font-family: '${f}', cursive;">
+        ${veledaEscape(f)}
+      </option>
+    `).join('');
+
+    return `
+      <div class="veleda-note veleda-ink-${color} veleda-note-editing"
+        style="left:${x}px; top:${y}px; ${sizeStyle} transform: rotate(0deg); z-index: 50; font-family: '${font}', cursive;"
+        data-note-id="${note.id}"
+        onclick="event.stopPropagation();">
+        <textarea class="veleda-inline-edit-input"
+          maxlength="${VELEDA_MAX_CONTENT_LEN}"
+          style="font-family: '${font}', cursive;"
+          onkeydown="veledaOnInlineEditKey(event, ${note.id})"
+        >${veledaEscape(note.content)}</textarea>
+        <div class="veleda-inline-toolbar">
+          <div class="veleda-inline-color-row">${colorBtns}</div>
+          <select class="veleda-inline-font-select"
+            onchange="veledaChangeNoteFont(${note.id}, this.value)"
+            onclick="event.stopPropagation();"
+            style="font-family: '${font}', cursive;">
+            ${fontOpts}
+          </select>
+        </div>
+        <div class="veleda-inline-edit-actions">
+          <button class="veleda-inline-btn veleda-inline-cancel" onclick="event.stopPropagation(); veledaCancelEdit()">
+            <i class="fas fa-times"></i> Annuler
+          </button>
+          <button class="veleda-inline-btn veleda-inline-save" onclick="event.stopPropagation(); veledaSaveEdit(${note.id})">
+            <i class="fas fa-check"></i> Enregistrer
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  // === MODE NORMAL / INSPECT ===
+  const dragHandler = canEdit ? `onmousedown="veledaStartDrag(event, ${note.id})"` : '';
+  const dblClickHandler = `ondblclick="veledaOnNoteDblClick(event, ${note.id})"`;
+  const inspectingClass = isInspecting ? 'veleda-note-inspecting' : '';
+
+  // Bloc inspect : visible uniquement en mode inspect
+  const inspectMeta = isInspecting ? `
+    <div class="veleda-note-inspect-meta">
+      <span class="veleda-inspect-row">
+        <span class="veleda-urgency-dot ${veledaUrgency(note.expires_at)}"></span>
+        ${veledaEscape(veledaExpiresLabel(note.expires_at))}
+      </span>
+      <span class="veleda-inspect-row">
+        ${note.author_emoji ? `<span class="veleda-inspect-emoji">${veledaEscape(note.author_emoji)}</span>` : ''}
+        <span class="veleda-inspect-author">${veledaEscape((note.created_by_name || '?').split(' ')[0])}</span>
+      </span>
+      ${canEdit ? `
+        <span class="veleda-inspect-actions">
+          <button class="veleda-inspect-btn veleda-inspect-edit"
+            onclick="event.stopPropagation(); veledaStartEdit(${note.id})"
+            title="Modifier">
+            <i class="fas fa-pen"></i>
+          </button>
+          <button class="veleda-inspect-btn veleda-inspect-delete"
+            onclick="event.stopPropagation(); deleteVeledaNote(${note.id})"
+            title="Effacer">
+            <i class="fas fa-eraser"></i>
+          </button>
+        </span>
+      ` : ''}
+    </div>
+  ` : '';
+
+  return `
+    <div class="veleda-note veleda-ink-${color} ${canEdit ? 'veleda-note-draggable' : ''} ${inspectingClass}"
+      style="left:${x}px; top:${y}px; ${sizeStyle} transform: rotate(${rotation}deg); font-family: '${font}', cursive;"
+      data-note-id="${note.id}"
+      ${dragHandler}
+      ${dblClickHandler}
+      onclick="event.stopPropagation();">
+      <div class="veleda-note-content">${veledaEscape(note.content)}</div>
+      ${inspectMeta}
+      ${canEdit && isInspecting ? `
+        <div class="veleda-resize-handle"
+          onmousedown="veledaStartResize(event, ${note.id})"
+          title="Redimensionner">
+          <i class="fas fa-grip-lines" style="transform: rotate(-45deg);"></i>
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -350,6 +449,7 @@ function renderVeledaWriteModal() {
   const expiresLocal = state.veledaDraftExpiresLocal || veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
   const minLocal = veledaToDatetimeLocal(new Date(Date.now() + 60 * 1000));
   const selectedColor = state.veledaDraftColor || 'black';
+  const selectedFont = state.veledaDraftFont || VELEDA_DEFAULT_FONT;
 
   const colorButtons = VELEDA_COLORS.map(c => `
     <button type="button"
@@ -359,6 +459,17 @@ function renderVeledaWriteModal() {
       <span class="veleda-color-dot" style="background:${VELEDA_COLOR_HEX[c]};"></span>
       <span class="veleda-color-label">${veledaEscape(VELEDA_COLOR_LABELS[c])}</span>
       ${selectedColor === c ? '<i class="fas fa-check"></i>' : ''}
+    </button>
+  `).join('');
+
+  // Apercu pour chaque police : ecrit le nom dans la police elle-meme
+  const fontButtons = VELEDA_FONTS.map(f => `
+    <button type="button"
+      class="veleda-font-pick ${selectedFont === f ? 'active' : ''}"
+      onclick="veledaSetDraftFont('${f}')"
+      title="${veledaEscape(f)}"
+      style="font-family: '${f}', cursive;">
+      ${veledaEscape(f)}
     </button>
   `).join('');
 
@@ -382,17 +493,22 @@ function renderVeledaWriteModal() {
             maxlength="${VELEDA_MAX_CONTENT_LEN}"
             rows="3"
             placeholder="Ex: ch.204 check-out 14h, livraison mardi, plombier 9h..."
+            style="font-family: '${selectedFont}', cursive;"
             oninput="veledaOnInputChange(this.value)"
             onkeydown="veledaOnKeyDown(event)"
           >${veledaEscape(draft)}</textarea>
 
           <label class="veleda-field-label">
             Importance
-            <span class="veleda-field-hint">— change la couleur du feutre</span>
+            <span class="veleda-field-hint">— couleur du feutre</span>
           </label>
-          <div class="veleda-color-row">
-            ${colorButtons}
-          </div>
+          <div class="veleda-color-row">${colorButtons}</div>
+
+          <label class="veleda-field-label">
+            Police d'ecriture
+            <span class="veleda-field-hint">— 10 styles manuscrits</span>
+          </label>
+          <div class="veleda-font-grid">${fontButtons}</div>
 
           <label class="veleda-field-label">
             <i class="fas fa-calendar-day" style="margin-right:4px;"></i>
@@ -422,8 +538,8 @@ function renderVeledaWriteModal() {
 function openVeledaWriteModal() {
   if (!veledaUserCanEdit()) return;
   state.veledaWriteModalOpen = true;
-  // Reset les valeurs par defaut si vide
   if (!state.veledaDraftColor) state.veledaDraftColor = 'black';
+  if (!state.veledaDraftFont) state.veledaDraftFont = VELEDA_DEFAULT_FONT;
   if (!state.veledaDraftExpiresLocal) {
     state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
   }
@@ -455,251 +571,50 @@ function veledaSetDraftColor(color) {
   }, 30);
 }
 
-// ============================================
-// MODALE "LEGENDE" (qui est qui + change son emoji)
-// ============================================
-function renderVeledaLegendModal() {
-  const myEmoji = (state.veledaMe && state.veledaMe.emoji) || (state.user && state.user.emoji) || null;
-  const legend = state.veledaLegend || null;
-
-  // Liste des users de l'hotel
-  const usersHtml = legend === null ? `
-    <div class="veleda-legend-loading">
-      <i class="fas fa-spinner fa-spin"></i> Chargement de la legende...
-    </div>
-  ` : (legend.length === 0 ? `
-    <div class="veleda-legend-empty">Aucun utilisateur dans cet hotel.</div>
-  ` : `
-    <div class="veleda-legend-list">
-      ${legend.map(u => `
-        <div class="veleda-legend-item">
-          <span class="veleda-legend-emoji">${u.emoji ? veledaEscape(u.emoji) : '<i class="fas fa-user-circle" style="opacity:0.3;"></i>'}</span>
-          <span class="veleda-legend-name">${veledaEscape(u.name || 'Sans nom')}</span>
-          ${u.role === 'admin' ? '<span class="veleda-legend-badge">admin</span>' : ''}
-          ${u.id === state.user?.id ? '<span class="veleda-legend-you">moi</span>' : ''}
-        </div>
-      `).join('')}
-    </div>
-  `);
-
-  // Banque d'emojis a choisir
-  const emojiPicker = VELEDA_EMOJI_BANK.map(em => `
-    <button type="button"
-      class="veleda-emoji-pick ${myEmoji === em ? 'active' : ''}"
-      onclick="veledaPickMyEmoji('${em.replace(/'/g, "\\'")}')"
-      title="Choisir cet icone">
-      ${em}
-    </button>
-  `).join('');
-
-  return `
-    <div class="veleda-modal-overlay" onclick="closeVeledaLegendModalIfBackdrop(event)">
-      <div class="veleda-modal veleda-modal-wide" onclick="event.stopPropagation()">
-        <div class="veleda-modal-header">
-          <h3>
-            <i class="fas fa-users" style="color:#C9A961;"></i>
-            Legende du tableau
-          </h3>
-          <button class="veleda-modal-close" onclick="closeVeledaLegendModal()">
-            <i class="fas fa-times"></i>
-          </button>
-        </div>
-
-        <div class="veleda-modal-body">
-          <div class="veleda-legend-section">
-            <h4 class="veleda-legend-title">Qui est qui</h4>
-            <p class="veleda-legend-subtitle">Chaque icone identifie son auteur sur le tableau.</p>
-            ${usersHtml}
-          </div>
-
-          <div class="veleda-legend-section veleda-legend-picker-section">
-            <h4 class="veleda-legend-title">
-              Mon icone
-              <span class="veleda-legend-current">${myEmoji ? veledaEscape(myEmoji) : '<span style="opacity:0.4;">(non choisi)</span>'}</span>
-            </h4>
-            <p class="veleda-legend-subtitle">Choisis ton icone parmi les ${VELEDA_EMOJI_BANK.length} disponibles. Clique a nouveau pour la retirer.</p>
-            <div class="veleda-emoji-picker">
-              ${emojiPicker}
-            </div>
-            ${myEmoji ? `
-              <button class="veleda-emoji-clear" onclick="veledaClearMyEmoji()">
-                <i class="fas fa-times"></i> Retirer mon icone
-              </button>
-            ` : ''}
-          </div>
-        </div>
-
-        <div class="veleda-modal-footer">
-          <button class="veleda-modal-btn veleda-modal-cancel" onclick="closeVeledaLegendModal()">
-            Fermer
-          </button>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function openVeledaLegendModal() {
-  state.veledaLegendModalOpen = true;
-  state.veledaLegend = null; // force rechargement
-  state.veledaLegendError = null;
+function veledaSetDraftFont(font) {
+  if (VELEDA_FONTS.indexOf(font) === -1) return;
+  state.veledaDraftFont = font;
   render();
-  loadVeledaLegend().then(() => render());
+  setTimeout(() => {
+    const inp = document.getElementById('veleda-write-input');
+    if (inp) inp.focus();
+  }, 30);
 }
 
-function closeVeledaLegendModal() {
-  state.veledaLegendModalOpen = false;
+// ============================================
+// CLIC SUR LE TABLEAU (en dehors d'une note) -> ferme inspect
+// ============================================
+function veledaBoardClick(event) {
+  // Si on a clique sur une note ou son contenu, le stopPropagation a deja eu lieu.
+  // Donc ici on est en "dehors d'une note" -> on ferme inspect/edit s'il y en a.
+  if (state.veledaInspectingId !== null || state.veledaEditingId !== null) {
+    state.veledaInspectingId = null;
+    if (state.veledaEditingId !== null) state.veledaEditingId = null;
+    render();
+  }
+}
+
+// Double-clic sur une note : bascule entre normal -> inspect -> edit
+function veledaOnNoteDblClick(event, noteId) {
+  event.stopPropagation();
+  // Si on est deja en inspect sur CETTE note ET qu'on a le droit -> on passe en edit
+  if (state.veledaInspectingId === noteId && veledaUserCanEdit()) {
+    state.veledaInspectingId = null;
+    state.veledaEditingId = noteId;
+    render();
+    setTimeout(() => {
+      const ta = document.querySelector('.veleda-note-editing textarea');
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+      }
+    }, 50);
+    return;
+  }
+  // Sinon -> on passe en inspect (visible pour tous, edition optionnelle)
+  state.veledaEditingId = null;
+  state.veledaInspectingId = noteId;
   render();
-}
-
-function closeVeledaLegendModalIfBackdrop(event) {
-  if (event.target.classList && event.target.classList.contains('veleda-modal-overlay')) {
-    closeVeledaLegendModal();
-  }
-}
-
-async function veledaPickMyEmoji(emoji) {
-  try {
-    const res = await fetch('/api/me/emoji', {
-      method: 'PUT',
-      headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emoji })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Impossible de changer l\'icone');
-    // Maj locale
-    if (state.user) state.user.emoji = emoji;
-    if (state.veledaMe) state.veledaMe.emoji = emoji;
-    // Maj de la legende locale aussi
-    if (Array.isArray(state.veledaLegend)) {
-      const me = state.veledaLegend.find(u => u.id === state.user?.id);
-      if (me) me.emoji = emoji;
-    }
-    // Recharge les notes pour mettre a jour author_emoji sur ses propres notes
-    await loadVeledaNotes();
-    render();
-  } catch (e) {
-    alert(e.message || 'Erreur inconnue');
-  }
-}
-
-async function veledaClearMyEmoji() {
-  try {
-    const res = await fetch('/api/me/emoji', {
-      method: 'PUT',
-      headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ emoji: null })
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'Erreur');
-    if (state.user) state.user.emoji = null;
-    if (state.veledaMe) state.veledaMe.emoji = null;
-    if (Array.isArray(state.veledaLegend)) {
-      const me = state.veledaLegend.find(u => u.id === state.user?.id);
-      if (me) me.emoji = null;
-    }
-    await loadVeledaNotes();
-    render();
-  } catch (e) {
-    alert(e.message || 'Erreur inconnue');
-  }
-}
-
-// ============================================
-// RENDU D'UNE NOTE
-// ============================================
-function renderVeledaNote(note, me, canEdit) {
-  const urgency = veledaUrgency(note.expires_at);
-  const color = veledaNoteColor(note);
-  const rotation = veledaRotationFor(note.id);
-  const expiresLabel = veledaExpiresLabel(note.expires_at);
-  const authorName = (note.created_by_name || '?').split(' ')[0];
-  const authorEmoji = note.author_emoji || null;
-  const isEditing = state.veledaEditingId === note.id;
-
-  const x = note.pos_x ?? 20;
-  const y = note.pos_y ?? 20;
-  const w = note.width ?? VELEDA_DEFAULT_WIDTH;
-  const h = note.height ?? VELEDA_DEFAULT_HEIGHT;
-
-  // En mode edition : on affiche un textarea inline (rotation supprimee)
-  if (isEditing) {
-    const colorButtons = VELEDA_COLORS.map(c => `
-      <button type="button"
-        class="veleda-color-pick-mini veleda-color-${c} ${color === c ? 'active' : ''}"
-        onclick="veledaChangeNoteColor(${note.id}, '${c}')"
-        title="${veledaEscape(VELEDA_COLOR_LABELS[c])}">
-        <span class="veleda-color-dot" style="background:${VELEDA_COLOR_HEX[c]};"></span>
-      </button>
-    `).join('');
-
-    return `
-      <div class="veleda-note veleda-ink-${color} veleda-note-editing"
-        style="left:${x}px; top:${y}px; width:${w}px; min-height:${h}px; transform: rotate(0deg); z-index: 50;"
-        data-note-id="${note.id}">
-        <textarea class="veleda-inline-edit-input"
-          maxlength="${VELEDA_MAX_CONTENT_LEN}"
-          onkeydown="veledaOnInlineEditKey(event, ${note.id})"
-        >${veledaEscape(note.content)}</textarea>
-        <div class="veleda-inline-color-row">
-          ${colorButtons}
-        </div>
-        <div class="veleda-inline-edit-actions">
-          <button class="veleda-inline-btn veleda-inline-cancel" onclick="veledaCancelEdit()">
-            <i class="fas fa-times"></i> Annuler
-          </button>
-          <button class="veleda-inline-btn veleda-inline-save" onclick="veledaSaveEdit(${note.id})">
-            <i class="fas fa-check"></i> Enregistrer
-          </button>
-        </div>
-      </div>
-    `;
-  }
-
-  // Mode normal : avec drag/resize/erase si canEdit
-  const dragHandler = canEdit ? `onmousedown="veledaStartDrag(event, ${note.id})"` : '';
-  const dblClickHandler = canEdit ? `ondblclick="veledaStartEdit(${note.id})"` : '';
-
-  return `
-    <div class="veleda-note veleda-ink-${color} ${canEdit ? 'veleda-note-draggable' : ''}"
-      style="left:${x}px; top:${y}px; width:${w}px; min-height:${h}px; transform: rotate(${rotation}deg);"
-      data-note-id="${note.id}"
-      ${dragHandler}
-      ${dblClickHandler}>
-      ${canEdit ? `
-        <button class="veleda-eraser"
-          onmousedown="event.stopPropagation();"
-          onclick="deleteVeledaNote(${note.id})"
-          title="Effacer cette note">
-          <i class="fas fa-eraser"></i>
-        </button>
-        <button class="veleda-edit-btn"
-          onmousedown="event.stopPropagation();"
-          onclick="veledaStartEdit(${note.id})"
-          title="Modifier le contenu">
-          <i class="fas fa-pen"></i>
-        </button>
-      ` : ''}
-      ${authorEmoji ? `
-        <span class="veleda-note-author-emoji" title="${veledaEscape(authorName)}">
-          ${veledaEscape(authorEmoji)}
-        </span>
-      ` : ''}
-      <div class="veleda-note-content">${veledaEscape(note.content)}</div>
-      <div class="veleda-meta">
-        <span class="veleda-urgency-dot ${urgency}"></span>
-        <span>${veledaEscape(expiresLabel)}</span>
-        <span style="opacity:0.6;">— ${veledaEscape(authorName)}</span>
-      </div>
-      ${canEdit ? `
-        <div class="veleda-resize-handle"
-          onmousedown="veledaStartResize(event, ${note.id})"
-          title="Redimensionner">
-          <i class="fas fa-grip-lines" style="transform: rotate(-45deg);"></i>
-        </div>
-      ` : ''}
-    </div>
-  `;
 }
 
 // ============================================
@@ -724,6 +639,7 @@ async function submitVeledaCreate() {
   const content = (state.veledaDraftContent || '').trim();
   const expiresLocal = state.veledaDraftExpiresLocal;
   const color = state.veledaDraftColor || 'black';
+  const font = state.veledaDraftFont || VELEDA_DEFAULT_FONT;
   const btn = document.getElementById('veleda-submit-btn');
 
   if (!content) {
@@ -743,6 +659,10 @@ async function submitVeledaCreate() {
     alert('Couleur invalide.');
     return;
   }
+  if (VELEDA_FONTS.indexOf(font) === -1) {
+    alert('Police invalide.');
+    return;
+  }
   const expiresDate = new Date(expiresLocal);
   if (isNaN(expiresDate.getTime()) || expiresDate.getTime() <= Date.now()) {
     alert('La date de disparition doit etre dans le futur.');
@@ -750,12 +670,12 @@ async function submitVeledaCreate() {
   }
   const expiresIso = expiresDate.toISOString();
 
-  // Position initiale (emplacement libre)
+  // Position initiale : un emplacement libre dans le coin haut-gauche
   const board = document.getElementById('veleda-board');
   const boardRect = board ? board.getBoundingClientRect() : { width: 1000, height: 600 };
   const boardW = boardRect.width - 80;
   const boardH = boardRect.height - 80;
-  const spot = veledaFindFreeSpot(state.veledaNotes || [], boardW, boardH, VELEDA_DEFAULT_WIDTH, VELEDA_DEFAULT_HEIGHT);
+  const spot = veledaFindFreeSpot(state.veledaNotes || [], boardW, boardH);
 
   if (btn) {
     btn.disabled = true;
@@ -772,18 +692,19 @@ async function submitVeledaCreate() {
         expires_at: expiresIso,
         pos_x: Math.round(spot.x),
         pos_y: Math.round(spot.y),
-        width: VELEDA_DEFAULT_WIDTH,
-        height: VELEDA_DEFAULT_HEIGHT,
-        color
+        // Pas de width/height : laisse la note s'adapter au texte
+        color,
+        font
       })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || 'Erreur d\'ecriture');
 
-    // Reset du brouillon (date par defaut a +24h, couleur black)
+    // Reset du brouillon
     state.veledaDraftContent = '';
     state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
     state.veledaDraftColor = 'black';
+    state.veledaDraftFont = VELEDA_DEFAULT_FONT;
     state.veledaWriteModalOpen = false;
 
     await loadVeledaNotes();
@@ -807,6 +728,8 @@ async function deleteVeledaNote(noteId) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Erreur de suppression');
     state.veledaNotes = (state.veledaNotes || []).filter(n => n.id !== noteId);
+    if (state.veledaInspectingId === noteId) state.veledaInspectingId = null;
+    if (state.veledaEditingId === noteId) state.veledaEditingId = null;
     render();
   } catch (e) {
     alert(e.message || 'Erreur inconnue');
@@ -814,11 +737,12 @@ async function deleteVeledaNote(noteId) {
 }
 
 // ============================================
-// EDITION INLINE DU CONTENU + COULEUR
+// EDITION INLINE DU CONTENU + COULEUR + POLICE
 // ============================================
 function veledaStartEdit(noteId) {
   if (!veledaUserCanEdit()) return;
   state.veledaEditingId = noteId;
+  state.veledaInspectingId = null;
   render();
   setTimeout(() => {
     const ta = document.querySelector('.veleda-note-editing textarea');
@@ -873,14 +797,12 @@ async function veledaSaveEdit(noteId) {
   }
 }
 
-// Changement de couleur d'une note pendant l'edition inline
 async function veledaChangeNoteColor(noteId, color) {
   if (!veledaUserCanEdit()) return;
   if (VELEDA_COLORS.indexOf(color) === -1) return;
   const note = (state.veledaNotes || []).find(n => n.id === noteId);
   if (!note) return;
   if (note.color === color) return;
-  // MAJ optimiste
   const prevColor = note.color;
   note.color = color;
   render();
@@ -896,11 +818,40 @@ async function veledaChangeNoteColor(noteId, color) {
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || 'Erreur de changement de couleur');
+      throw new Error(data.error || 'Erreur');
     }
   } catch (e) {
-    // Rollback
     note.color = prevColor;
+    render();
+    alert(e.message || 'Erreur inconnue');
+  }
+}
+
+async function veledaChangeNoteFont(noteId, font) {
+  if (!veledaUserCanEdit()) return;
+  if (VELEDA_FONTS.indexOf(font) === -1) return;
+  const note = (state.veledaNotes || []).find(n => n.id === noteId);
+  if (!note) return;
+  if (note.font === font) return;
+  const prevFont = note.font;
+  note.font = font;
+  render();
+  setTimeout(() => {
+    const ta = document.querySelector('.veleda-note-editing textarea');
+    if (ta) ta.focus();
+  }, 30);
+  try {
+    const res = await fetch('/api/veleda-notes/' + noteId, {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ font })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Erreur');
+    }
+  } catch (e) {
+    note.font = prevFont;
     render();
     alert(e.message || 'Erreur inconnue');
   }
@@ -911,11 +862,10 @@ async function veledaChangeNoteColor(noteId, color) {
 // ============================================
 function veledaStartDrag(event, noteId) {
   if (event.target.closest('.veleda-resize-handle') ||
-      event.target.closest('.veleda-eraser') ||
-      event.target.closest('.veleda-edit-btn') ||
+      event.target.closest('.veleda-note-inspect-meta') ||
       event.target.closest('.veleda-inline-edit-input') ||
       event.target.closest('.veleda-inline-edit-actions') ||
-      event.target.closest('.veleda-note-author-emoji')) return;
+      event.target.closest('.veleda-inline-toolbar')) return;
   if (event.button !== 0) return;
   if (!veledaUserCanEdit()) return;
   if (state.veledaEditingId === noteId) return;
@@ -973,7 +923,7 @@ async function veledaOnDragEnd(event) {
   if (board) {
     const boardRect = board.getBoundingClientRect();
     const noteEl = document.querySelector(`.veleda-note[data-note-id="${id}"]`);
-    const noteRect = noteEl ? noteEl.getBoundingClientRect() : { width: 240, height: 110 };
+    const noteRect = noteEl ? noteEl.getBoundingClientRect() : { width: 200, height: 60 };
     newX = Math.max(-50, Math.min(newX, boardRect.width - noteRect.width + 50));
     newY = Math.max(-20, Math.min(newY, boardRect.height - noteRect.height + 20));
   }
@@ -1006,7 +956,7 @@ async function veledaOnDragEnd(event) {
 }
 
 // ============================================
-// RESIZE
+// RESIZE (uniquement en mode inspect / si user editeur)
 // ============================================
 function veledaStartResize(event, noteId) {
   if (event.button !== 0) return;
@@ -1017,12 +967,16 @@ function veledaStartResize(event, noteId) {
   const note = (state.veledaNotes || []).find(n => n.id === noteId);
   if (!note) return;
 
+  // Si pas de taille definie, on prend la taille actuellement rendue
+  const el = document.querySelector(`.veleda-note[data-note-id="${noteId}"]`);
+  const rect = el ? el.getBoundingClientRect() : { width: 200, height: 60 };
+
   state.veledaResizing = {
     id: noteId,
     startX: event.clientX,
     startY: event.clientY,
-    origW: note.width ?? VELEDA_DEFAULT_WIDTH,
-    origH: note.height ?? VELEDA_DEFAULT_HEIGHT
+    origW: note.width ?? Math.round(rect.width),
+    origH: note.height ?? Math.round(rect.height)
   };
 
   document.addEventListener('mousemove', veledaOnResizeMove);
@@ -1030,7 +984,6 @@ function veledaStartResize(event, noteId) {
   document.body.style.cursor = 'nwse-resize';
   document.body.style.userSelect = 'none';
 
-  const el = document.querySelector(`.veleda-note[data-note-id="${noteId}"]`);
   if (el) {
     el.dataset.origRotation = el.style.transform;
     el.style.transform = 'rotate(0deg)';
@@ -1051,7 +1004,7 @@ function veledaOnResizeMove(event) {
   const el = document.querySelector(`.veleda-note[data-note-id="${state.veledaResizing.id}"]`);
   if (el) {
     el.style.width = newW + 'px';
-    el.style.minHeight = newH + 'px';
+    el.style.height = newH + 'px';
   }
 }
 
@@ -1068,7 +1021,7 @@ async function veledaOnResizeEnd(event) {
   const el = document.querySelector(`.veleda-note[data-note-id="${id}"]`);
   if (el) {
     el.style.width = newW + 'px';
-    el.style.minHeight = newH + 'px';
+    el.style.height = newH + 'px';
     el.style.transform = el.dataset.origRotation || '';
     el.style.transition = '';
     el.style.zIndex = '';
@@ -1091,7 +1044,6 @@ async function veledaOnResizeEnd(event) {
   }
 }
 
-// Persistance silencieuse du layout
 async function persistVeledaLayout(noteId, payload) {
   try {
     const res = await fetch('/api/veleda-notes/' + noteId, {
@@ -1113,11 +1065,11 @@ async function persistVeledaLayout(noteId, payload) {
 // ============================================
 window.renderVeledaView = renderVeledaView;
 window.loadVeledaNotes = loadVeledaNotes;
-window.loadVeledaLegend = loadVeledaLegend;
 window.veledaOnInputChange = veledaOnInputChange;
 window.veledaOnKeyDown = veledaOnKeyDown;
 window.veledaSetExpires = veledaSetExpires;
 window.veledaSetDraftColor = veledaSetDraftColor;
+window.veledaSetDraftFont = veledaSetDraftFont;
 window.submitVeledaCreate = submitVeledaCreate;
 window.deleteVeledaNote = deleteVeledaNote;
 window.veledaStartDrag = veledaStartDrag;
@@ -1127,12 +1079,10 @@ window.veledaCancelEdit = veledaCancelEdit;
 window.veledaSaveEdit = veledaSaveEdit;
 window.veledaOnInlineEditKey = veledaOnInlineEditKey;
 window.veledaChangeNoteColor = veledaChangeNoteColor;
+window.veledaChangeNoteFont = veledaChangeNoteFont;
 window.stopVeledaPolling = stopVeledaPolling;
 window.openVeledaWriteModal = openVeledaWriteModal;
 window.closeVeledaWriteModal = closeVeledaWriteModal;
 window.closeVeledaWriteModalIfBackdrop = closeVeledaWriteModalIfBackdrop;
-window.openVeledaLegendModal = openVeledaLegendModal;
-window.closeVeledaLegendModal = closeVeledaLegendModal;
-window.closeVeledaLegendModalIfBackdrop = closeVeledaLegendModalIfBackdrop;
-window.veledaPickMyEmoji = veledaPickMyEmoji;
-window.veledaClearMyEmoji = veledaClearMyEmoji;
+window.veledaBoardClick = veledaBoardClick;
+window.veledaOnNoteDblClick = veledaOnNoteDblClick;

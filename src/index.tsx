@@ -5381,6 +5381,25 @@ function isValidVeledaEmoji(v: any): boolean {
   return typeof v === 'string' && VELEDA_EMOJI_BANK.includes(v)
 }
 
+// Whitelist des 10 polices manuscrites/feutre proposees pour ecrire sur le tableau
+// (Google Fonts). Le nom est la famille canonique attendue dans `font-family`.
+const VELEDA_ALLOWED_FONTS = [
+  'Permanent Marker',
+  'Kalam',
+  'Caveat',
+  'Architects Daughter',
+  'Shadows Into Light',
+  'Indie Flower',
+  'Patrick Hand',
+  'Gloria Hallelujah',
+  'Reenie Beanie',
+  'Just Another Hand'
+] as const
+type VeledaFont = typeof VELEDA_ALLOWED_FONTS[number]
+function isValidVeledaFont(v: any): v is VeledaFont {
+  return typeof v === 'string' && (VELEDA_ALLOWED_FONTS as readonly string[]).includes(v)
+}
+
 // Helper : valide un entier optionnel dans une plage donnée. Retourne :
 //  - { ok: true, value: number|null }  si valide (null = non fourni)
 //  - { ok: false, error: string }      si invalide
@@ -5422,7 +5441,7 @@ app.get('/api/veleda-notes', authMiddleware, async (c) => {
   const rows = await c.env.DB.prepare(
     `SELECT n.id, n.title, n.content, n.expires_at, n.created_by, n.created_by_name,
             n.created_at, n.updated_at,
-            n.pos_x, n.pos_y, n.width, n.height, n.color,
+            n.pos_x, n.pos_y, n.width, n.height, n.color, n.font,
             u.emoji as author_emoji
      FROM veleda_notes n
      LEFT JOIN users u ON n.created_by = u.id
@@ -5531,6 +5550,15 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
     color = body.color
   }
 
+  // Police — whitelist serveur, défaut 'Kalam'
+  let font: VeledaFont = 'Kalam'
+  if (body.font !== undefined && body.font !== null && body.font !== '') {
+    if (!isValidVeledaFont(body.font)) {
+      return c.json({ error: 'Police non autorisée' }, 400)
+    }
+    font = body.font
+  }
+
   // Cleanup avant insertion (libère des slots si nécessaire)
   await cleanupExpiredVeledaNotes(c.env.DB, user.hotel_id)
 
@@ -5543,8 +5571,8 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
   }
 
   const result = await c.env.DB.prepare(
-    `INSERT INTO veleda_notes (hotel_id, title, content, expires_at, created_by, created_by_name, pos_x, pos_y, width, height, color)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO veleda_notes (hotel_id, title, content, expires_at, created_by, created_by_name, pos_x, pos_y, width, height, color, font)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     user.hotel_id,
     title || null,
@@ -5556,7 +5584,8 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
     posYv.value,
     widthV.value,
     heightV.value,
-    color
+    color,
+    font
   ).run()
 
   return c.json({
@@ -5575,6 +5604,7 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
       width: widthV.value,
       height: heightV.value,
       color,
+      font,
       author_emoji: user.emoji
     }
   })
@@ -5665,6 +5695,15 @@ app.put('/api/veleda-notes/:id', authMiddleware, async (c) => {
     }
     fields.push('color = ?')
     values.push(body.color)
+  }
+
+  // Police — whitelist
+  if (body.font !== undefined) {
+    if (!isValidVeledaFont(body.font)) {
+      return c.json({ error: 'Police non autorisée' }, 400)
+    }
+    fields.push('font = ?')
+    values.push(body.font)
   }
 
   if (fields.length === 0) return c.json({ error: 'Aucune modification' }, 400)
@@ -6379,8 +6418,8 @@ app.get('*', (c) => {
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
 
   <!-- === FONTS Google : chargement non-bloquant (media=print + onload swap) === -->
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Permanent+Marker&family=Kalam:wght@400;700&family=Caveat:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
-  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Permanent+Marker&family=Kalam:wght@400;700&family=Caveat:wght@400;500;600;700&display=swap"></noscript>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Permanent+Marker&family=Kalam:wght@400;700&family=Caveat:wght@400;500;600;700&family=Architects+Daughter&family=Shadows+Into+Light&family=Indie+Flower&family=Patrick+Hand&family=Gloria+Hallelujah&family=Reenie+Beanie&family=Just+Another+Hand&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Permanent+Marker&family=Kalam:wght@400;700&family=Caveat:wght@400;500;600;700&family=Architects+Daughter&family=Shadows+Into+Light&family=Indie+Flower&family=Patrick+Hand&family=Gloria+Hallelujah&family=Reenie+Beanie&family=Just+Another+Hand&display=swap"></noscript>
 
   <style>
     /* === POLICES — Inter (UI) + Fraunces (titres premium) === */

@@ -111,6 +111,7 @@ function renderMainLayout() {
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       { id: 'tasks', icon: 'fa-list-check', label: 'Tâches', badge: state.myTasksPendingCount },
+      { id: 'veleda', icon: 'fa-clipboard', label: 'Tableau Véléda' },
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
@@ -124,6 +125,8 @@ function renderMainLayout() {
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
       // Tâches : visible pour TOUS les employés (les permissions limitent juste les actions)
       { id: 'tasks', icon: 'fa-list-check', label: 'Tâches', badge: state.myTasksPendingCount },
+      // Tableau Véléda : visible pour TOUS (admin + employé)
+      { id: 'veleda', icon: 'fa-clipboard', label: 'Tableau Véléda' },
     ];
   }
 
@@ -142,6 +145,7 @@ function renderMainLayout() {
     hotels: 'Hôtels',
     templates: 'Modèles',
     tasks: 'Tâches',
+    veleda: 'Tableau Véléda',
   };
   const currentTitle = viewTitles[state.currentView] || 'Wikot';
 
@@ -278,6 +282,10 @@ function navigate(view) {
     state.selectedChannelId = null;
     state.chatMessages = [];
   }
+  // Si on quitte la vue Tableau Véléda, stopper son polling
+  if (state.currentView === 'veleda' && view !== 'veleda') {
+    if (typeof stopVeledaPolling === 'function') stopVeledaPolling();
+  }
   // Ne push une entrée d'historique que si la vue change vraiment
   if (state.currentView !== view) {
     pushHistory(view);
@@ -348,6 +356,7 @@ function renderCurrentView() {
     case 'templates': return renderTemplatesView();
     case 'procedure-detail': return renderProcedureDetail();
     case 'tasks': return renderTasksView();
+    case 'veleda': return renderVeledaView();
     case 'hotel-settings': state.currentView = isSuperAdmin ? 'dashboard' : 'wikot'; return renderCurrentView();
     default:
       return (state.user && state.user.role === 'super_admin') ? renderDashboard() : renderProceduresList();

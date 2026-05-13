@@ -5316,6 +5316,219 @@ app.put('/api/hotels/:id/settings', authMiddleware, async (c) => {
 
 
 // ============================================
+// MODULE TABLEAU VÉLÉDA — Notes éphémères partagées par hôtel
+// ============================================
+// Concept : "whiteboard" numérique de l'équipe. Chaque membre du staff peut
+// noter une info temporaire (ex: "Ch. 204 → check-out 14h", "Livreur mardi")
+// avec une date d'expiration. Au-delà : la note disparaît automatiquement
+// (cleanup lazy lors de chaque GET, pas de cron à maintenir).
+//
+// Sécurité :
+// - authMiddleware obligatoire sur toutes les routes
+// - hotel_id pris du JWT, JAMAIS du body (anti-cross-tenant)
+// - Validation stricte des entrées (longueurs, expires_at futur)
+// - Suppression : auteur OU admin de l'hôtel uniquement
+
+const VELEDA_MAX_TITLE_LEN = 100
+const VELEDA_MAX_CONTENT_LEN = 2000
+const VELEDA_HARD_LIMIT = 200   // garde-fou : pas plus de 200 notes actives par hôtel
+
+// Helper : nettoyage des notes expirées d'un hôtel (idempotent, peu coûteux grâce à l'index)
+async function cleanupExpiredVeledaNotes(db: D1Database, hotelId: number) {
+  await db.prepare(
+    'DELETE FROM veleda_notes WHERE hotel_id = ? AND expires_at < CURRENT_TIMESTAMP'
+  ).bind(hotelId).run()
+}
+
+// GET /api/veleda-notes — liste des notes actives de l'hôtel, triées par expiration croissante
+app.get('/api/veleda-notes', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  // Cleanup lazy : on supprime les notes expirées avant de lister
+  await cleanupExpiredVeledaNotes(c.env.DB, user.hotel_id)
+
+  const rows = await c.env.DB.prepare(
+    `SELECT id, title, content, expires_at, created_by, created_by_name, created_at, updated_at
+     FROM veleda_notes
+     WHERE hotel_id = ?
+     ORDER BY expires_at ASC, id DESC
+     LIMIT 200`
+  ).bind(user.hotel_id).all()
+
+  return c.json({
+    notes: rows.results || [],
+    me: { id: user.id, role: user.role }
+  })
+})
+
+// POST /api/veleda-notes — crée une nouvelle note
+app.post('/api/veleda-notes', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const body = await c.req.json().catch(() => ({})) as any
+  const title = typeof body.title === 'string' ? body.title.trim() : ''
+  const content = typeof body.content === 'string' ? body.content.trim() : ''
+  const expiresAt = typeof body.expires_at === 'string' ? body.expires_at.trim() : ''
+
+  // Validation stricte
+  if (!content) return c.json({ error: 'Le contenu de la note est requis' }, 400)
+  if (content.length > VELEDA_MAX_CONTENT_LEN) {
+    return c.json({ error: `Contenu trop long (max ${VELEDA_MAX_CONTENT_LEN} caractères)` }, 400)
+  }
+  if (title.length > VELEDA_MAX_TITLE_LEN) {
+    return c.json({ error: `Titre trop long (max ${VELEDA_MAX_TITLE_LEN} caractères)` }, 400)
+  }
+  if (!expiresAt) return c.json({ error: 'Date d\'expiration requise' }, 400)
+
+  // Parse robuste de la date (accepte ISO ou "YYYY-MM-DDTHH:mm")
+  const expiresDate = new Date(expiresAt)
+  if (isNaN(expiresDate.getTime())) {
+    return c.json({ error: 'Date d\'expiration invalide' }, 400)
+  }
+  if (expiresDate.getTime() <= Date.now()) {
+    return c.json({ error: 'La date d\'expiration doit être dans le futur' }, 400)
+  }
+  // Plafond raisonnable : 1 an max (au-delà c'est plus une note éphémère)
+  if (expiresDate.getTime() > Date.now() + 365 * 24 * 60 * 60 * 1000) {
+    return c.json({ error: 'Date d\'expiration trop lointaine (1 an maximum)' }, 400)
+  }
+
+  // Cleanup avant insertion (libère des slots si nécessaire)
+  await cleanupExpiredVeledaNotes(c.env.DB, user.hotel_id)
+
+  // Garde-fou anti-spam : pas plus de VELEDA_HARD_LIMIT notes actives
+  const countRow = await c.env.DB.prepare(
+    'SELECT COUNT(*) as n FROM veleda_notes WHERE hotel_id = ?'
+  ).bind(user.hotel_id).first() as any
+  if (countRow && countRow.n >= VELEDA_HARD_LIMIT) {
+    return c.json({ error: `Limite atteinte (${VELEDA_HARD_LIMIT} notes max). Supprimez d'abord d'anciennes notes.` }, 400)
+  }
+
+  const result = await c.env.DB.prepare(
+    `INSERT INTO veleda_notes (hotel_id, title, content, expires_at, created_by, created_by_name)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).bind(
+    user.hotel_id,
+    title || null,
+    content,
+    expiresDate.toISOString(),
+    user.id,
+    user.name
+  ).run()
+
+  return c.json({
+    success: true,
+    note: {
+      id: result.meta.last_row_id,
+      title: title || null,
+      content,
+      expires_at: expiresDate.toISOString(),
+      created_by: user.id,
+      created_by_name: user.name,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }
+  })
+})
+
+// PUT /api/veleda-notes/:id — édite une note (titre/contenu/expiration)
+// Autorisé : auteur de la note OU admin de l'hôtel
+app.put('/api/veleda-notes/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID invalide' }, 400)
+
+  // Vérifie l'existence + appartenance à l'hôtel (anti-cross-tenant)
+  const existing = await c.env.DB.prepare(
+    'SELECT id, created_by FROM veleda_notes WHERE id = ? AND hotel_id = ?'
+  ).bind(id, user.hotel_id).first() as any
+  if (!existing) return c.json({ error: 'Note introuvable' }, 404)
+
+  // Permission : auteur ou admin
+  const isAuthor = existing.created_by === user.id
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin'
+  if (!isAuthor && !isAdmin) {
+    return c.json({ error: 'Vous n\'avez pas le droit de modifier cette note' }, 403)
+  }
+
+  const body = await c.req.json().catch(() => ({})) as any
+  const fields: string[] = []
+  const values: any[] = []
+
+  if (typeof body.title === 'string') {
+    const t = body.title.trim()
+    if (t.length > VELEDA_MAX_TITLE_LEN) {
+      return c.json({ error: `Titre trop long (max ${VELEDA_MAX_TITLE_LEN} caractères)` }, 400)
+    }
+    fields.push('title = ?')
+    values.push(t || null)
+  }
+
+  if (typeof body.content === 'string') {
+    const ct = body.content.trim()
+    if (!ct) return c.json({ error: 'Le contenu ne peut pas être vide' }, 400)
+    if (ct.length > VELEDA_MAX_CONTENT_LEN) {
+      return c.json({ error: `Contenu trop long (max ${VELEDA_MAX_CONTENT_LEN} caractères)` }, 400)
+    }
+    fields.push('content = ?')
+    values.push(ct)
+  }
+
+  if (typeof body.expires_at === 'string' && body.expires_at.trim()) {
+    const d = new Date(body.expires_at.trim())
+    if (isNaN(d.getTime())) return c.json({ error: 'Date d\'expiration invalide' }, 400)
+    if (d.getTime() <= Date.now()) return c.json({ error: 'La date d\'expiration doit être dans le futur' }, 400)
+    if (d.getTime() > Date.now() + 365 * 24 * 60 * 60 * 1000) {
+      return c.json({ error: 'Date d\'expiration trop lointaine (1 an maximum)' }, 400)
+    }
+    fields.push('expires_at = ?')
+    values.push(d.toISOString())
+  }
+
+  if (fields.length === 0) return c.json({ error: 'Aucune modification' }, 400)
+  fields.push('updated_at = CURRENT_TIMESTAMP')
+  values.push(id)
+  values.push(user.hotel_id)
+
+  await c.env.DB.prepare(
+    `UPDATE veleda_notes SET ${fields.join(', ')} WHERE id = ? AND hotel_id = ?`
+  ).bind(...values).run()
+
+  return c.json({ success: true })
+})
+
+// DELETE /api/veleda-notes/:id — supprime une note
+// Autorisé : auteur OU admin de l'hôtel
+app.delete('/api/veleda-notes/:id', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: 'ID invalide' }, 400)
+
+  const existing = await c.env.DB.prepare(
+    'SELECT created_by FROM veleda_notes WHERE id = ? AND hotel_id = ?'
+  ).bind(id, user.hotel_id).first() as any
+  if (!existing) return c.json({ error: 'Note introuvable' }, 404)
+
+  const isAuthor = existing.created_by === user.id
+  const isAdmin = user.role === 'admin' || user.role === 'super_admin'
+  if (!isAuthor && !isAdmin) {
+    return c.json({ error: 'Vous n\'avez pas le droit de supprimer cette note' }, 403)
+  }
+
+  await c.env.DB.prepare('DELETE FROM veleda_notes WHERE id = ? AND hotel_id = ?')
+    .bind(id, user.hotel_id).run()
+
+  return c.json({ success: true })
+})
+
+
+// ============================================
 // MODULE TASKS — "À faire" (templates récurrents + instances datées + assignments)
 // Permissions : can_create_tasks (créer/éditer), can_assign_tasks (attribuer)
 // Voir + valider sa tâche = par défaut pour tous (rôle admin/employee)
@@ -6511,6 +6724,7 @@ app.get('*', (c) => {
   <script defer src="/static/modules/05-users-info.js?v=${v}"></script>
   <script defer src="/static/modules/06-wikot.js?v=${v}"></script>
   <script defer src="/static/modules/08-tasks.js?v=${v}"></script>
+  <script defer src="/static/modules/09-veleda.js?v=${v}"></script>
   <script defer src="/static/modules/07-chat-modals.js?v=${v}"></script>
 
   <!--

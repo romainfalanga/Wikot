@@ -46,10 +46,16 @@ app.use('*', async (c, next) => {
   c.header('Referrer-Policy', 'strict-origin-when-cross-origin')
   c.header('Permissions-Policy', 'geolocation=(), camera=(), microphone=(), payment=()')
   c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
-  // Pas de cache pour les routes API (données sensibles, multi-tenant)
+  // Cache headers
   const url = new URL(c.req.url)
   if (url.pathname.startsWith('/api/')) {
+    // Pas de cache pour les routes API (données sensibles, multi-tenant)
     c.header('Cache-Control', 'private, no-store, no-cache, must-revalidate')
+  } else if (url.pathname.startsWith('/static/modules/') || url.pathname.endsWith('/tailwind.css') || url.pathname.endsWith('/style.css')) {
+    // Modules JS + CSS principaux : revalidation systématique pour éviter le cache navigateur
+    // qui conserverait une ancienne version après un déploiement (cause de bugs visuels
+    // persistants sur mobile : sidebar mal positionnée, classes manquantes, etc.)
+    c.header('Cache-Control', 'public, max-age=0, must-revalidate')
   }
 })
 
@@ -5952,7 +5958,14 @@ async function refreshInstanceStatus(db: D1Database, instanceId: number) {
 // ============================================
 // MAIN HTML PAGE
 // ============================================
+// BUILD_ID : timestamp régénéré à chaque build → cache-buster automatique sur
+// tous les assets statiques. Solution radicale au problème où le navigateur
+// mobile gardait l'ancien JS/CSS en cache après un déploiement, faisant
+// croire que le fix n'avait pas été appliqué (bug sidebar décalée à droite).
+const BUILD_ID = String(Date.now())
+
 app.get('*', (c) => {
+  const v = BUILD_ID
   return c.html(`<!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -5965,8 +5978,8 @@ app.get('*', (c) => {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
-  <!-- === TAILWIND PRÉ-COMPILÉ (100 KB statique) — remplace cdn.tailwindcss.com qui compilait en JS dans le navigateur (~1-2s perdus) === -->
-  <link rel="stylesheet" href="/static/tailwind.css">
+  <!-- === TAILWIND PRÉ-COMPILÉ — cache-busté via ?v=BUILD_ID pour forcer reload au déploiement === -->
+  <link rel="stylesheet" href="/static/tailwind.css?v=${v}">
 
   <!-- === FONT AWESOME (CDN, mais préchargé en parallèle) === -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
@@ -6463,14 +6476,14 @@ app.get('*', (c) => {
     s'exécutent dans l'ordre une fois le HTML parsé. La page de login SSR
     est donc affichée IMMÉDIATEMENT, sans attendre les 422 KB de modules.
   -->
-  <script defer src="/static/modules/01-core.js"></script>
-  <script defer src="/static/modules/02-auth.js"></script>
-  <script defer src="/static/modules/03-layout.js"></script>
-  <script defer src="/static/modules/04-procedures.js"></script>
-  <script defer src="/static/modules/05-users-info.js"></script>
-  <script defer src="/static/modules/06-wikot.js"></script>
-  <script defer src="/static/modules/08-tasks.js"></script>
-  <script defer src="/static/modules/07-chat-modals.js"></script>
+  <script defer src="/static/modules/01-core.js?v=${v}"></script>
+  <script defer src="/static/modules/02-auth.js?v=${v}"></script>
+  <script defer src="/static/modules/03-layout.js?v=${v}"></script>
+  <script defer src="/static/modules/04-procedures.js?v=${v}"></script>
+  <script defer src="/static/modules/05-users-info.js?v=${v}"></script>
+  <script defer src="/static/modules/06-wikot.js?v=${v}"></script>
+  <script defer src="/static/modules/08-tasks.js?v=${v}"></script>
+  <script defer src="/static/modules/07-chat-modals.js?v=${v}"></script>
 
   <!--
     Bootstrap : quand tous les modules sont chargés (DOMContentLoaded vu que

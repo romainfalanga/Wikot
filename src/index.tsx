@@ -5983,6 +5983,10 @@ app.get('*', (c) => {
   <!-- === TAILWIND PRÉ-COMPILÉ — cache-busté via ?v=BUILD_ID pour forcer reload au déploiement === -->
   <link rel="stylesheet" href="/static/tailwind.css?v=${v}">
 
+  <!-- === STYLE.CSS — règles custom (layout sidebar, mobile bottom-nav, etc.)
+       Chargé APRÈS tailwind.css pour pouvoir override si besoin. -->
+  <link rel="stylesheet" href="/static/style.css?v=${v}">
+
   <!-- === FONT AWESOME (CDN, mais préchargé en parallèle) === -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
 

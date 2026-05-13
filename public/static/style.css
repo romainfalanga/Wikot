@@ -1,34 +1,128 @@
 h1 { font-family: Arial, Helvetica, sans-serif; }
 
 /* =========================================================
+   ECRAN MOBILE BLOQUANT
+   Wikot est uniquement disponible sur ordinateur (>= 1024px).
+   En dessous : un overlay plein ecran qui masque TOUT le reste.
+   ========================================================= */
+
+/* Par defaut (desktop) : invisible */
+#mobile-only-screen {
+  display: none;
+}
+
+/* Mobile / tablette portrait (< 1024px) : visible et bloquant */
+@media (max-width: 1023px) {
+  #mobile-only-screen {
+    display: flex;
+    position: fixed;
+    inset: 0;
+    z-index: 2147483647;             /* z-index max possible -> recouvre tout */
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: linear-gradient(160deg, #0A1628 0%, #142235 60%, #0A1628 100%);
+    color: #fff;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    overflow-y: auto;
+  }
+
+  /* On verrouille le scroll du document derriere pour eviter tout glitch */
+  body:has(#mobile-only-screen) {
+    overflow: hidden;
+  }
+
+  .mobile-only-card {
+    width: 100%;
+    max-width: 420px;
+    text-align: center;
+    padding: 40px 28px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(201, 169, 97, 0.25);
+    border-radius: 24px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+
+  .mobile-only-logo {
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 20px;
+    border-radius: 20px;
+    background: #C9A961;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #0A1628;
+    font-size: 30px;
+    box-shadow: 0 8px 24px rgba(201, 169, 97, 0.35);
+  }
+
+  .mobile-only-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 36px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin: 0;
+    color: #fff;
+  }
+
+  .mobile-only-divider {
+    width: 48px;
+    height: 2px;
+    background: #C9A961;
+    margin: 20px auto 24px;
+    border-radius: 2px;
+  }
+
+  .mobile-only-message {
+    font-size: 17px;
+    font-weight: 500;
+    line-height: 1.45;
+    color: #fff;
+    margin: 0 0 14px;
+  }
+
+  .mobile-only-submessage {
+    font-size: 14px;
+    line-height: 1.55;
+    color: rgba(255, 255, 255, 0.65);
+    margin: 0;
+  }
+}
+
+
+/* =========================================================
    APP SHELL — Layout principal (sidebar + main)
    ========================================================= */
 
 /* ============== MOBILE FIRST (< 1024px) ==============
-   Stratégie : pas de flex sur le conteneur racine en mobile.
-   Le main garde son flex flex-col interne (header sticky + contenu).
-   La sidebar est un overlay fixed pur, hors du flux. */
+   Stratégie : pas de flex du tout en mobile. Le conteneur racine est
+   un simple bloc pleine largeur. La sidebar est un overlay fixed pur.
+   Le main occupe naturellement 100% du viewport.
+   Aucun moteur flex à exploiter -> aucun moyen de pousser le contenu. */
 
 .app-shell-row {
-  display: block;                /* PAS de flex sur le row en mobile */
+  display: block;                /* PAS de flex en mobile */
   width: 100vw;
   max-width: 100vw;
-  min-height: 100vh;
-  min-height: 100dvh;
-  overflow-x: hidden;
+  height: 100vh;
+  height: 100dvh;
+  overflow-x: hidden;            /* aucun debordement horizontal possible */
+  overflow-y: hidden;
   position: relative;
 }
 
-/* Le <main> garde son comportement flex flex-col (header sticky + contenu)
-   defini par les classes Tailwind inline. On n'ajoute QUE les regles
-   essentielles : pleine largeur, pas de debordement horizontal. */
 .app-main {
+  display: block;
   width: 100%;
   max-width: 100%;
-  min-height: 100vh;
-  min-height: 100dvh;
-  min-width: 0;
+  height: 100%;
   overflow-x: hidden;
+  overflow-y: auto;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* Sidebar mobile = overlay fixe hors-écran par défaut */

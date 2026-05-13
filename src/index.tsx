@@ -6406,6 +6406,28 @@ app.get('*', (c) => {
 </head>
 <body class="min-h-screen" style="background-color: #FAF8F5; color: #0A1628;">
   <!--
+    ECRAN MOBILE BLOQUANT — affiche un message unique sur < 1024px.
+    Position fixed inset-0 + z-index max -> recouvre absolument tout
+    (sidebar, header, bottom-nav, modales, SSR login, etc.).
+    Aucun JS necessaire : c'est un overlay CSS pur, donc impossible a casser.
+  -->
+  <div id="mobile-only-screen">
+    <div class="mobile-only-card">
+      <div class="mobile-only-logo">
+        <i class="fas fa-concierge-bell"></i>
+      </div>
+      <h1 class="mobile-only-title">Wikot</h1>
+      <div class="mobile-only-divider"></div>
+      <p class="mobile-only-message">
+        Wikot est uniquement disponible sur ordinateur.
+      </p>
+      <p class="mobile-only-submessage">
+        Veuillez vous reconnecter depuis un ordinateur de bureau ou un ordinateur portable pour accéder à votre espace.
+      </p>
+    </div>
+  </div>
+
+  <!--
     SSR : on pré-rend la page de login DIRECTEMENT dans le HTML servi.
     Comme ça l'utilisateur non-connecté voit le form INSTANTANÉMENT, sans
     attendre que les 422 KB de JS soient chargés et exécutés.

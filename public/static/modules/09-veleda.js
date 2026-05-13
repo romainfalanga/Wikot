@@ -220,7 +220,7 @@ function startVeledaPolling() {
     const prevJson = JSON.stringify(state.veledaNotes || []);
     await loadVeledaNotes();
     const nextJson = JSON.stringify(state.veledaNotes || []);
-    if (prevJson !== nextJson) renderApp();
+    if (prevJson !== nextJson) render();
   }, 60000);
 }
 
@@ -248,7 +248,7 @@ function renderVeledaView() {
     state.veledaLegendModalOpen = false;
     loadVeledaNotes().then(() => {
       startVeledaPolling();
-      renderApp();
+      render();
     });
     return renderVeledaShell([]);
   }
@@ -427,7 +427,7 @@ function openVeledaWriteModal() {
   if (!state.veledaDraftExpiresLocal) {
     state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
   }
-  renderApp();
+  render();
   setTimeout(() => {
     const inp = document.getElementById('veleda-write-input');
     if (inp) inp.focus();
@@ -436,7 +436,7 @@ function openVeledaWriteModal() {
 
 function closeVeledaWriteModal() {
   state.veledaWriteModalOpen = false;
-  renderApp();
+  render();
 }
 
 function closeVeledaWriteModalIfBackdrop(event) {
@@ -448,7 +448,7 @@ function closeVeledaWriteModalIfBackdrop(event) {
 function veledaSetDraftColor(color) {
   if (VELEDA_COLORS.indexOf(color) === -1) return;
   state.veledaDraftColor = color;
-  renderApp();
+  render();
   setTimeout(() => {
     const inp = document.getElementById('veleda-write-input');
     if (inp) inp.focus();
@@ -543,13 +543,13 @@ function openVeledaLegendModal() {
   state.veledaLegendModalOpen = true;
   state.veledaLegend = null; // force rechargement
   state.veledaLegendError = null;
-  renderApp();
-  loadVeledaLegend().then(() => renderApp());
+  render();
+  loadVeledaLegend().then(() => render());
 }
 
 function closeVeledaLegendModal() {
   state.veledaLegendModalOpen = false;
-  renderApp();
+  render();
 }
 
 function closeVeledaLegendModalIfBackdrop(event) {
@@ -577,7 +577,7 @@ async function veledaPickMyEmoji(emoji) {
     }
     // Recharge les notes pour mettre a jour author_emoji sur ses propres notes
     await loadVeledaNotes();
-    renderApp();
+    render();
   } catch (e) {
     alert(e.message || 'Erreur inconnue');
   }
@@ -599,7 +599,7 @@ async function veledaClearMyEmoji() {
       if (me) me.emoji = null;
     }
     await loadVeledaNotes();
-    renderApp();
+    render();
   } catch (e) {
     alert(e.message || 'Erreur inconnue');
   }
@@ -787,7 +787,7 @@ async function submitVeledaCreate() {
     state.veledaWriteModalOpen = false;
 
     await loadVeledaNotes();
-    renderApp();
+    render();
   } catch (e) {
     alert(e.message || 'Erreur inconnue');
     if (btn) {
@@ -807,7 +807,7 @@ async function deleteVeledaNote(noteId) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || 'Erreur de suppression');
     state.veledaNotes = (state.veledaNotes || []).filter(n => n.id !== noteId);
-    renderApp();
+    render();
   } catch (e) {
     alert(e.message || 'Erreur inconnue');
   }
@@ -819,7 +819,7 @@ async function deleteVeledaNote(noteId) {
 function veledaStartEdit(noteId) {
   if (!veledaUserCanEdit()) return;
   state.veledaEditingId = noteId;
-  renderApp();
+  render();
   setTimeout(() => {
     const ta = document.querySelector('.veleda-note-editing textarea');
     if (ta) {
@@ -831,7 +831,7 @@ function veledaStartEdit(noteId) {
 
 function veledaCancelEdit() {
   state.veledaEditingId = null;
-  renderApp();
+  render();
 }
 
 function veledaOnInlineEditKey(event, noteId) {
@@ -867,7 +867,7 @@ async function veledaSaveEdit(noteId) {
     if (!res.ok) throw new Error(data.error || 'Erreur de modification');
     if (note) note.content = newContent;
     state.veledaEditingId = null;
-    renderApp();
+    render();
   } catch (e) {
     alert(e.message || 'Erreur inconnue');
   }
@@ -883,7 +883,7 @@ async function veledaChangeNoteColor(noteId, color) {
   // MAJ optimiste
   const prevColor = note.color;
   note.color = color;
-  renderApp();
+  render();
   setTimeout(() => {
     const ta = document.querySelector('.veleda-note-editing textarea');
     if (ta) ta.focus();
@@ -901,7 +901,7 @@ async function veledaChangeNoteColor(noteId, color) {
   } catch (e) {
     // Rollback
     note.color = prevColor;
-    renderApp();
+    render();
     alert(e.message || 'Erreur inconnue');
   }
 }

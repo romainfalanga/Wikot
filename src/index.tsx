@@ -5959,6 +5959,39 @@ app.get('*', (c) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Wikot - Gestion des procédures hôtelières</title>
+
+  <!-- === PERF : preconnect aux CDN externes pour gagner le DNS + TLS avant les requêtes === -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://cdn.tailwindcss.com">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+
+  <!-- === CSS CRITIQUE INLINE : la page a sa couleur et son squelette dès la 1ère frame === -->
+  <!-- (ces styles s'appliquent AVANT Tailwind, AVANT les fonts, AVANT les modules JS) -->
+  <style>
+    html, body { margin: 0; padding: 0; background-color: #FAF8F5; color: #0A1628; min-height: 100vh; -webkit-font-smoothing: antialiased; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    #app:empty::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: #FAF8F5;
+      display: flex; align-items: center; justify-content: center;
+    }
+    /* Splash screen : visible dès la 1ère frame, masqué dès que #app reçoit du contenu */
+    .wikot-splash { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #FAF8F5; z-index: 9999; transition: opacity 0.3s ease; }
+    .wikot-splash.hidden { opacity: 0; pointer-events: none; }
+    .wikot-splash-logo { width: 56px; height: 56px; border-radius: 14px; background: #0A1628; color: #C9A961; display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; box-shadow: 0 8px 24px rgba(10,22,40,0.12); margin-bottom: 18px; font-family: Georgia, serif; }
+    .wikot-splash-title { font-size: 14px; font-weight: 600; color: #0A1628; letter-spacing: -0.01em; margin-bottom: 16px; }
+    .wikot-splash-dots { display: flex; gap: 6px; }
+    .wikot-splash-dots span { width: 6px; height: 6px; border-radius: 50%; background: #C9A961; animation: wikot-splash-pulse 1.2s ease-in-out infinite; }
+    .wikot-splash-dots span:nth-child(2) { animation-delay: 0.15s; }
+    .wikot-splash-dots span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes wikot-splash-pulse { 0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
+  </style>
+
+  <!-- === FONTS : preload non-bloquant (au lieu de @import dans <style> qui bloque le rendu) === -->
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap" media="print" onload="this.media='all'">
+  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap"></noscript>
+
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
   <script>
@@ -5994,8 +6027,7 @@ app.get('*', (c) => {
   </script>
   <style>
     /* === POLICES — Inter (UI) + Fraunces (titres premium) === */
-    /* Une seule requête CSS pour les 2 polices, swap natif (pas de FOIT) */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap');
+    /* Chargement non-bloquant via <link> en haut du <head> (cf preload plus haut). */
     * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
     .font-display { font-family: 'Fraunces', Georgia, serif; letter-spacing: -0.01em; }
 
@@ -6404,8 +6436,16 @@ app.get('*', (c) => {
     }
   </style>
 </head>
-<body class="min-h-screen" style="background-color: var(--c-cream); color: var(--c-navy);">
+<body class="min-h-screen" style="background-color: #FAF8F5; color: #0A1628;">
+  <!-- Splash screen visible AVANT que le JS s'exécute (zéro page blanche) -->
+  <div id="wikot-splash" class="wikot-splash">
+    <div class="wikot-splash-logo">W</div>
+    <div class="wikot-splash-title">Wikot</div>
+    <div class="wikot-splash-dots"><span></span><span></span><span></span></div>
+  </div>
+
   <div id="app"></div>
+
   <!-- Frontend découpé en 9 modules (scope global partagé). Chargement en cascade dans l'ordre des dépendances. -->
   <script src="/static/modules/01-core.js"></script>
   <script src="/static/modules/02-auth.js"></script>
@@ -6415,6 +6455,29 @@ app.get('*', (c) => {
   <script src="/static/modules/06-wikot.js"></script>
   <script src="/static/modules/08-tasks.js"></script>
   <script src="/static/modules/07-chat-modals.js"></script>
+
+  <!-- Masquage du splash dès que #app contient quelque chose (= render() a tourné) -->
+  <script>
+    (function() {
+      var splash = document.getElementById('wikot-splash');
+      var app = document.getElementById('app');
+      if (!splash || !app) return;
+      function hideSplash() {
+        splash.classList.add('hidden');
+        setTimeout(function() { splash.remove(); }, 350);
+      }
+      // Observe le #app : dès qu'il reçoit du contenu, on masque le splash.
+      var observer = new MutationObserver(function() {
+        if (app.children.length > 0 || app.textContent.trim().length > 0) {
+          observer.disconnect();
+          hideSplash();
+        }
+      });
+      observer.observe(app, { childList: true, subtree: false });
+      // Filet de sécurité : si jamais rien n'arrive en 8s, on masque quand même.
+      setTimeout(function() { observer.disconnect(); hideSplash(); }, 8000);
+    })();
+  </script>
 </body>
 </html>`)
 })

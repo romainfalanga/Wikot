@@ -265,3 +265,287 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
     height: calc(100vh - 2rem);
   }
 }
+
+/* =========================================================
+   TABLEAU VELEDA — Vrai whiteboard avec feutres
+   ========================================================= */
+
+/* Fond du tableau : blanc cassé legerement texture (bruit subtil + reflets) */
+.veleda-board {
+  position: relative;
+  background-color: #FAFAF7;
+  background-image:
+    /* Reflet diagonal subtil */
+    linear-gradient(135deg, rgba(255,255,255,0.6) 0%, rgba(240,240,235,0.3) 50%, rgba(255,255,255,0.5) 100%),
+    /* Texture pointillee tres legere */
+    radial-gradient(circle at 1px 1px, rgba(0,0,0,0.025) 1px, transparent 0);
+  background-size: 100% 100%, 8px 8px;
+  border: 8px solid #C5CDD4;
+  border-radius: 12px;
+  box-shadow:
+    inset 0 0 60px rgba(0,0,0,0.04),
+    inset 0 2px 8px rgba(0,0,0,0.06),
+    0 8px 24px rgba(0,0,0,0.12),
+    0 2px 4px rgba(0,0,0,0.08);
+  padding: 40px 32px;
+  min-height: 600px;
+  overflow: hidden;
+}
+
+/* Cadre metallique du tableau : reflet sur les bords */
+.veleda-board::before {
+  content: '';
+  position: absolute;
+  top: -8px; left: -8px; right: -8px; bottom: -8px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #DDE2E7 0%, #B0B8C0 25%, #DDE2E7 50%, #9DA5AD 75%, #C5CDD4 100%);
+  z-index: -1;
+}
+
+/* Petits trous de fixation aux 4 coins (rivets) */
+.veleda-rivet {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: radial-gradient(circle at 30% 30%, #8A929A, #4A5158);
+  border-radius: 50%;
+  box-shadow:
+    inset 0 1px 2px rgba(0,0,0,0.4),
+    0 1px 2px rgba(0,0,0,0.3);
+  z-index: 2;
+}
+.veleda-rivet.tl { top: 8px; left: 8px; }
+.veleda-rivet.tr { top: 8px; right: 8px; }
+.veleda-rivet.bl { bottom: 8px; left: 8px; }
+.veleda-rivet.br { bottom: 8px; right: 8px; }
+
+/* Grille des notes */
+.veleda-notes-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 28px 24px;
+  align-items: start;
+}
+
+/* Une note sur le tableau (effet feutre manuscrit) */
+.veleda-note {
+  position: relative;
+  padding: 8px 10px 28px 10px;
+  font-family: 'Kalam', 'Caveat', 'Permanent Marker', cursive;
+  font-weight: 700;
+  font-size: 1.35rem;
+  line-height: 1.4;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  transition: transform 0.2s ease;
+  cursor: default;
+  /* Effet "trace de feutre" subtil derriere le texte */
+  text-shadow: 0 0 1px rgba(0,0,0,0.03);
+}
+
+/* Survol : la note se redresse legerement + agrandit, le bouton effaceur apparait */
+.veleda-note:hover {
+  transform: rotate(0deg) scale(1.04) !important;
+  z-index: 5;
+}
+.veleda-note:hover .veleda-eraser {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* Couleurs de feutre (aleatoires via .veleda-ink-X) */
+.veleda-ink-black { color: #1A1A1A; }
+.veleda-ink-blue  { color: #1E3A8A; }
+.veleda-ink-red   { color: #B91C1C; }
+.veleda-ink-green { color: #15803D; }
+
+/* Petite mention discrete en bas de chaque note : expiration + auteur */
+.veleda-meta {
+  font-family: 'Caveat', cursive;
+  font-weight: 500;
+  font-size: 0.85rem;
+  color: rgba(0,0,0,0.45);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-style: italic;
+}
+
+/* Indicateur d'urgence (petit cercle de couleur a cote de l'expiration) */
+.veleda-urgency-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.veleda-urgency-dot.red    { background: #DC2626; box-shadow: 0 0 6px rgba(220,38,38,0.5); animation: veleda-pulse 1.5s ease-in-out infinite; }
+.veleda-urgency-dot.amber  { background: #D97706; }
+.veleda-urgency-dot.green  { background: #16A34A; }
+
+@keyframes veleda-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/* Bouton effaceur (apparait au survol) */
+.veleda-eraser {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #FFB6C1 0%, #FF6B7A 100%);
+  border: 2px solid #fff;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.7);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  font-size: 12px;
+  color: white;
+  z-index: 6;
+}
+.veleda-eraser:hover {
+  background: linear-gradient(135deg, #FF6B7A 0%, #DC2626 100%);
+  transform: scale(1.1) !important;
+}
+
+/* === ZONE DE SAISIE EN HAUT DU TABLEAU === */
+.veleda-write-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 32px;
+  padding: 20px 22px;
+  background: rgba(255,255,255,0.7);
+  border: 2px dashed rgba(0,0,0,0.15);
+  border-radius: 10px;
+  backdrop-filter: blur(2px);
+}
+
+.veleda-write-input {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: 'Kalam', cursive;
+  font-weight: 700;
+  font-size: 1.4rem;
+  line-height: 1.4;
+  color: #1A1A1A;
+  resize: none;
+  padding: 8px 4px;
+  border-bottom: 2px solid rgba(0,0,0,0.12);
+}
+.veleda-write-input::placeholder {
+  color: rgba(0,0,0,0.3);
+  font-style: italic;
+  font-weight: 400;
+}
+.veleda-write-input:focus {
+  border-bottom-color: rgba(0,0,0,0.4);
+}
+
+.veleda-duration-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.veleda-duration-btn {
+  font-family: 'Caveat', cursive;
+  font-weight: 600;
+  font-size: 1.05rem;
+  padding: 4px 14px;
+  background: rgba(255,255,255,0.85);
+  border: 1.5px solid rgba(0,0,0,0.15);
+  border-radius: 18px;
+  cursor: pointer;
+  color: #1A1A1A;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.veleda-duration-btn:hover {
+  background: #1A1A1A;
+  color: #fff;
+  border-color: #1A1A1A;
+  transform: translateY(-1px);
+}
+.veleda-duration-btn.active {
+  background: #1A1A1A;
+  color: #fff;
+  border-color: #1A1A1A;
+}
+
+.veleda-write-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.veleda-write-hint {
+  font-family: 'Caveat', cursive;
+  font-size: 0.95rem;
+  color: rgba(0,0,0,0.45);
+  font-style: italic;
+}
+
+.veleda-write-submit {
+  font-family: 'Kalam', cursive;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 8px 22px;
+  background: #1A1A1A;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.veleda-write-submit:hover {
+  background: #000;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+.veleda-write-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Etat vide */
+.veleda-empty {
+  text-align: center;
+  padding: 60px 20px;
+  font-family: 'Caveat', cursive;
+  font-size: 1.6rem;
+  color: rgba(0,0,0,0.35);
+  font-style: italic;
+}
+
+/* Titre de la page (au dessus du tableau) - petite craie */
+.veleda-page-title {
+  font-family: 'Permanent Marker', cursive;
+  font-size: 2rem;
+  color: var(--c-navy, #0A1628);
+  margin-bottom: 8px;
+  letter-spacing: 0.5px;
+}
+.veleda-page-subtitle {
+  font-family: 'Caveat', cursive;
+  font-size: 1.15rem;
+  color: rgba(0,0,0,0.5);
+  margin-bottom: 24px;
+  font-style: italic;
+}

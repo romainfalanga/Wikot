@@ -891,3 +891,548 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   margin-bottom: 24px;
   font-style: italic;
 }
+
+/* =========================================================
+   TABLEAU VELEDA — V2 : tableau plein ecran + FABs + modales
+   ========================================================= */
+
+/* Conteneur global de la page Veleda (full width pour tableau en grand) */
+.veleda-page {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+}
+
+.veleda-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.veleda-readonly-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'Caveat', cursive;
+  font-size: 1rem;
+  color: rgba(0,0,0,0.55);
+  background: rgba(15,27,40,0.06);
+  border: 1px solid rgba(15,27,40,0.1);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-style: italic;
+}
+
+/* Le tableau en GRAND : prend toute la hauteur disponible de la viewport */
+.veleda-board-large {
+  min-height: calc(100vh - 180px);
+  height: calc(100vh - 180px);
+  padding: 40px 32px;
+  overflow: auto;
+  position: relative;
+}
+
+/* === FABs (Floating Action Buttons) sur le tableau === */
+.veleda-fab {
+  position: absolute;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  font-family: 'Kalam', cursive;
+  font-weight: 700;
+  font-size: 1.05rem;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.1);
+  transition: all 0.18s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+.veleda-fab i {
+  font-size: 1.1rem;
+}
+.veleda-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgba(0,0,0,0.22), 0 4px 8px rgba(0,0,0,0.12);
+}
+.veleda-fab:active {
+  transform: translateY(0);
+}
+
+/* FAB "Ecrire" : haut-droite */
+.veleda-fab-write {
+  top: 20px;
+  right: 20px;
+  background: linear-gradient(135deg, #1A1A1A 0%, #2C2C2C 100%);
+  color: #fff;
+}
+.veleda-fab-write:hover {
+  background: linear-gradient(135deg, #2C2C2C 0%, #000 100%);
+}
+
+/* FAB "Legende" : bas-droite */
+.veleda-fab-legend {
+  bottom: 20px;
+  right: 20px;
+  background: linear-gradient(135deg, #C9A961 0%, #B38E3F 100%);
+  color: #fff;
+}
+.veleda-fab-legend:hover {
+  background: linear-gradient(135deg, #B38E3F 0%, #8F6D2A 100%);
+}
+
+/* === MODALES (overlay + carte centree) === */
+.veleda-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15,27,40,0.55);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+  animation: veleda-fade-in 0.18s ease;
+}
+@keyframes veleda-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.veleda-modal {
+  background: #fff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 520px;
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.35);
+  animation: veleda-pop-in 0.22s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  overflow: hidden;
+}
+.veleda-modal-wide {
+  max-width: 720px;
+}
+@keyframes veleda-pop-in {
+  from { opacity: 0; transform: scale(0.95) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.veleda-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+.veleda-modal-header h3 {
+  font-family: 'Permanent Marker', cursive;
+  font-size: 1.4rem;
+  color: #0A1628;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: 0.3px;
+}
+.veleda-modal-close {
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: rgba(0,0,0,0.05);
+  color: rgba(0,0,0,0.5);
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.veleda-modal-close:hover {
+  background: rgba(0,0,0,0.12);
+  color: rgba(0,0,0,0.8);
+}
+
+.veleda-modal-body {
+  padding: 20px 22px;
+  overflow-y: auto;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.veleda-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid rgba(0,0,0,0.08);
+  background: rgba(250,250,247,0.6);
+}
+.veleda-modal-btn {
+  font-family: 'Kalam', cursive;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 9px 22px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.15s ease;
+}
+.veleda-modal-cancel {
+  background: rgba(0,0,0,0.06);
+  color: rgba(0,0,0,0.7);
+}
+.veleda-modal-cancel:hover {
+  background: rgba(0,0,0,0.12);
+}
+.veleda-modal-submit {
+  background: #1A1A1A;
+  color: #fff;
+}
+.veleda-modal-submit:hover {
+  background: #000;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+.veleda-modal-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* === Champs du formulaire dans la modale "Ecrire" === */
+.veleda-field-label {
+  font-family: 'Caveat', cursive;
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: rgba(0,0,0,0.7);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.veleda-field-hint {
+  font-size: 0.9rem;
+  color: rgba(0,0,0,0.4);
+  font-style: italic;
+  margin-left: 4px;
+}
+
+.veleda-write-input-modal {
+  width: 100%;
+  min-height: 90px;
+  background: #FAFAF7;
+  border: 1.5px dashed rgba(0,0,0,0.15);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-family: 'Kalam', cursive;
+  font-weight: 700;
+  font-size: 1.3rem;
+  line-height: 1.4;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.veleda-write-input-modal:focus {
+  border-color: rgba(0,0,0,0.4);
+  background: #fff;
+}
+.veleda-write-input-modal::placeholder {
+  color: rgba(0,0,0,0.3);
+  font-style: italic;
+  font-weight: 400;
+}
+
+/* Selecteur de couleurs (3 boutons : vert / noir / rouge) */
+.veleda-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.veleda-color-pick {
+  flex: 1;
+  min-width: 130px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #fff;
+  border: 2px solid rgba(0,0,0,0.12);
+  border-radius: 10px;
+  font-family: 'Kalam', cursive;
+  font-weight: 700;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: rgba(0,0,0,0.7);
+}
+.veleda-color-pick:hover {
+  border-color: rgba(0,0,0,0.35);
+  background: #FAFAF7;
+}
+.veleda-color-pick.active {
+  border-width: 2.5px;
+  background: rgba(201,169,97,0.08);
+}
+.veleda-color-pick.veleda-color-green.active { border-color: #15803D; color: #15803D; }
+.veleda-color-pick.veleda-color-black.active { border-color: #1A1A1A; color: #1A1A1A; }
+.veleda-color-pick.veleda-color-red.active   { border-color: #B91C1C; color: #B91C1C; }
+.veleda-color-pick i {
+  margin-left: auto;
+}
+.veleda-color-dot {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.25), 0 0 0 1.5px rgba(255,255,255,0.8);
+  flex-shrink: 0;
+}
+.veleda-color-label {
+  flex: 1;
+  text-align: left;
+}
+
+/* Selecteur de couleurs mini (mode edition inline) */
+.veleda-inline-color-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+.veleda-color-pick-mini {
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(0,0,0,0.12);
+  background: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+.veleda-color-pick-mini:hover {
+  transform: scale(1.1);
+  border-color: rgba(0,0,0,0.3);
+}
+.veleda-color-pick-mini.active {
+  border-width: 2.5px;
+  transform: scale(1.1);
+}
+.veleda-color-pick-mini.veleda-color-green.active { border-color: #15803D; }
+.veleda-color-pick-mini.veleda-color-black.active { border-color: #1A1A1A; }
+.veleda-color-pick-mini.veleda-color-red.active   { border-color: #B91C1C; }
+.veleda-color-pick-mini .veleda-color-dot {
+  width: 14px;
+  height: 14px;
+}
+
+/* === Modale "Legende" : liste des users + emoji picker === */
+.veleda-legend-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.veleda-legend-section + .veleda-legend-section {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(0,0,0,0.08);
+}
+.veleda-legend-title {
+  font-family: 'Permanent Marker', cursive;
+  font-size: 1.05rem;
+  color: #0A1628;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  letter-spacing: 0.3px;
+}
+.veleda-legend-current {
+  font-size: 1.5rem;
+  line-height: 1;
+}
+.veleda-legend-subtitle {
+  font-family: 'Caveat', cursive;
+  font-size: 1rem;
+  color: rgba(0,0,0,0.5);
+  margin: 0;
+  font-style: italic;
+}
+
+.veleda-legend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #FAFAF7;
+  border-radius: 10px;
+  padding: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.veleda-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: #fff;
+  border-radius: 8px;
+  border: 1px solid rgba(0,0,0,0.06);
+  font-family: 'Kalam', cursive;
+  font-size: 1.05rem;
+}
+.veleda-legend-emoji {
+  font-size: 1.4rem;
+  line-height: 1;
+  width: 28px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.veleda-legend-name {
+  flex: 1;
+  color: #1A1A1A;
+  font-weight: 600;
+}
+.veleda-legend-badge {
+  font-size: 0.75rem;
+  font-family: 'Inter', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  background: #C9A961;
+  color: #fff;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.veleda-legend-you {
+  font-size: 0.8rem;
+  font-family: 'Caveat', cursive;
+  font-style: italic;
+  color: rgba(0,0,0,0.5);
+}
+.veleda-legend-loading,
+.veleda-legend-empty {
+  text-align: center;
+  padding: 24px;
+  font-family: 'Caveat', cursive;
+  font-size: 1.1rem;
+  color: rgba(0,0,0,0.5);
+  font-style: italic;
+}
+
+/* Picker d'emojis : grille de 50 boutons */
+.veleda-emoji-picker {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 6px;
+  background: #FAFAF7;
+  border-radius: 10px;
+  padding: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+@media (max-width: 600px) {
+  .veleda-emoji-picker {
+    grid-template-columns: repeat(7, 1fr);
+  }
+}
+.veleda-emoji-pick {
+  background: #fff;
+  border: 1.5px solid rgba(0,0,0,0.08);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 1.4rem;
+  line-height: 1;
+  padding: 8px 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s ease;
+  aspect-ratio: 1;
+}
+.veleda-emoji-pick:hover {
+  transform: scale(1.15);
+  border-color: rgba(0,0,0,0.3);
+  background: #FFF8E7;
+  z-index: 2;
+}
+.veleda-emoji-pick.active {
+  border-color: #C9A961;
+  border-width: 2.5px;
+  background: rgba(201,169,97,0.12);
+  transform: scale(1.1);
+}
+.veleda-emoji-clear {
+  align-self: flex-start;
+  margin-top: 6px;
+  font-family: 'Caveat', cursive;
+  font-size: 0.95rem;
+  padding: 5px 12px;
+  background: rgba(220,38,38,0.08);
+  color: #B91C1C;
+  border: 1px solid rgba(220,38,38,0.2);
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+.veleda-emoji-clear:hover {
+  background: rgba(220,38,38,0.18);
+}
+
+/* === Emoji de l'auteur sur la note === */
+.veleda-note-author-emoji {
+  position: absolute;
+  bottom: -10px;
+  left: -10px;
+  width: 32px;
+  height: 32px;
+  background: #fff;
+  border: 2px solid rgba(0,0,0,0.1);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05rem;
+  line-height: 1;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  z-index: 4;
+  pointer-events: auto;
+  user-select: none;
+}
+
+/* Responsive : sur petit ecran, le tableau prend toute la place */
+@media (max-width: 768px) {
+  .veleda-board-large {
+    min-height: calc(100vh - 140px);
+    height: calc(100vh - 140px);
+    padding: 24px 16px;
+  }
+  .veleda-fab {
+    padding: 10px 16px;
+    font-size: 0.95rem;
+  }
+  .veleda-fab span {
+    display: none;
+  }
+  .veleda-fab-write,
+  .veleda-fab-legend {
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    justify-content: center;
+  }
+}

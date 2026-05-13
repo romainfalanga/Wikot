@@ -20,6 +20,7 @@ type WikotUser = {
   can_create_tasks: number
   can_assign_tasks: number
   can_use_veleda: number
+  emoji: string | null
 }
 
 type Variables = {
@@ -294,6 +295,7 @@ const authMiddleware = async (c: any, next: any) => {
            u.can_edit_settings,
            u.can_create_tasks, u.can_assign_tasks,
            u.can_use_veleda,
+           u.emoji,
            u.is_active
     FROM user_sessions s
     JOIN users u ON s.user_id = u.id
@@ -320,6 +322,7 @@ const authMiddleware = async (c: any, next: any) => {
     can_manage_chat: row.can_manage_chat, can_edit_settings: row.can_edit_settings,
     can_create_tasks: row.can_create_tasks, can_assign_tasks: row.can_assign_tasks,
     can_use_veleda: row.can_use_veleda,
+    emoji: row.emoji,
     is_active: row.is_active
   })
   await next()
@@ -350,6 +353,7 @@ app.post('/api/auth/login', async (c) => {
            can_edit_settings,
            can_create_tasks, can_assign_tasks,
            can_use_veleda,
+           emoji,
            password_hash, password_hash_v2, password_salt, password_algo
     FROM users WHERE LOWER(email) = ? AND is_active = 1
   `).bind(emailKey).first() as any
@@ -402,7 +406,8 @@ app.post('/api/auth/login', async (c) => {
       can_edit_procedures: user.can_edit_procedures, can_edit_info: user.can_edit_info,
       can_manage_chat: user.can_manage_chat, can_edit_settings: user.can_edit_settings,
       can_create_tasks: user.can_create_tasks, can_assign_tasks: user.can_assign_tasks,
-      can_use_veleda: user.can_use_veleda
+      can_use_veleda: user.can_use_veleda,
+      emoji: user.emoji
     }
   })
 })
@@ -626,9 +631,9 @@ app.get('/api/users', authMiddleware, async (c) => {
   let users
   if (user.role === 'super_admin') {
     // PERF: LIMIT 2000 — table globale qui peut grossir avec tous les hôtels
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name LIMIT 2000').all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.emoji, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name LIMIT 2000').all()
   } else if (user.role === 'admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name LIMIT 500').bind(user.hotel_id).all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.emoji, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name LIMIT 500').bind(user.hotel_id).all()
   } else {
     return c.json({ error: 'Non autorisé' }, 403)
   }
@@ -5346,6 +5351,36 @@ const VELEDA_MAX_POS = 10000      // largeur/hauteur max du tableau
 const VELEDA_MIN_SIZE = 80        // taille minimale d'une note (sinon illisible)
 const VELEDA_MAX_SIZE = 2000      // taille max
 
+// Couleurs autorisées pour l'importance d'une note (whitelist serveur, anti-XSS et anti-typo)
+//  green = info peu importante
+//  black = info intermediaire (defaut)
+//  red   = info capitale
+const VELEDA_ALLOWED_COLORS = ['green', 'black', 'red'] as const
+type VeledaColor = typeof VELEDA_ALLOWED_COLORS[number]
+function isValidVeledaColor(v: any): v is VeledaColor {
+  return typeof v === 'string' && (VELEDA_ALLOWED_COLORS as readonly string[]).includes(v)
+}
+
+// Banque de 50 emote-icones autorisés (whitelist serveur — empeche n'importe quel
+// caractere Unicode farfelu d'etre stocke). Formes/symboles simples, sobres,
+// utilisables comme "signature visuelle" de chaque utilisateur.
+const VELEDA_EMOJI_BANK = [
+  // Etoiles
+  '⭐','🌟','✨','💫','⚡',
+  // Formes geometriques pleines (couleurs)
+  '🔴','🟠','🟡','🟢','🔵','🟣','🟤','⚫','⚪',
+  '🟥','🟧','🟨','🟩','🟦','🟪','🟫','⬛','⬜',
+  // Formes geometriques unicode
+  '◆','◇','▲','△','▼','▽','■','□','●','○',
+  // Coeurs / symboles
+  '❤️','🧡','💛','💚','💙','💜','🖤','🤍','🤎',
+  // Animaux mini
+  '🐱','🐶','🦊','🐻','🐼','🐯','🦁'
+]
+function isValidVeledaEmoji(v: any): boolean {
+  return typeof v === 'string' && VELEDA_EMOJI_BANK.includes(v)
+}
+
 // Helper : valide un entier optionnel dans une plage donnée. Retourne :
 //  - { ok: true, value: number|null }  si valide (null = non fourni)
 //  - { ok: false, error: string }      si invalide
@@ -5382,19 +5417,62 @@ app.get('/api/veleda-notes', authMiddleware, async (c) => {
   // Cleanup lazy : on supprime les notes expirées avant de lister
   await cleanupExpiredVeledaNotes(c.env.DB, user.hotel_id)
 
+  // On joint l'emoji de l'auteur pour afficher sa "signature visuelle" sur chaque note.
+  // LEFT JOIN car l'auteur peut avoir été supprimé entre-temps (la note reste).
   const rows = await c.env.DB.prepare(
-    `SELECT id, title, content, expires_at, created_by, created_by_name, created_at, updated_at,
-            pos_x, pos_y, width, height
-     FROM veleda_notes
-     WHERE hotel_id = ?
-     ORDER BY expires_at ASC, id DESC
+    `SELECT n.id, n.title, n.content, n.expires_at, n.created_by, n.created_by_name,
+            n.created_at, n.updated_at,
+            n.pos_x, n.pos_y, n.width, n.height, n.color,
+            u.emoji as author_emoji
+     FROM veleda_notes n
+     LEFT JOIN users u ON n.created_by = u.id
+     WHERE n.hotel_id = ?
+     ORDER BY n.expires_at ASC, n.id DESC
      LIMIT 200`
   ).bind(user.hotel_id).all()
 
   return c.json({
     notes: rows.results || [],
-    me: { id: user.id, role: user.role, can_use_veleda: canUseVeleda(user) ? 1 : 0 }
+    me: {
+      id: user.id, role: user.role,
+      can_use_veleda: canUseVeleda(user) ? 1 : 0,
+      emoji: user.emoji
+    }
   })
+})
+
+// GET /api/veleda-legend — légende : tous les users de l'hôtel avec leur emoji
+// Sert à afficher "qui est qui" sur le tableau Véléda.
+app.get('/api/veleda-legend', authMiddleware, async (c) => {
+  const user = c.get('user')
+  if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  const rows = await c.env.DB.prepare(
+    `SELECT id, name, role, emoji
+     FROM users
+     WHERE hotel_id = ? AND is_active = 1
+     ORDER BY name`
+  ).bind(user.hotel_id).all()
+  return c.json({
+    users: rows.results || [],
+    me: { id: user.id, emoji: user.emoji }
+  })
+})
+
+// PUT /api/me/emoji — change SON propre emoji parmi la banque autorisée
+// Chaque user (admin, employee...) peut choisir/changer son icône à tout moment.
+app.put('/api/me/emoji', authMiddleware, async (c) => {
+  const user = c.get('user')
+  const body = await c.req.json().catch(() => ({})) as { emoji?: string | null }
+  // null = retire son emoji (revient à "non défini")
+  if (body.emoji === null || body.emoji === undefined || body.emoji === '') {
+    await c.env.DB.prepare('UPDATE users SET emoji = NULL WHERE id = ?').bind(user.id).run()
+    return c.json({ success: true, emoji: null })
+  }
+  if (!isValidVeledaEmoji(body.emoji)) {
+    return c.json({ error: 'Emoji non autorisé' }, 400)
+  }
+  await c.env.DB.prepare('UPDATE users SET emoji = ? WHERE id = ?').bind(body.emoji, user.id).run()
+  return c.json({ success: true, emoji: body.emoji })
 })
 
 // POST /api/veleda-notes — crée une nouvelle note
@@ -5444,6 +5522,15 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
   const heightV = validateOptionalInt(body.height, VELEDA_MIN_SIZE, VELEDA_MAX_SIZE, 'height')
   if (!heightV.ok) return c.json({ error: heightV.error }, 400)
 
+  // Couleur (importance) — whitelist serveur, défaut 'black'
+  let color: VeledaColor = 'black'
+  if (body.color !== undefined && body.color !== null && body.color !== '') {
+    if (!isValidVeledaColor(body.color)) {
+      return c.json({ error: 'Couleur non autorisée (green, black, red)' }, 400)
+    }
+    color = body.color
+  }
+
   // Cleanup avant insertion (libère des slots si nécessaire)
   await cleanupExpiredVeledaNotes(c.env.DB, user.hotel_id)
 
@@ -5456,8 +5543,8 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
   }
 
   const result = await c.env.DB.prepare(
-    `INSERT INTO veleda_notes (hotel_id, title, content, expires_at, created_by, created_by_name, pos_x, pos_y, width, height)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO veleda_notes (hotel_id, title, content, expires_at, created_by, created_by_name, pos_x, pos_y, width, height, color)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     user.hotel_id,
     title || null,
@@ -5468,7 +5555,8 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
     posXv.value,
     posYv.value,
     widthV.value,
-    heightV.value
+    heightV.value,
+    color
   ).run()
 
   return c.json({
@@ -5485,7 +5573,9 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
       pos_x: posXv.value,
       pos_y: posYv.value,
       width: widthV.value,
-      height: heightV.value
+      height: heightV.value,
+      color,
+      author_emoji: user.emoji
     }
   })
 })
@@ -5566,6 +5656,15 @@ app.put('/api/veleda-notes/:id', authMiddleware, async (c) => {
     if (!v.ok) return c.json({ error: v.error }, 400)
     fields.push('height = ?')
     values.push(v.value)
+  }
+
+  // Couleur (importance) — whitelist
+  if (body.color !== undefined) {
+    if (!isValidVeledaColor(body.color)) {
+      return c.json({ error: 'Couleur non autorisée (green, black, red)' }, 400)
+    }
+    fields.push('color = ?')
+    values.push(body.color)
   }
 
   if (fields.length === 0) return c.json({ error: 'Aucune modification' }, 400)

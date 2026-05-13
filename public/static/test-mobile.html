@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Test Mobile Layout</title>
+<link rel="stylesheet" href="/static/tailwind.css">
+<link rel="stylesheet" href="/static/style.css">
+<style>
+  body { margin:0; }
+  .sidebar-premium { background: navy; color: white; }
+  .debug-info { position: fixed; bottom: 0; left: 0; right: 0; background: yellow; padding: 8px; font: 11px monospace; z-index: 9999; }
+</style>
+</head>
+<body>
+<div id="sidebar-overlay" class="app-sidebar-overlay"></div>
+<div class="app-shell-row">
+  <aside id="main-sidebar" class="sidebar-premium app-sidebar">
+    <div style="padding:20px">SIDEBAR<br>Si tu vois ce texte sur mobile sans clic, le bug est ici</div>
+  </aside>
+  <main class="app-main" style="background: lightblue;">
+    <div style="padding:20px">
+      <h1>CONTENU PRINCIPAL</h1>
+      <p>Si je suis décalé à droite, on a un bug.</p>
+      <p>Si je suis collé à gauche, c'est bon.</p>
+    </div>
+  </main>
+</div>
+<div class="debug-info" id="debug"></div>
+<script>
+  function refresh(){
+    const sb = document.getElementById('main-sidebar');
+    const main = document.querySelector('.app-main');
+    const row = document.querySelector('.app-shell-row');
+    const sbCS = getComputedStyle(sb);
+    const mainCS = getComputedStyle(main);
+    document.getElementById('debug').innerHTML = 
+      'viewport: ' + window.innerWidth + 'x' + window.innerHeight + '<br>' +
+      'SIDEBAR: pos=' + sbCS.position + ' | transform=' + sbCS.transform + ' | left=' + sb.getBoundingClientRect().left + 'px | w=' + sb.getBoundingClientRect().width + 'px<br>' +
+      'MAIN: left=' + main.getBoundingClientRect().left + 'px | w=' + main.getBoundingClientRect().width + 'px<br>' +
+      'ROW: w=' + row.getBoundingClientRect().width + 'px';
+  }
+  refresh();
+  window.addEventListener('resize', refresh);
+</script>
+</body>
+</html>

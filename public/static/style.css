@@ -13,12 +13,30 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   width: 100%;
 }
 
-/* Main : prend tout l'espace restant. CRUCIAL : min-width: 0 pour
-   éviter que des enfants larges (tables, code) le fassent déborder. */
+/* Main : prend tout l'espace restant. CRUCIAL :
+   - min-width: 0   → empêche un enfant large de pousser le main
+   - width: 100%    → en mobile, force le main à occuper exactement le viewport
+                       même quand la sidebar est en position:fixed (sortie du flux flex)
+   - overflow-x: hidden → coupe tout débordement horizontal d'un enfant rebelle */
 .app-main {
   flex: 1 1 0%;
   min-width: 0;
   min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* En mobile : on neutralise tout mx-auto + max-w-7xl qui centrerait
+   le contenu dans une zone élargie et le décalerait à droite.
+   Le conteneur de contenu doit être 100% du viewport, marges nulles. */
+@media (max-width: 1023px) {
+  .app-main > #main-content-container {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
 }
 
 /* === SIDEBAR ===

@@ -3255,3 +3255,151 @@ main.app-main:has(.veleda-fullpage) {
   }
   .veleda-modal-header h3 { font-size: 1.3rem; }
 }
+
+/* =========================================================
+   TABLEAU VELEDA — V10 : CORRECTIF FINAL (override ultime)
+   Plusieurs versions de .veleda-note s'etaient empilees au
+   fil des iterations (V1 a V9), creant des conflits de
+   padding, min-height, box-shadow, cadres invisibles, etc.
+   Ce bloc final remet TOUT au propre en derniere position
+   de la cascade, avec une specificite suffisante pour
+   battre les anciennes regles sans !important sauf necessite.
+   ========================================================= */
+
+/* ----- NOTE EN MODE NORMAL : hitbox = texte exact ----- */
+.veleda-board-fullpage .veleda-note,
+.veleda-fullpage .veleda-board-fullpage .veleda-note {
+  position: absolute;
+  /* La note epouse strictement la taille de son texte */
+  display: inline-block;
+  width: max-content;
+  min-width: 0;
+  max-width: 340px;
+  height: auto;
+  min-height: 0;
+  /* Padding lateral minimal, vertical zero (pas de zone morte) */
+  padding: 0 4px;
+  margin: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  outline: none;
+  box-shadow: none;
+  font-weight: 700;
+  font-size: 1.15rem;
+  line-height: 1.1;
+  letter-spacing: 0.2px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  cursor: default;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.6), 0 0 1px rgba(0,0,0,0.04);
+  transition: filter 0.22s ease;
+  box-sizing: border-box;
+  filter: drop-shadow(0 2px 3px rgba(15,27,40,0.08));
+}
+
+/* Hover : seulement un drop-shadow visuel, AUCUN transform
+   (qui agrandirait le bounding box et donc la hitbox) */
+.veleda-board-fullpage .veleda-note:hover {
+  filter: drop-shadow(0 6px 10px rgba(15,27,40,0.15));
+  z-index: 10;
+  transform: none !important;
+}
+
+/* Contenu textuel : ligne tassee, pas de pointer-events:none
+   (sinon les click handlers du contenu ne marchent pas) */
+.veleda-board-fullpage .veleda-note .veleda-note-content {
+  display: block;
+  padding: 0;
+  margin: 0;
+  line-height: 1.1;
+  pointer-events: auto;
+  user-select: none;
+}
+
+/* ----- NOTE EN MODE INSPECT : meme hitbox que normal -----
+   Le texte garde exactement les memes dimensions. Le visuel
+   premium (fond, ombre, contour) est porte par la barrette
+   meta qui apparait sous le texte, PAS par la note elle-meme. */
+.veleda-board-fullpage .veleda-note.veleda-note-inspecting,
+.veleda-fullpage .veleda-board-fullpage .veleda-note.veleda-note-inspecting {
+  /* Hitbox identique au mode normal */
+  display: inline-block;
+  width: max-content;
+  min-width: 0;
+  max-width: 340px;
+  height: auto;
+  min-height: 0;
+  padding: 0 4px;
+  margin: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  outline: none;
+  /* On accentue juste l'ombre du drop-shadow pour signaler la selection */
+  box-shadow: none;
+  filter: drop-shadow(0 8px 18px rgba(15,27,40,0.22));
+  z-index: 40;
+}
+
+/* ----- BARRETTE META en mode INSPECT : carte premium flottante -----
+   C'est ELLE qui porte tout le visuel (fond ivoire, bordure or, ombre).
+   Posee sous le texte avec une marge negative pour deborder un poil. */
+.veleda-board-fullpage .veleda-note.veleda-note-inspecting .veleda-note-inspect-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  margin-left: -6px;
+  margin-right: -6px;
+  padding: 8px 11px 9px 11px;
+  border: 1px solid rgba(201,169,97,0.32);
+  border-radius: 9px;
+  background: linear-gradient(180deg, #FFFFFE 0%, #FBFAF6 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    0 6px 16px rgba(15,27,40,0.14);
+  font-family: 'Caveat', cursive;
+  font-size: 0.95rem;
+  color: rgba(15,27,40,0.72);
+  min-width: 200px;
+  width: max-content;
+  max-width: 320px;
+  animation: veleda-slide-down 0.2s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+}
+
+/* La meta est cachee quand on n'est pas en mode inspect */
+.veleda-board-fullpage .veleda-note:not(.veleda-note-inspecting) .veleda-note-inspect-meta {
+  display: none;
+}
+
+/* ----- NOTE EN MODE EDIT : carton premium pour la toolbar -----
+   La hitbox du textarea importe peu car on est en focus dedans. */
+.veleda-board-fullpage .veleda-note.veleda-note-editing {
+  display: block;
+  width: auto;
+  min-width: 240px;
+  max-width: 360px;
+  padding: 10px 12px 12px 12px;
+  background: #FFFEF7;
+  border-radius: 10px;
+  border: none;
+  outline: none;
+  box-shadow:
+    0 0 0 2px rgba(201,169,97,0.5),
+    0 14px 30px rgba(15,27,40,0.22),
+    inset 0 1px 0 rgba(255,255,255,0.9);
+  filter: none;
+  z-index: 50;
+}
+
+/* ----- BADGE NOTE-TABLEAU (le petit rond bleu en haut a droite) -----
+   On le repositionne pour qu'il ne deborde pas trop de la hitbox.
+   Avec pointer-events:none il n'affecte pas le click, deja OK. */
+.veleda-board-fullpage .veleda-note.veleda-note-is-board::after {
+  top: -3px;
+  right: -3px;
+  pointer-events: none;
+}
+

@@ -2259,13 +2259,12 @@ main.app-main:has(.veleda-fullpage) {
   line-height: 1.1;
 }
 
-/* Hover doux : la note "respire" */
+/* Hover doux : la note "respire" SANS agrandir la hitbox.
+   On evite tout transform au hover (qui agrandirait le bounding box
+   et provoquerait des conflits de selection entre notes proches). */
 .veleda-board-fullpage .veleda-note:hover {
   filter: drop-shadow(0 6px 10px rgba(15,27,40,0.15));
   z-index: 10;
-}
-.veleda-board-fullpage .veleda-note.veleda-note-draggable:hover {
-  transform: rotate(var(--rotate, 0deg)) translateY(-2px) scale(1.02);
 }
 
 /* En mode INSPECT : la note "sort" du tableau (toujours compacte verticalement)

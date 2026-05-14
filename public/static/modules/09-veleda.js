@@ -59,7 +59,10 @@ const VELEDA_EMOJI_BANK = [
 ];
 
 // Angles de rotation (stables par id)
-const VELEDA_ROTATIONS = [-3, -2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3];
+// Rotations minimales pour garder un cote manuscrit sans agrandir la hitbox.
+// Plus la rotation est forte, plus le bounding box (zone cliquable) deborde
+// verticalement, ce qui creait des conflits de selection entre notes proches.
+const VELEDA_ROTATIONS = [0];
 
 // Bornes pour le resize (le user peut quand meme agrandir s'il veut)
 const VELEDA_MIN_SIZE = 80;

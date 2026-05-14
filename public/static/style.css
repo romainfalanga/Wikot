@@ -3487,17 +3487,44 @@ main.app-main:has(.veleda-fullpage) {
 }
 
 /* Barre inspect : carte ivoire premium, en dehors de la hitbox.
-   V13 : revelee au HOVER du wrapper (plus de double-clic requis).
-   - cachee par defaut (opacity 0 + pointer-events none)
-   - visible quand on survole .vnote-wrap OU directement .vnote-bar
-   - petit pont de 6px (top: 100%) pour que la souris puisse glisser
-     du texte vers la barre sans la perdre */
+   V14 : revelee au HOVER avec pont physique + grace period a la fermeture.
+   STRATEGIE :
+   1) Pont physique TOUJOURS pointer-events:auto entre texte et carte
+      (pseudo-element ::before sur .vnote-bar) pour ne jamais perdre le hover
+   2) Grace period : transition-delay 250ms sur la fermeture seulement.
+      Apparition immediate, disparition retardee = tu as le temps de bouger.
+   3) Sticky : .vnote-bar:hover la garde indefiniment.
+   4) .vnote-wrap a un padding-bottom invisible pour etendre sa hitbox de
+      hover jusqu'a englober le pont physique. */
+
+/* PONT PHYSIQUE : pseudo-element ::before sur le WRAPPER.
+   (::after est deja utilise par .vnote-wrap--board pour le badge or)
+   Il etend la zone de hover du .vnote-wrap vers le bas pour englober
+   l'espace + la carte ivoire. Toujours pointer-events:auto au hover.
+   Hauteur = pont (14px) + hauteur estimee carte (~226px).
+   Largeur = largeur de la carte (220px) alignee a gauche. */
+.vnote-wrap::before {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 220px;
+  height: 240px; /* couvre largement le pont + la carte */
+  background: transparent;
+  pointer-events: none; /* desactive par defaut */
+  z-index: 1;
+}
+/* En mode hover : le pont devient cliquable -> maintient le hover du wrapper
+   pendant que la souris traverse l'espace vide vers la carte */
+.vnote-wrap:hover::before {
+  pointer-events: auto;
+}
+
 .vnote-bar {
   position: absolute;
   top: 100%;
   left: 0;
-  margin-top: 0;
-  padding-top: 16px; /* zone-pont invisible pour atteindre la barre */
+  margin-top: 14px; /* espace visuel sous le texte avant la carte */
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -3511,13 +3538,19 @@ main.app-main:has(.veleda-fullpage) {
   box-shadow: none;
   opacity: 0;
   pointer-events: none;
+  /* Apparition immediate (delay 0), disparition retardee 250ms */
   transition: opacity 0.12s ease;
+  transition-delay: 0.25s; /* applique a la fermeture */
 }
+
+/* Reveal : survol du wrapper (texte OU pont) ou survol direct de la barre */
 .vnote-wrap:hover > .vnote-bar,
 .vnote-bar:hover {
   opacity: 1;
   pointer-events: auto;
+  transition-delay: 0s; /* ouverture immediate */
 }
+
 .vnote-bar > .vnote-bar-info,
 .vnote-bar > .vnote-bar-actions {
   background: #fdf6e3;
@@ -3525,6 +3558,7 @@ main.app-main:has(.veleda-fullpage) {
   border-radius: 8px;
   padding: 8px 10px;
   box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+  pointer-events: auto;
 }
 .vnote-bar-info {
   display: flex;

@@ -304,6 +304,7 @@ function renderVeledaView() {
   if (state.veledaWriteModalOpen === undefined) state.veledaWriteModalOpen = false;
   if (state.veledaCurrentBoardId === undefined) state.veledaCurrentBoardId = null;
   if (state.veledaBreadcrumb === undefined) state.veledaBreadcrumb = [];
+  if (state.veledaJustDragged === undefined) state.veledaJustDragged = false;
 
   startVeledaPolling();
   return renderVeledaShell(state.veledaNotes || []);
@@ -574,10 +575,13 @@ function renderVeledaNote(note, me, canEdit) {
 }
 
 // Helper : sur une note-tableau, on n'ouvre le sous-tableau que si l'utilisateur
-// a vraiment fait un clic et pas un drag. On s'appuie sur le flag de drag.
+// a vraiment fait un clic et pas un drag.
+// V15 : on bloque aussi pendant la "fenetre post-drag" (veledaJustDragged)
+// car le click natif arrive APRES mouseup, quand veledaDragging est deja null.
 function veledaTryOpenBoard(event, noteId) {
   if (state.veledaDragging || state.veledaResizing) return;
-  // Si on est en mode edit / inspect sur cette note, ne pas naviguer
+  if (state.veledaJustDragged) return;
+  // Si on est en mode edit sur cette note, ne pas naviguer
   if (state.veledaEditingId === noteId) return;
   veledaOpenBoard(noteId);
 }
@@ -1112,7 +1116,25 @@ async function veledaOnDragEnd(event) {
   }
   state.veledaDragging = null;
 
-  if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+  // V15 : si l'utilisateur a vraiment deplace la note (>4px), on active
+  // une fenetre post-drag de 350ms pendant laquelle :
+  // - veledaTryOpenBoard() refuse de naviguer
+  // - un listener click en phase capture avale le tout premier clic
+  // Ca neutralise le click natif que le navigateur envoie apres mouseup
+  // (et qui ouvrait par erreur les notes-tableaux apres deplacement).
+  const wasRealDrag = Math.abs(dx) > 4 || Math.abs(dy) > 4;
+  if (wasRealDrag) {
+    state.veledaJustDragged = true;
+    const swallowClick = (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      document.removeEventListener('click', swallowClick, true);
+    };
+    document.addEventListener('click', swallowClick, true);
+    setTimeout(() => {
+      state.veledaJustDragged = false;
+      document.removeEventListener('click', swallowClick, true);
+    }, 350);
     await persistVeledaLayout(id, { pos_x: newX, pos_y: newY });
   }
 }

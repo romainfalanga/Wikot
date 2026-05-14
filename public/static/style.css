@@ -323,7 +323,18 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
 .veleda-notes-layer {
   position: relative;
   width: 100%;
-  min-height: 520px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.veleda-board-fullpage .veleda-notes-layer {
+  position: absolute;
+  top: 64px;
+  left: 32px;
+  right: 32px;
+  bottom: 36px;
+  width: auto;
+  height: auto;
 }
 
 /* Une note sur le tableau : positionnement absolu, drag & resize */
@@ -2011,24 +2022,41 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
    japonais en fond, accents or, notes masking-tape
    ========================================================= */
 
-/* ----- Fond mural derriere le tableau (papier japonais creme) ----- */
+/* ----- Fond mural derriere le tableau (papier japonais creme) -----
+   PLEIN ECRAN STRICT : aucun scroll possible, ni vertical ni horizontal */
+html:has(.veleda-fullpage),
+body:has(.veleda-fullpage) {
+  overflow: hidden !important;
+  height: 100vh !important;
+  max-height: 100vh !important;
+}
 .veleda-fullpage {
+  position: fixed;
+  top: 64px;            /* sous la nav globale */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: calc(100vh - 64px);
+  max-height: calc(100vh - 64px);
   background-color: #EFEAE2;
   background-image:
     radial-gradient(circle at 20% 20%, rgba(201,169,97,0.06) 0%, transparent 50%),
     radial-gradient(circle at 80% 70%, rgba(15,27,40,0.04) 0%, transparent 50%),
     repeating-linear-gradient(45deg, transparent 0 2px, rgba(0,0,0,0.012) 2px 3px);
   padding: 12px;
-  min-height: calc(100vh - 64px);
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-/* ----- LE TABLEAU : aluminium brosse + ivoire + texture pointillee ----- */
+/* ----- LE TABLEAU : aluminium brosse + ivoire + texture pointillee -----
+   Dimensions strictes : tient sur l'ecran sans aucun debordement */
 .veleda-board-fullpage {
   position: relative;
   margin: 0;
   width: 100%;
-  height: calc(100vh - 88px);
-  min-height: calc(100vh - 88px);
+  height: 100%;
+  max-height: 100%;
   /* Cadre alu brosse */
   border: 10px solid transparent;
   border-radius: 16px;
@@ -2047,7 +2075,8 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
     0 14px 36px rgba(15,27,40,0.18),
     0 4px 8px rgba(15,27,40,0.1);
   padding: 64px 32px 36px 32px;
-  overflow: auto;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 /* Cadre aluminium en pseudo-element */
 .veleda-board-fullpage::before {
@@ -2174,19 +2203,20 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   align-items: center;
 }
 
-/* ----- NOTES : esthetique post-it manuscrit avec masking tape ----- */
+/* ----- NOTES : esthetique post-it manuscrit avec masking tape -----
+   Bloc compact verticalement : marges haut/bas reduites au minimum */
 .veleda-board-fullpage .veleda-note {
   position: absolute;
   width: auto;
   height: auto;
   max-width: 340px;
   min-width: 40px;
-  padding: 8px 14px 10px 14px;
+  padding: 1px 10px 2px 10px;
   background: transparent;
   border: none;
   font-weight: 700;
   font-size: 1.15rem;
-  line-height: 1.25;
+  line-height: 1.15;
   letter-spacing: 0.2px;
   word-wrap: break-word;
   overflow-wrap: break-word;
@@ -2199,6 +2229,12 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   box-sizing: border-box;
   filter: drop-shadow(0 2px 3px rgba(15,27,40,0.08));
 }
+.veleda-board-fullpage .veleda-note .veleda-note-content {
+  display: block;
+  padding: 0;
+  margin: 0;
+  line-height: 1.15;
+}
 
 /* Hover doux : la note "respire" */
 .veleda-board-fullpage .veleda-note:hover {
@@ -2209,16 +2245,17 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   transform: rotate(var(--rotate, 0deg)) translateY(-2px) scale(1.02);
 }
 
-/* En mode INSPECT : la note "sort" du tableau */
+/* En mode INSPECT : la note "sort" du tableau (toujours compacte verticalement) */
 .veleda-board-fullpage .veleda-note.veleda-note-inspecting {
-  padding: 10px 14px 12px 14px;
+  padding: 4px 12px 6px 12px;
   z-index: 40;
   filter: drop-shadow(0 12px 24px rgba(15,27,40,0.25));
-  background: rgba(255,255,253,0.98);
-  border-radius: 8px;
+  background: linear-gradient(180deg, #FFFFFE 0%, #FBFAF6 100%);
+  border-radius: 10px;
   box-shadow:
-    inset 0 1px 0 rgba(255,255,255,0.8),
-    0 0 0 1px rgba(15,27,40,0.1);
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    0 0 0 1px rgba(201,169,97,0.25),
+    0 14px 30px rgba(15,27,40,0.18);
 }
 
 /* En mode EDIT : carton blanc franc avec liseré ambre */
@@ -2238,46 +2275,63 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
 .veleda-ink-green { color: #15803D; }
 .veleda-ink-red   { color: #B91C1C; }
 
-/* ----- BLOC META en mode INSPECT (slide-down doux) ----- */
+/* ----- BARRETTE INSPECT : compacte, horizontale, premium -----
+   Tres compacte : pas de marges grasses, ligne d'infos + ligne d'actions
+   posees sous le contenu de la note. */
 .veleda-note-inspect-meta {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px dashed rgba(15,27,40,0.18);
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(201,169,97,0.45);
   font-family: 'Caveat', cursive;
-  font-size: 1rem;
+  font-size: 0.92rem;
   color: rgba(15,27,40,0.7);
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  animation: veleda-slide-down 0.22s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  gap: 5px;
+  animation: veleda-slide-down 0.2s cubic-bezier(0.2, 0.9, 0.4, 1.1);
 }
 @keyframes veleda-slide-down {
-  from { opacity: 0; transform: translateY(-6px); }
+  from { opacity: 0; transform: translateY(-4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.veleda-inspect-row {
+/* Ligne d'infos compacte : urgence + echeance d'un cote, auteur de l'autre */
+.veleda-inspect-info {
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: nowrap;
+  min-height: 18px;
 }
-.veleda-inspect-emoji {
+.veleda-inspect-urgency {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #FFFFFF 0%, #F8F4EC 100%);
-  border: 1.5px solid rgba(201,169,97,0.4);
-  box-shadow: 0 2px 4px rgba(15,27,40,0.1);
+  gap: 6px;
+  font-family: 'Caveat', cursive;
   font-size: 0.95rem;
-  line-height: 1;
+  color: rgba(15,27,40,0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.veleda-inspect-expires {
+  font-style: italic;
+  letter-spacing: 0.2px;
+}
+/* Auteur : pas d'icone, juste le prenom en typo discrete (chip ivoire) */
 .veleda-inspect-author {
-  font-weight: 700;
-  color: rgba(15,27,40,0.78);
+  font-family: 'Permanent Marker', cursive;
+  font-weight: 400;
+  font-size: 0.78rem;
+  letter-spacing: 0.3px;
+  color: rgba(15,27,40,0.55);
+  padding: 1px 9px 2px 9px;
+  background: linear-gradient(135deg, #FFFFFF 0%, #F4EFE2 100%);
+  border: 1px solid rgba(201,169,97,0.3);
+  border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(15,27,40,0.04);
+  white-space: nowrap;
   font-style: normal;
 }
 
@@ -2296,71 +2350,106 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   50% { opacity: 0.55; }
 }
 
-/* ----- BOUTONS du panneau inspect ----- */
+/* ----- ACTIONS dans la barrette INSPECT -----
+   Une rangee horizontale, alignee a droite, boutons compacts ronds.
+   "Ouvrir" est un CTA premium bleu (pour les notes-tableaux). */
 .veleda-inspect-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 5px;
   justify-content: flex-end;
-  margin-top: 6px;
-  padding-top: 6px;
-  border-top: 1px dashed rgba(15,27,40,0.08);
+  align-items: center;
+  margin-top: 4px;
 }
 .veleda-inspect-btn {
-  font-family: 'Caveat', cursive;
-  font-weight: 700;
-  font-size: 0.95rem;
-  padding: 5px 12px;
-  border: 1.5px solid rgba(15,27,40,0.15);
-  background: linear-gradient(135deg, #FFFFFF 0%, #F8F4EC 100%);
-  color: #1F2937;
-  border-radius: 18px;
+  font-family: 'Permanent Marker', cursive;
+  font-weight: 400;
+  font-size: 0.78rem;
+  letter-spacing: 0.4px;
+  padding: 4px 9px;
+  min-width: 28px;
+  height: 26px;
+  border: 1px solid rgba(15,27,40,0.12);
+  background: linear-gradient(135deg, #FFFFFF 0%, #F4EFE2 100%);
+  color: rgba(15,27,40,0.7);
+  border-radius: 7px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   transition: all 0.18s cubic-bezier(0.2, 0.9, 0.4, 1.1);
-  box-shadow: 0 1px 2px rgba(15,27,40,0.06);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.9),
+    0 1px 2px rgba(15,27,40,0.06);
+}
+.veleda-inspect-btn i {
+  font-size: 0.78rem;
+  line-height: 1;
 }
 .veleda-inspect-btn:hover {
-  background: #1F2937;
-  color: #fff;
-  border-color: #1F2937;
   transform: translateY(-1px);
-  box-shadow: 0 4px 10px rgba(15,27,40,0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    0 4px 10px rgba(15,27,40,0.16);
 }
+/* Modifier : bleu encre au hover */
 .veleda-inspect-edit:hover {
   background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
   border-color: #1D4ED8;
+  color: #fff;
 }
+/* Effacer : rouge feutre au hover */
 .veleda-inspect-delete {
-  color: #B91C1C;
-  border-color: rgba(185,28,28,0.3);
+  color: rgba(185,28,28,0.85);
+  border-color: rgba(185,28,28,0.25);
 }
 .veleda-inspect-delete:hover {
   background: linear-gradient(135deg, #DC2626 0%, #991B1B 100%);
   color: #fff;
   border-color: #991B1B;
 }
+/* Ouvrir : CTA bleu premium (signature note-tableau) */
 .veleda-inspect-open {
-  background: linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%) !important;
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%) !important;
   color: #fff !important;
   border-color: #1D4ED8 !important;
-  box-shadow: 0 2px 8px rgba(37,99,235,0.3);
+  padding: 4px 11px 4px 10px !important;
+  font-size: 0.8rem !important;
+  height: 26px !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.25),
+    0 2px 6px rgba(37,99,235,0.32) !important;
+  position: relative;
+  overflow: hidden;
+}
+.veleda-inspect-open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(201,169,97,0) 0%, rgba(201,169,97,0.25) 50%, rgba(201,169,97,0) 100%);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
 }
 .veleda-inspect-open:hover {
   background: linear-gradient(135deg, #1D4ED8 0%, #1E3A8A 100%) !important;
   transform: translateY(-2px);
-  box-shadow: 0 6px 14px rgba(37,99,235,0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.3),
+    0 6px 14px rgba(37,99,235,0.45) !important;
 }
-.veleda-inspect-board-hint {
-  color: #1E40AF !important;
-  font-style: italic;
-  font-size: 0.92rem !important;
-  font-family: 'Caveat', cursive;
+.veleda-inspect-open:hover::after {
+  opacity: 1;
 }
-.veleda-inspect-board-hint i {
-  color: #2563EB;
+.veleda-inspect-open i {
+  color: #FCD34D;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.2));
+  font-size: 0.82rem !important;
+}
+.veleda-inspect-open span {
+  font-family: 'Permanent Marker', cursive;
+  letter-spacing: 0.4px;
 }
 
 /* ----- NOTES-TABLEAUX : lien bleu cliquable premium ----- */
@@ -2408,23 +2497,32 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   transform: scale(1);
 }
 
-/* ----- FAB "ECRIRE" premium (haut droite) ----- */
-.veleda-fab-write {
+/* ----- FAB "ECRIRE" premium (HAUT DROITE absolu) ----- */
+.veleda-board-fullpage .veleda-fab-write {
+  position: absolute;
   top: 18px;
   right: 36px;
-  padding: 13px 26px;
+  bottom: auto;
+  left: auto;
+  z-index: 35;
+  padding: 11px 22px;
+  border-radius: 999px;
   background: linear-gradient(135deg, #1F2937 0%, #0F172A 100%);
   color: #fff;
   border: 2px solid #fff;
+  cursor: pointer;
   font-family: 'Permanent Marker', cursive;
   letter-spacing: 0.4px;
-  font-size: 1.05rem;
+  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.12),
     0 6px 18px rgba(15,27,40,0.3),
     0 0 0 4px rgba(255,255,255,0.4);
-  position: relative;
   overflow: hidden;
+  transition: all 0.22s cubic-bezier(0.2, 0.9, 0.4, 1.1);
 }
 .veleda-fab-write::before {
   /* Halo doré au survol */
@@ -2451,16 +2549,24 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   filter: drop-shadow(0 1px 2px rgba(201,169,97,0.5));
 }
 
-/* ----- PILL "LECTURE SEULE" ----- */
-.veleda-readonly-pill-fab {
+/* ----- PILL "LECTURE SEULE" (HAUT DROITE absolu) ----- */
+.veleda-board-fullpage .veleda-readonly-pill-fab {
+  position: absolute;
   top: 18px;
   right: 36px;
-  padding: 10px 18px;
+  bottom: auto;
+  left: auto;
+  z-index: 35;
+  padding: 9px 16px;
+  border-radius: 999px;
   background: linear-gradient(135deg, #FFFFFF 0%, #F8F4EC 100%);
   border: 1.5px solid rgba(201,169,97,0.35);
   color: rgba(15,27,40,0.65);
   font-family: 'Caveat', cursive;
-  font-size: 1.05rem;
+  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.9),
     0 4px 12px rgba(15,27,40,0.1);
@@ -3043,12 +3149,12 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
 /* ----- RESPONSIVE ----- */
 @media (max-width: 768px) {
   .veleda-fullpage {
+    top: 56px;
+    height: calc(100vh - 56px);
+    max-height: calc(100vh - 56px);
     padding: 6px;
-    min-height: calc(100vh - 56px);
   }
   .veleda-board-fullpage {
-    height: calc(100vh - 72px);
-    min-height: calc(100vh - 72px);
     padding: 56px 18px 24px 18px;
     border-width: 8px;
   }
@@ -3059,19 +3165,26 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
     top: 12px;
     left: 18px;
     padding: 6px 14px;
-    max-width: calc(100% - 110px);
+    max-width: calc(100% - 140px);
   }
   .veleda-breadcrumb-current { font-size: 1rem; max-width: 180px; }
   .veleda-breadcrumb-link { font-size: 0.9rem; max-width: 120px; }
-  .veleda-fab-write {
+  .veleda-board-fullpage .veleda-fab-write {
     top: 12px;
     right: 18px;
-    padding: 10px 16px;
-    font-size: 0.95rem;
+    padding: 9px 14px;
+    font-size: 0.9rem;
   }
-  .veleda-readonly-pill-fab {
+  .veleda-board-fullpage .veleda-readonly-pill-fab {
     top: 12px;
     right: 18px;
+    padding: 8px 12px;
+  }
+  .veleda-board-fullpage .veleda-notes-layer {
+    top: 56px;
+    left: 18px;
+    right: 18px;
+    bottom: 24px;
   }
   .veleda-board-fullpage .veleda-note {
     max-width: 260px;

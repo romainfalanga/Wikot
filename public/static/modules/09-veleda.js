@@ -491,30 +491,27 @@ function renderVeledaNote(note, me, canEdit) {
   const inspectingClass = isInspecting ? 'veleda-note-inspecting' : '';
   const boardClass = isBoardNote ? 'veleda-note-is-board' : '';
 
-  // Bloc inspect : visible uniquement en mode inspect
+  // Bloc inspect : barrette compacte horizontale, sous la note
+  // - PAS d'icone personne (juste le prenom en petite typo)
+  // - PAS de phrase "sous-tableau, clic simple..." (le lien souligne + bouton "Ouvrir" suffit)
+  // - Layout horizontal compact : [pastille urgence  echeance] [auteur] [actions]
   const inspectMeta = isInspecting ? `
     <div class="veleda-note-inspect-meta">
-      <span class="veleda-inspect-row">
-        <span class="veleda-urgency-dot ${veledaUrgency(note.expires_at)}"></span>
-        ${veledaEscape(veledaExpiresLabel(note.expires_at))}
-      </span>
-      <span class="veleda-inspect-row">
-        ${note.author_emoji ? `<span class="veleda-inspect-emoji">${veledaEscape(note.author_emoji)}</span>` : ''}
-        <span class="veleda-inspect-author">${veledaEscape((note.created_by_name || '?').split(' ')[0])}</span>
-      </span>
-      ${isBoardNote ? `
-        <span class="veleda-inspect-row veleda-inspect-board-hint">
-          <i class="fas fa-chalkboard"></i>
-          Sous-tableau — clic simple pour ouvrir
+      <div class="veleda-inspect-info">
+        <span class="veleda-inspect-urgency">
+          <span class="veleda-urgency-dot ${veledaUrgency(note.expires_at)}"></span>
+          <span class="veleda-inspect-expires">${veledaEscape(veledaExpiresLabel(note.expires_at))}</span>
         </span>
-      ` : ''}
+        <span class="veleda-inspect-author">${veledaEscape((note.created_by_name || '?').split(' ')[0])}</span>
+      </div>
       ${canEdit ? `
-        <span class="veleda-inspect-actions">
+        <div class="veleda-inspect-actions">
           ${isBoardNote ? `
             <button class="veleda-inspect-btn veleda-inspect-open"
               onclick="event.stopPropagation(); veledaOpenBoard(${note.id})"
               title="Ouvrir le sous-tableau">
-              <i class="fas fa-arrow-right"></i> Ouvrir
+              <i class="fas fa-arrow-right-to-bracket"></i>
+              <span>Ouvrir</span>
             </button>
           ` : ''}
           <button class="veleda-inspect-btn veleda-inspect-edit"
@@ -527,7 +524,7 @@ function renderVeledaNote(note, me, canEdit) {
             title="${isBoardNote ? 'Effacer (supprime aussi tout son contenu)' : 'Effacer'}">
             <i class="fas fa-eraser"></i>
           </button>
-        </span>
+        </div>
       ` : ''}
     </div>
   ` : '';

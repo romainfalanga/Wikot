@@ -431,12 +431,13 @@ function renderVeledaNote(note, me, canEdit) {
   // Position
   const x = note.pos_x ?? 20;
   const y = note.pos_y ?? 20;
-  // Size : on respecte width/height SEULEMENT si reellement defini ; sinon auto
-  const hasW = note.width != null;
-  const hasH = note.height != null;
-  const sizeStyle =
-    (hasW ? `width:${note.width}px;` : '') +
-    (hasH ? `height:${note.height}px;` : '');
+  // Size : on N'IMPOSE PLUS de width/height inline.
+  // Pourquoi : une note qui a une height stockee en base (issue d'un ancien
+  // resize ou d'un legacy data) produisait un grand rectangle vertical
+  // dont la hitbox debordait sur les notes voisines. Le style inline
+  // bat toute regle CSS, donc impossible a corriger via les feuilles de style.
+  // Resultat : la note s'auto-dimensionne pour epouser exactement son texte.
+  const sizeStyle = '';
 
   // === MODE EDITION ===
   if (isEditing) {

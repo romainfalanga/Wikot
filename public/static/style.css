@@ -2004,3 +2004,1088 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
     padding-top: 50px;
   }
 }
+
+/* =========================================================
+   TABLEAU VELEDA — V5 : refonte design premium complete
+   "Bureau d'architecte d'idees" : tableau alu brosse, papier
+   japonais en fond, accents or, notes masking-tape
+   ========================================================= */
+
+/* ----- Fond mural derriere le tableau (papier japonais creme) ----- */
+.veleda-fullpage {
+  background-color: #EFEAE2;
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(201,169,97,0.06) 0%, transparent 50%),
+    radial-gradient(circle at 80% 70%, rgba(15,27,40,0.04) 0%, transparent 50%),
+    repeating-linear-gradient(45deg, transparent 0 2px, rgba(0,0,0,0.012) 2px 3px);
+  padding: 12px;
+  min-height: calc(100vh - 64px);
+}
+
+/* ----- LE TABLEAU : aluminium brosse + ivoire + texture pointillee ----- */
+.veleda-board-fullpage {
+  position: relative;
+  margin: 0;
+  width: 100%;
+  height: calc(100vh - 88px);
+  min-height: calc(100vh - 88px);
+  /* Cadre alu brosse */
+  border: 10px solid transparent;
+  border-radius: 16px;
+  background-color: #FBFAF6;
+  background-image:
+    /* Reflet diagonal premium */
+    linear-gradient(135deg, rgba(255,255,255,0.7) 0%, rgba(245,242,235,0.2) 40%, rgba(255,255,255,0.5) 100%),
+    /* Grain papier */
+    radial-gradient(circle at 1px 1px, rgba(15,27,40,0.04) 1px, transparent 0);
+  background-size: 100% 100%, 14px 14px;
+  background-origin: padding-box;
+  background-clip: padding-box;
+  box-shadow:
+    inset 0 0 80px rgba(15,27,40,0.05),
+    inset 0 2px 12px rgba(15,27,40,0.08),
+    0 14px 36px rgba(15,27,40,0.18),
+    0 4px 8px rgba(15,27,40,0.1);
+  padding: 64px 32px 36px 32px;
+  overflow: auto;
+}
+/* Cadre aluminium en pseudo-element */
+.veleda-board-fullpage::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  border-radius: 18px;
+  background:
+    linear-gradient(135deg,
+      #E8ECF0 0%,
+      #C5CDD4 18%,
+      #DDE2E7 35%,
+      #9DA5AD 55%,
+      #C5CDD4 75%,
+      #B0B8C0 100%);
+  z-index: -1;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.6),
+    inset 0 -1px 0 rgba(0,0,0,0.15);
+}
+/* Liseré interieur subtil entre le cadre et la surface */
+.veleda-board-fullpage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(15,27,40,0.06);
+  pointer-events: none;
+}
+
+/* ----- RIVETS dores aux 4 coins (signature de luxe) ----- */
+.veleda-board-fullpage > .veleda-rivet {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 30% 30%, #F4D58D 0%, #C9A961 45%, #8B7430 100%);
+  box-shadow:
+    inset 0 1px 2px rgba(255,255,255,0.5),
+    inset 0 -1px 2px rgba(0,0,0,0.3),
+    0 2px 4px rgba(0,0,0,0.35),
+    0 0 8px rgba(201,169,97,0.4);
+  z-index: 5;
+}
+.veleda-board-fullpage > .veleda-rivet.tl { top: 12px;    left: 12px;    }
+.veleda-board-fullpage > .veleda-rivet.tr { top: 12px;    right: 12px;   }
+.veleda-board-fullpage > .veleda-rivet.bl { bottom: 12px; left: 12px;    }
+.veleda-board-fullpage > .veleda-rivet.br { bottom: 12px; right: 12px;   }
+
+/* ----- BREADCRUMB premium en haut a gauche ----- */
+.veleda-breadcrumb {
+  position: absolute;
+  top: 18px;
+  left: 36px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 240px);
+  padding: 9px 18px 9px 16px;
+  background: linear-gradient(135deg, #FFFFFF 0%, #F8F4EC 100%);
+  border: 1.5px solid rgba(201,169,97,0.35);
+  border-radius: 999px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.9),
+    0 4px 14px rgba(15,27,40,0.1),
+    0 0 0 4px rgba(255,255,255,0.5);
+  backdrop-filter: blur(6px);
+  font-family: 'Permanent Marker', cursive;
+  letter-spacing: 0.4px;
+  /* Petit liseré dore exterieur */
+  background-clip: padding-box;
+}
+.veleda-breadcrumb-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.15rem;
+  color: #0A1628;
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+}
+.veleda-breadcrumb-current i {
+  color: #C9A961;
+  font-size: 1.05rem;
+  filter: drop-shadow(0 1px 1px rgba(201,169,97,0.4));
+}
+.veleda-breadcrumb-link {
+  font-family: 'Permanent Marker', cursive;
+  letter-spacing: 0.3px;
+  font-size: 1.02rem;
+  color: rgba(10,22,40,0.6);
+  background: transparent;
+  border: none;
+  padding: 3px 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  transition: all 0.2s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.veleda-breadcrumb-link:hover {
+  color: #0A1628;
+  background: rgba(201,169,97,0.12);
+  transform: translateY(-1px);
+}
+.veleda-breadcrumb-link i {
+  color: #C9A961;
+}
+.veleda-breadcrumb-sep {
+  color: rgba(201,169,97,0.6);
+  font-size: 0.95rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ----- NOTES : esthetique post-it manuscrit avec masking tape ----- */
+.veleda-board-fullpage .veleda-note {
+  position: absolute;
+  width: auto;
+  height: auto;
+  max-width: 340px;
+  min-width: 40px;
+  padding: 8px 14px 10px 14px;
+  background: transparent;
+  border: none;
+  font-weight: 700;
+  font-size: 1.15rem;
+  line-height: 1.25;
+  letter-spacing: 0.2px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  cursor: default;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.6), 0 0 1px rgba(0,0,0,0.04);
+  transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.4, 1.1),
+              box-shadow 0.22s ease,
+              filter 0.22s ease;
+  box-sizing: border-box;
+  filter: drop-shadow(0 2px 3px rgba(15,27,40,0.08));
+}
+
+/* Hover doux : la note "respire" */
+.veleda-board-fullpage .veleda-note:hover {
+  filter: drop-shadow(0 6px 10px rgba(15,27,40,0.15));
+  z-index: 10;
+}
+.veleda-board-fullpage .veleda-note.veleda-note-draggable:hover {
+  transform: rotate(var(--rotate, 0deg)) translateY(-2px) scale(1.02);
+}
+
+/* En mode INSPECT : la note "sort" du tableau */
+.veleda-board-fullpage .veleda-note.veleda-note-inspecting {
+  padding: 10px 14px 12px 14px;
+  z-index: 40;
+  filter: drop-shadow(0 12px 24px rgba(15,27,40,0.25));
+  background: rgba(255,255,253,0.98);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.8),
+    0 0 0 1px rgba(15,27,40,0.1);
+}
+
+/* En mode EDIT : carton blanc franc avec liseré ambre */
+.veleda-board-fullpage .veleda-note.veleda-note-editing {
+  padding: 12px 14px 14px 14px;
+  background: #FFFEF7;
+  border-radius: 10px;
+  box-shadow:
+    0 0 0 2px rgba(201,169,97,0.5),
+    0 14px 30px rgba(15,27,40,0.22),
+    inset 0 1px 0 rgba(255,255,255,0.9);
+  z-index: 50;
+}
+
+/* ----- COULEURS ENCRE feutre (raffinees) ----- */
+.veleda-ink-black { color: #1F2937; }
+.veleda-ink-green { color: #15803D; }
+.veleda-ink-red   { color: #B91C1C; }
+
+/* ----- BLOC META en mode INSPECT (slide-down doux) ----- */
+.veleda-note-inspect-meta {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(15,27,40,0.18);
+  font-family: 'Caveat', cursive;
+  font-size: 1rem;
+  color: rgba(15,27,40,0.7);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  animation: veleda-slide-down 0.22s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+}
+@keyframes veleda-slide-down {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.veleda-inspect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.veleda-inspect-emoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #FFFFFF 0%, #F8F4EC 100%);
+  border: 1.5px solid rgba(201,169,97,0.4);
+  box-shadow: 0 2px 4px rgba(15,27,40,0.1);
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.veleda-inspect-author {
+  font-weight: 700;
+  color: rgba(15,27,40,0.78);
+  font-style: normal;
+}
+
+.veleda-urgency-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.6);
+}
+.veleda-urgency-dot.red    { background: #DC2626; box-shadow: 0 0 0 2px rgba(255,255,255,0.6), 0 0 8px rgba(220,38,38,0.6); animation: veleda-pulse 1.8s ease-in-out infinite; }
+.veleda-urgency-dot.amber  { background: #F59E0B; box-shadow: 0 0 0 2px rgba(255,255,255,0.6), 0 0 6px rgba(245,158,11,0.5); }
+.veleda-urgency-dot.green  { background: #15803D; box-shadow: 0 0 0 2px rgba(255,255,255,0.6); }
+@keyframes veleda-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* ----- BOUTONS du panneau inspect ----- */
+.veleda-inspect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(15,27,40,0.08);
+}
+.veleda-inspect-btn {
+  font-family: 'Caveat', cursive;
+  font-weight: 700;
+  font-size: 0.95rem;
+  padding: 5px 12px;
+  border: 1.5px solid rgba(15,27,40,0.15);
+  background: linear-gradient(135deg, #FFFFFF 0%, #F8F4EC 100%);
+  color: #1F2937;
+  border-radius: 18px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.18s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  box-shadow: 0 1px 2px rgba(15,27,40,0.06);
+}
+.veleda-inspect-btn:hover {
+  background: #1F2937;
+  color: #fff;
+  border-color: #1F2937;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(15,27,40,0.2);
+}
+.veleda-inspect-edit:hover {
+  background: linear-gradient(135deg, #2563EB 0%, #1D4ED8 100%);
+  border-color: #1D4ED8;
+}
+.veleda-inspect-delete {
+  color: #B91C1C;
+  border-color: rgba(185,28,28,0.3);
+}
+.veleda-inspect-delete:hover {
+  background: linear-gradient(135deg, #DC2626 0%, #991B1B 100%);
+  color: #fff;
+  border-color: #991B1B;
+}
+.veleda-inspect-open {
+  background: linear-gradient(135deg, #3B82F6 0%, #1D4ED8 100%) !important;
+  color: #fff !important;
+  border-color: #1D4ED8 !important;
+  box-shadow: 0 2px 8px rgba(37,99,235,0.3);
+}
+.veleda-inspect-open:hover {
+  background: linear-gradient(135deg, #1D4ED8 0%, #1E3A8A 100%) !important;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(37,99,235,0.45);
+}
+.veleda-inspect-board-hint {
+  color: #1E40AF !important;
+  font-style: italic;
+  font-size: 0.92rem !important;
+  font-family: 'Caveat', cursive;
+}
+.veleda-inspect-board-hint i {
+  color: #2563EB;
+}
+
+/* ----- NOTES-TABLEAUX : lien bleu cliquable premium ----- */
+.veleda-note.veleda-note-is-board .veleda-note-content {
+  color: #1E40AF !important;
+  text-decoration: underline;
+  text-decoration-color: rgba(30,64,175,0.85);
+  text-decoration-thickness: 2.5px;
+  text-underline-offset: 4px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+}
+.veleda-note.veleda-note-is-board:hover .veleda-note-content {
+  color: #1E3A8A !important;
+  text-decoration-thickness: 3.5px;
+  text-shadow: 0 0 12px rgba(37,99,235,0.25), 0 1px 0 rgba(255,255,255,0.6);
+}
+.veleda-note.veleda-note-is-board::after {
+  /* Petit "coin" doré façon onglet */
+  content: '\f51c';
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #93C5FD 0%, #2563EB 100%);
+  color: #fff;
+  font-size: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(37,99,235,0.4);
+  opacity: 0;
+  transform: scale(0.7);
+  transition: all 0.22s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  pointer-events: none;
+}
+.veleda-note.veleda-note-is-board:hover::after,
+.veleda-note.veleda-note-is-board.veleda-note-inspecting::after {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ----- FAB "ECRIRE" premium (haut droite) ----- */
+.veleda-fab-write {
+  top: 18px;
+  right: 36px;
+  padding: 13px 26px;
+  background: linear-gradient(135deg, #1F2937 0%, #0F172A 100%);
+  color: #fff;
+  border: 2px solid #fff;
+  font-family: 'Permanent Marker', cursive;
+  letter-spacing: 0.4px;
+  font-size: 1.05rem;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.12),
+    0 6px 18px rgba(15,27,40,0.3),
+    0 0 0 4px rgba(255,255,255,0.4);
+  position: relative;
+  overflow: hidden;
+}
+.veleda-fab-write::before {
+  /* Halo doré au survol */
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(201,169,97,0) 0%, rgba(201,169,97,0.25) 50%, rgba(201,169,97,0) 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.veleda-fab-write:hover {
+  background: linear-gradient(135deg, #0F172A 0%, #000000 100%);
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.15),
+    0 12px 28px rgba(15,27,40,0.4),
+    0 0 0 4px rgba(201,169,97,0.3);
+}
+.veleda-fab-write:hover::before {
+  opacity: 1;
+}
+.veleda-fab-write i {
+  color: #C9A961;
+  filter: drop-shadow(0 1px 2px rgba(201,169,97,0.5));
+}
+
+/* ----- PILL "LECTURE SEULE" ----- */
+.veleda-readonly-pill-fab {
+  top: 18px;
+  right: 36px;
+  padding: 10px 18px;
+  background: linear-gradient(135deg, #FFFFFF 0%, #F8F4EC 100%);
+  border: 1.5px solid rgba(201,169,97,0.35);
+  color: rgba(15,27,40,0.65);
+  font-family: 'Caveat', cursive;
+  font-size: 1.05rem;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.9),
+    0 4px 12px rgba(15,27,40,0.1);
+}
+.veleda-readonly-pill-fab i {
+  color: #C9A961;
+}
+
+/* ----- ETAT VIDE elegant ----- */
+.veleda-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  font-family: 'Caveat', cursive;
+  font-size: 1.8rem;
+  color: rgba(15,27,40,0.32);
+  font-style: italic;
+  padding: 40px 60px;
+  max-width: 480px;
+  line-height: 1.4;
+}
+.veleda-empty::before {
+  content: '\f51c';
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+  display: block;
+  font-size: 3rem;
+  color: rgba(201,169,97,0.45);
+  margin-bottom: 14px;
+  font-style: normal;
+}
+
+/* ----- MODALE "ECRIRE AU FEUTRE" : design premium ----- */
+.veleda-modal-overlay {
+  background: rgba(15,27,40,0.55);
+  backdrop-filter: blur(6px);
+}
+.veleda-modal {
+  background: linear-gradient(180deg, #FFFFFF 0%, #FBFAF6 100%);
+  border-radius: 18px;
+  max-width: 560px;
+  border: 1px solid rgba(15,27,40,0.08);
+  box-shadow:
+    0 40px 100px rgba(15,27,40,0.4),
+    inset 0 1px 0 rgba(255,255,255,0.9);
+  overflow: hidden;
+  position: relative;
+}
+/* Bandeau doré en haut de la modale */
+.veleda-modal::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: linear-gradient(90deg,
+    #F4D58D 0%, #C9A961 30%, #8B7430 50%, #C9A961 70%, #F4D58D 100%);
+  z-index: 1;
+}
+.veleda-modal-header {
+  padding: 22px 26px 18px 26px;
+  border-bottom: 1px solid rgba(15,27,40,0.06);
+  background: linear-gradient(180deg, rgba(248,244,236,0.6) 0%, transparent 100%);
+}
+.veleda-modal-header h3 {
+  font-family: 'Permanent Marker', cursive;
+  font-size: 1.6rem;
+  color: #0F172A;
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.6);
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.veleda-modal-header h3 i {
+  color: #C9A961;
+  filter: drop-shadow(0 1px 2px rgba(201,169,97,0.4));
+}
+.veleda-modal-close {
+  background: rgba(15,27,40,0.05);
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  color: rgba(15,27,40,0.55);
+  transition: all 0.18s ease;
+}
+.veleda-modal-close:hover {
+  background: #1F2937;
+  color: #fff;
+  transform: rotate(90deg);
+}
+.veleda-modal-body {
+  padding: 22px 26px;
+  gap: 18px;
+}
+
+/* ----- CHAMP DE SAISIE de la modale : carton vintage ----- */
+.veleda-write-input-modal {
+  width: 100%;
+  min-height: 110px;
+  resize: vertical;
+  background: #FFFEF7;
+  background-image: repeating-linear-gradient(180deg,
+    transparent 0 28px,
+    rgba(15,27,40,0.04) 28px 29px);
+  border: 1.5px dashed rgba(201,169,97,0.45);
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-weight: 700;
+  font-size: 1.3rem;
+  line-height: 1.55;
+  color: #1F2937;
+  outline: none;
+  transition: all 0.18s ease;
+  box-shadow: inset 0 1px 3px rgba(15,27,40,0.05);
+}
+.veleda-write-input-modal:focus {
+  border-color: #C9A961;
+  background: #FFFFFF;
+  box-shadow:
+    inset 0 1px 3px rgba(15,27,40,0.05),
+    0 0 0 4px rgba(201,169,97,0.15);
+}
+
+/* ----- LABELS de la modale ----- */
+.veleda-field-label {
+  font-family: 'Permanent Marker', cursive;
+  font-size: 0.95rem;
+  letter-spacing: 0.3px;
+  font-weight: 400;
+  color: #0F172A;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.veleda-field-label i {
+  color: #C9A961;
+}
+.veleda-field-hint {
+  font-family: 'Caveat', cursive;
+  font-size: 1.05rem;
+  color: rgba(15,27,40,0.5);
+  font-style: italic;
+  margin-left: 2px;
+}
+
+/* ----- COLOR PICKER (modale) : gros disques de feutre ----- */
+.veleda-color-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.veleda-color-pick {
+  flex: 1;
+  min-width: 100px;
+  padding: 12px 10px;
+  background: linear-gradient(135deg, #FFFFFF 0%, #F8F4EC 100%);
+  border: 2px solid rgba(15,27,40,0.1);
+  border-radius: 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  font-family: 'Caveat', cursive;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: rgba(15,27,40,0.7);
+  transition: all 0.2s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  position: relative;
+}
+.veleda-color-pick:hover {
+  transform: translateY(-2px);
+  border-color: rgba(15,27,40,0.2);
+  box-shadow: 0 6px 16px rgba(15,27,40,0.1);
+}
+.veleda-color-pick.active {
+  border-width: 2.5px;
+  box-shadow: 0 4px 14px rgba(15,27,40,0.15);
+  transform: translateY(-1px);
+}
+.veleda-color-pick.veleda-color-green.active { border-color: #15803D; background: linear-gradient(135deg, #FFFFFF 0%, #DCFCE7 100%); color: #15803D; }
+.veleda-color-pick.veleda-color-black.active { border-color: #1F2937; background: linear-gradient(135deg, #FFFFFF 0%, #F1F5F9 100%); color: #1F2937; }
+.veleda-color-pick.veleda-color-red.active   { border-color: #B91C1C; background: linear-gradient(135deg, #FFFFFF 0%, #FEE2E2 100%); color: #B91C1C; }
+.veleda-color-pick .veleda-color-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.95);
+  box-shadow:
+    0 0 0 1.5px rgba(15,27,40,0.15),
+    0 3px 8px rgba(15,27,40,0.2);
+}
+.veleda-color-pick.active .veleda-color-dot {
+  box-shadow:
+    0 0 0 2px currentColor,
+    0 0 0 4px rgba(255,255,255,0.95),
+    0 4px 10px rgba(15,27,40,0.25);
+}
+.veleda-color-pick i {
+  color: currentColor;
+  font-size: 0.85rem;
+  position: absolute;
+  top: 8px;
+  right: 10px;
+}
+
+/* ----- COLOR PICKER MINI (mode inline edit) ----- */
+.veleda-inline-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.veleda-color-pick-mini {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2.5px solid #FFFFFF;
+  box-shadow:
+    0 0 0 1.5px rgba(15,27,40,0.18),
+    0 2px 4px rgba(15,27,40,0.15);
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.18s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  position: relative;
+}
+.veleda-color-pick-mini:hover {
+  transform: scale(1.18) translateY(-1px);
+  box-shadow:
+    0 0 0 1.5px rgba(15,27,40,0.25),
+    0 4px 8px rgba(15,27,40,0.25);
+}
+.veleda-color-pick-mini.active {
+  transform: scale(1.12);
+  box-shadow:
+    0 0 0 2px #1F2937,
+    0 0 0 4px #FFFFFF,
+    0 4px 10px rgba(15,27,40,0.3);
+}
+.veleda-color-pick-mini.veleda-color-green { background: #15803D; }
+.veleda-color-pick-mini.veleda-color-black { background: #1F2937; }
+.veleda-color-pick-mini.veleda-color-red   { background: #B91C1C; }
+
+/* ----- FONT PICKER (modale) : grille de cartes inclinees ----- */
+.veleda-font-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.veleda-font-pick {
+  padding: 14px 14px 12px 14px;
+  background: linear-gradient(180deg, #FFFFFF 0%, #FBFAF6 100%);
+  border: 1.5px solid rgba(15,27,40,0.08);
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1F2937;
+  transition: all 0.22s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  position: relative;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    0 2px 4px rgba(15,27,40,0.04);
+}
+.veleda-font-pick:hover {
+  border-color: rgba(201,169,97,0.5);
+  transform: translateY(-2px) rotate(-0.6deg);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    0 8px 16px rgba(15,27,40,0.1);
+}
+.veleda-font-pick.active {
+  border-color: #C9A961;
+  border-width: 2px;
+  background: linear-gradient(180deg, #FFFEF7 0%, #FFF7E6 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.95),
+    0 0 0 3px rgba(201,169,97,0.18),
+    0 6px 14px rgba(201,169,97,0.18);
+  transform: translateY(-1px);
+}
+.veleda-font-pick.active::after {
+  content: '\f00c';
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  font-size: 0.7rem;
+  color: #C9A961;
+}
+
+/* ----- CHECKBOX "Sous-tableau" : bandeau bleu premium ----- */
+.veleda-isboard-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border: 2px solid rgba(37,99,235,0.2);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(37,99,235,0.04) 0%, rgba(96,165,250,0.06) 100%);
+  cursor: pointer;
+  transition: all 0.22s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  position: relative;
+  overflow: hidden;
+}
+.veleda-isboard-row::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 4px;
+  background: linear-gradient(180deg, #60A5FA 0%, #1D4ED8 100%);
+  border-radius: 0 4px 4px 0;
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
+}
+.veleda-isboard-row:hover {
+  border-color: rgba(37,99,235,0.45);
+  background: linear-gradient(135deg, rgba(37,99,235,0.07) 0%, rgba(96,165,250,0.1) 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(37,99,235,0.1);
+}
+.veleda-isboard-row:hover::before { opacity: 1; }
+.veleda-isboard-row.is-checked {
+  border-color: #2563EB;
+  background: linear-gradient(135deg, rgba(37,99,235,0.1) 0%, rgba(96,165,250,0.14) 100%);
+  box-shadow:
+    0 0 0 3px rgba(37,99,235,0.18),
+    0 4px 12px rgba(37,99,235,0.12);
+}
+.veleda-isboard-row.is-checked::before {
+  opacity: 1;
+  width: 5px;
+}
+.veleda-isboard-checkbox {
+  margin: 3px 0 0 0;
+  width: 20px;
+  height: 20px;
+  accent-color: #2563EB;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.veleda-isboard-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+}
+.veleda-isboard-title {
+  font-family: 'Permanent Marker', cursive;
+  letter-spacing: 0.3px;
+  font-weight: 400;
+  font-size: 1.05rem;
+  color: #1E3A8A;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.veleda-isboard-title i {
+  color: #2563EB;
+  filter: drop-shadow(0 1px 2px rgba(37,99,235,0.3));
+}
+.veleda-isboard-hint {
+  font-family: 'Caveat', cursive;
+  font-size: 1.05rem;
+  color: rgba(30,58,138,0.72);
+  font-style: italic;
+  line-height: 1.35;
+}
+
+/* ----- DATE INPUT raffine ----- */
+.veleda-custom-date-input {
+  font-family: 'Caveat', cursive;
+  font-size: 1.2rem;
+  padding: 9px 14px;
+  border: 1.5px solid rgba(15,27,40,0.15);
+  border-radius: 10px;
+  background: #FFFFFF;
+  color: #1F2937;
+  outline: none;
+  transition: all 0.18s ease;
+  box-shadow: inset 0 1px 2px rgba(15,27,40,0.04);
+}
+.veleda-custom-date-input:focus {
+  border-color: #C9A961;
+  box-shadow:
+    inset 0 1px 2px rgba(15,27,40,0.04),
+    0 0 0 3px rgba(201,169,97,0.18);
+}
+
+/* ----- FOOTER DE MODALE ----- */
+.veleda-modal-footer {
+  padding: 16px 26px;
+  background: linear-gradient(180deg, transparent 0%, rgba(248,244,236,0.5) 100%);
+  border-top: 1px solid rgba(15,27,40,0.06);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.veleda-modal-btn {
+  font-family: 'Permanent Marker', cursive;
+  letter-spacing: 0.3px;
+  font-size: 0.95rem;
+  padding: 10px 22px;
+  border: 1.5px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.18s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.veleda-modal-cancel {
+  background: transparent;
+  color: rgba(15,27,40,0.55);
+  border-color: rgba(15,27,40,0.15);
+}
+.veleda-modal-cancel:hover {
+  background: rgba(15,27,40,0.05);
+  color: #1F2937;
+  border-color: rgba(15,27,40,0.3);
+}
+.veleda-modal-submit {
+  background: linear-gradient(135deg, #1F2937 0%, #0F172A 100%);
+  color: #fff;
+  border-color: #0F172A;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.12),
+    0 4px 12px rgba(15,27,40,0.25);
+}
+.veleda-modal-submit:hover {
+  background: linear-gradient(135deg, #0F172A 0%, #000000 100%);
+  transform: translateY(-2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.15),
+    0 8px 20px rgba(15,27,40,0.4);
+}
+.veleda-modal-submit i {
+  color: #C9A961;
+}
+.veleda-modal-submit:disabled {
+  opacity: 0.5;
+  transform: none;
+}
+
+/* ----- MODE EDIT inline : toolbar + actions raffinees ----- */
+.veleda-inline-edit-input {
+  width: 100%;
+  min-height: 70px;
+  resize: vertical;
+  border: 1.5px dashed rgba(201,169,97,0.45);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-weight: 700;
+  font-size: 1.15rem;
+  line-height: 1.3;
+  color: inherit;
+  background: rgba(255,255,253,0.7);
+  outline: none;
+  transition: all 0.18s ease;
+}
+.veleda-inline-edit-input:focus {
+  border-color: #C9A961;
+  background: #FFFFFF;
+  box-shadow: 0 0 0 3px rgba(201,169,97,0.15);
+}
+.veleda-inline-toolbar {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(15,27,40,0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.veleda-inline-font-select {
+  font-family: 'Caveat', cursive;
+  font-weight: 700;
+  font-size: 1rem;
+  padding: 5px 10px;
+  border: 1.5px solid rgba(15,27,40,0.18);
+  border-radius: 8px;
+  background: #FFFFFF;
+  color: #1F2937;
+  outline: none;
+  cursor: pointer;
+  max-width: 100%;
+  box-shadow: inset 0 1px 2px rgba(15,27,40,0.04);
+}
+.veleda-inline-font-select:focus {
+  border-color: #C9A961;
+  box-shadow: 0 0 0 3px rgba(201,169,97,0.15);
+}
+
+.veleda-note-editing .veleda-inline-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(15,27,40,0.12);
+  width: 100%;
+}
+.veleda-note-editing .veleda-inline-cancel,
+.veleda-note-editing .veleda-inline-save {
+  width: auto;
+  height: auto;
+  padding: 6px 14px;
+  font-family: 'Caveat', cursive;
+  font-weight: 700;
+  font-size: 0.95rem;
+  border-radius: 16px;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.18s cubic-bezier(0.2, 0.9, 0.4, 1.1);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.veleda-note-editing .veleda-inline-cancel {
+  background: transparent;
+  color: rgba(15,27,40,0.55);
+  border-color: rgba(15,27,40,0.15);
+}
+.veleda-note-editing .veleda-inline-cancel:hover {
+  background: rgba(15,27,40,0.06);
+  color: #1F2937;
+  border-color: rgba(15,27,40,0.3);
+}
+.veleda-note-editing .veleda-inline-save {
+  background: linear-gradient(135deg, #1F2937 0%, #0F172A 100%);
+  color: #fff;
+  border-color: #0F172A;
+  box-shadow: 0 3px 8px rgba(15,27,40,0.25);
+}
+.veleda-note-editing .veleda-inline-save:hover {
+  background: linear-gradient(135deg, #0F172A 0%, #000000 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(15,27,40,0.35);
+}
+.veleda-note-editing .veleda-inline-save i {
+  color: #C9A961;
+}
+
+/* ----- RESIZE HANDLE doré ----- */
+.veleda-resize-handle {
+  background: linear-gradient(135deg, #F4D58D 0%, #C9A961 100%) !important;
+  color: #FFFFFF !important;
+  border: 2px solid #fff !important;
+  box-shadow:
+    0 2px 6px rgba(201,169,97,0.5),
+    inset 0 1px 0 rgba(255,255,255,0.4) !important;
+}
+.veleda-resize-handle:hover {
+  background: linear-gradient(135deg, #C9A961 0%, #8B7430 100%) !important;
+  transform: scale(1.15) !important;
+}
+
+/* ----- ERROR OVERLAY ----- */
+.veleda-error-overlay {
+  background: linear-gradient(135deg, #DC2626 0%, #7F1D1D 100%);
+  font-family: 'Caveat', cursive;
+  font-weight: 700;
+  font-size: 1.05rem;
+  padding: 10px 20px;
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(185,28,28,0.4);
+  border: 1.5px solid rgba(255,255,255,0.3);
+}
+
+/* ----- RESPONSIVE ----- */
+@media (max-width: 768px) {
+  .veleda-fullpage {
+    padding: 6px;
+    min-height: calc(100vh - 56px);
+  }
+  .veleda-board-fullpage {
+    height: calc(100vh - 72px);
+    min-height: calc(100vh - 72px);
+    padding: 56px 18px 24px 18px;
+    border-width: 8px;
+  }
+  .veleda-board-fullpage::before {
+    inset: -8px;
+  }
+  .veleda-breadcrumb {
+    top: 12px;
+    left: 18px;
+    padding: 6px 14px;
+    max-width: calc(100% - 110px);
+  }
+  .veleda-breadcrumb-current { font-size: 1rem; max-width: 180px; }
+  .veleda-breadcrumb-link { font-size: 0.9rem; max-width: 120px; }
+  .veleda-fab-write {
+    top: 12px;
+    right: 18px;
+    padding: 10px 16px;
+    font-size: 0.95rem;
+  }
+  .veleda-readonly-pill-fab {
+    top: 12px;
+    right: 18px;
+  }
+  .veleda-board-fullpage .veleda-note {
+    max-width: 260px;
+    font-size: 1.05rem;
+  }
+  .veleda-font-grid {
+    grid-template-columns: 1fr;
+  }
+  .veleda-color-pick {
+    min-width: 80px;
+    font-size: 0.85rem;
+  }
+  .veleda-modal {
+    max-width: calc(100vw - 24px);
+  }
+  .veleda-modal-header h3 { font-size: 1.3rem; }
+}

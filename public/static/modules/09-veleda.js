@@ -660,12 +660,13 @@ function renderVeledaWriteModal() {
             <i class="fas fa-calendar-day" style="margin-right:4px;"></i>
             Date et heure de disparition
           </label>
-          <input id="veleda-expires-input"
-            type="datetime-local"
-            class="veleda-custom-date-input"
-            min="${minLocal}"
-            value="${expiresLocal}"
-            onchange="veledaSetExpires(this.value)">
+          ${window.wkDtp ? window.wkDtp.renderDateTime({
+            id: 'veleda-expires',
+            valueDate: expiresLocal.slice(0, 10),
+            valueTime: expiresLocal.slice(11, 16),
+            minDate: minLocal.slice(0, 10),
+            onChange: 'veledaSyncExpiresFromPicker'
+          }) : `<input id="veleda-expires-input" type="datetime-local" min="${minLocal}" value="${expiresLocal}" onchange="veledaSetExpires(this.value)">`}
 
           <label class="veleda-isboard-row ${isBoardChecked ? 'is-checked' : ''}">
             <input type="checkbox"
@@ -800,9 +801,22 @@ function veledaSetExpires(localStr) {
   state.veledaDraftExpiresLocal = localStr;
 }
 
+// Callback du composant wkDtp : recoit la valeur "YYYY-MM-DDTHH:MM" deja formee
+// par lecture des sous-champs (date + hour + minute) -> alimente le state
+function veledaSyncExpiresFromPicker(localStr /*, id */) {
+  if (typeof localStr === 'string' && localStr.length >= 16) {
+    state.veledaDraftExpiresLocal = localStr;
+  }
+}
+
 async function submitVeledaCreate() {
   const content = (state.veledaDraftContent || '').trim();
-  const expiresLocal = state.veledaDraftExpiresLocal;
+  // V16 : lecture directe du picker si dispo, fallback sur le state
+  let expiresLocal = state.veledaDraftExpiresLocal;
+  if (window.wkDtp) {
+    const fromPicker = window.wkDtp.getDateTimeLocal('veleda-expires');
+    if (fromPicker) expiresLocal = fromPicker;
+  }
   const color = state.veledaDraftColor || 'black';
   const font = state.veledaDraftFont || VELEDA_DEFAULT_FONT;
   const isBoard = !!state.veledaDraftIsBoard;
@@ -1251,6 +1265,7 @@ window.loadVeledaNotes = loadVeledaNotes;
 window.veledaOnInputChange = veledaOnInputChange;
 window.veledaOnKeyDown = veledaOnKeyDown;
 window.veledaSetExpires = veledaSetExpires;
+window.veledaSyncExpiresFromPicker = veledaSyncExpiresFromPicker;
 window.veledaSetDraftColor = veledaSetDraftColor;
 window.veledaSetDraftFont = veledaSetDraftFont;
 window.veledaSetDraftIsBoard = veledaSetDraftIsBoard;

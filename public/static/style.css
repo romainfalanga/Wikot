@@ -4094,3 +4094,137 @@ main.app-main:has(.veleda-fullpage) {
     width: 240px !important;
   }
 }
+
+/* ============================================================
+   V16 - Composant wkDtp : selecteur date / heure premium
+   Utilise dans : modale note Veleda + modale creation tache
+   Design : carte ivoire/or coherent avec le reste de l'app
+   ============================================================ */
+.wkdtp-block {
+  display: block;
+  width: 100%;
+  margin-bottom: 14px;
+}
+.wkdtp-block--single {
+  margin-bottom: 0;
+}
+.wkdtp-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  width: 100%;
+}
+@media (max-width: 520px) {
+  .wkdtp-row {
+    grid-template-columns: 1fr;
+  }
+}
+.wkdtp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.wkdtp-mini-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #8B7430;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wkdtp-mini-label i {
+  color: #C9A961;
+  font-size: 12px;
+}
+
+/* INPUT DATE (calendrier OS natif sous le capot) */
+.wkdtp-input {
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  background: #FFFEF7;
+  border: 1.5px solid rgba(201,169,97,0.45);
+  border-radius: 10px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1F2937;
+  outline: none;
+  transition: all 0.18s ease;
+  box-shadow: inset 0 1px 3px rgba(15,27,40,0.04);
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+}
+.wkdtp-input:focus,
+.wkdtp-input:hover {
+  border-color: #C9A961;
+  background: #FFFBEE;
+  box-shadow:
+    inset 0 1px 3px rgba(15,27,40,0.04),
+    0 0 0 3px rgba(201,169,97,0.18);
+}
+/* Icone calendrier du navigateur : on la teinte */
+.wkdtp-input::-webkit-calendar-picker-indicator {
+  filter: invert(60%) sepia(30%) saturate(500%) hue-rotate(15deg);
+  cursor: pointer;
+  opacity: 0.85;
+}
+.wkdtp-input::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+/* HEURE : 2 selects cote a cote */
+.wkdtp-time-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+}
+.wkdtp-select {
+  flex: 1;
+  height: 44px;
+  padding: 0 12px;
+  background: #FFFEF7;
+  border: 1.5px solid rgba(201,169,97,0.45);
+  border-radius: 10px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: #1F2937;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  text-align: center;
+  appearance: none;
+  -webkit-appearance: none;
+  /* fleche custom doree */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%23C9A961' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 26px;
+}
+.wkdtp-select:focus,
+.wkdtp-select:hover {
+  border-color: #C9A961;
+  background-color: #FFFBEE;
+  box-shadow:
+    inset 0 1px 3px rgba(15,27,40,0.04),
+    0 0 0 3px rgba(201,169,97,0.18);
+}
+.wkdtp-time-sep {
+  font-size: 22px;
+  font-weight: 800;
+  color: #C9A961;
+  user-select: none;
+  margin-bottom: 2px;
+}
+
+/* V16 — Modal Veleda : on garantit qu'on peut scroller jusqu'en bas
+   (auparavant la case "faire un sous-tableau" etait coupee) */
+.veleda-modal-body {
+  padding-bottom: 40px !important;
+}

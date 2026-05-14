@@ -782,7 +782,11 @@ function showTaskCreateModal(dateStr, recurring = false, templateId = null, inst
       <!-- Section Date (ponctuelle) -->
       <div id="tcm_section_oneoff" style="display: ${initialMode === 'oneoff' ? 'block' : 'none'};">
         <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Date <span style="color: #C84C3F;">*</span></label>
-        <input id="tcm_date" type="date" value="${escapeHtml(item.task_date || dateStr || todayIsoStr())}" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm mb-3" />
+        ${window.wkDtp ? window.wkDtp.renderDate({
+          id: 'tcm_date',
+          value: item.task_date || dateStr || todayIsoStr(),
+          required: true
+        }) : `<input id="tcm_date" type="date" value="${escapeHtml(item.task_date || dateStr || todayIsoStr())}" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm mb-3" />`}
       </div>
 
       <!-- Section Récurrence (récurrente) -->
@@ -791,10 +795,15 @@ function showTaskCreateModal(dateStr, recurring = false, templateId = null, inst
       </div>
 
       <!-- Heure suggérée + Durée -->
-      <div class="grid grid-cols-2 gap-3 mb-3">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
         <div>
-          <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Heure suggérée</label>
-          <input id="tcm_time" type="time" value="${escapeHtml(item.suggested_time || '')}" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm" />
+          ${window.wkDtp ? window.wkDtp.renderTime({
+            id: 'tcm_time',
+            value: item.suggested_time || ''
+          }) : `
+            <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Heure suggérée</label>
+            <input id="tcm_time" type="time" value="${escapeHtml(item.suggested_time || '')}" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm" />
+          `}
         </div>
         <div>
           <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">Durée estimée (min)</label>
@@ -996,7 +1005,14 @@ async function submitTaskCreateModal(templateId, instanceId) {
 
   // Champs communs
   const description = document.getElementById('tcm_description').value.trim() || null;
-  const suggested_time = document.getElementById('tcm_time').value || null;
+  // V16 : lit le nouveau composant wkDtp si dispo, fallback sur l'ancien input
+  let suggested_time = null;
+  if (window.wkDtp && document.getElementById('tcm_time_hour')) {
+    suggested_time = window.wkDtp.getTimeValue('tcm_time') || null;
+  } else {
+    const tEl = document.getElementById('tcm_time');
+    suggested_time = (tEl && tEl.value) ? tEl.value : null;
+  }
   const durationVal = parseInt(document.getElementById('tcm_duration').value);
   const duration_min = (Number.isFinite(durationVal) && durationVal > 0) ? durationVal : null;
   const category = document.getElementById('tcm_category').value || null;
@@ -1041,7 +1057,14 @@ async function submitTaskCreateModal(templateId, instanceId) {
       method = 'POST';
     }
   } else {
-    const task_date = document.getElementById('tcm_date').value;
+    // V16 : lit le nouveau composant wkDtp si dispo, fallback sur l'ancien input
+    let task_date = '';
+    if (window.wkDtp && document.getElementById('tcm_date_date')) {
+      task_date = window.wkDtp.getDateValue('tcm_date');
+    } else {
+      const dEl = document.getElementById('tcm_date');
+      task_date = dEl ? dEl.value : '';
+    }
     body = {
       title, description, task_date,
       suggested_time, duration_min, category, priority,

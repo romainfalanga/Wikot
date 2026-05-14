@@ -7047,6 +7047,7 @@ app.get('*', (c) => {
     s'exécutent dans l'ordre une fois le HTML parsé. La page de login SSR
     est donc affichée IMMÉDIATEMENT, sans attendre les 422 KB de modules.
   -->
+  <script defer src="/static/modules/00-datetime-picker.js?v=${v}"></script>
   <script defer src="/static/modules/01-core.js?v=${v}"></script>
   <script defer src="/static/modules/02-auth.js?v=${v}"></script>
   <script defer src="/static/modules/03-layout.js?v=${v}"></script>

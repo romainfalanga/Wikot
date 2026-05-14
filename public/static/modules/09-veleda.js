@@ -516,10 +516,10 @@ function renderVeledaNote(note, me, canEdit) {
     ? `onclick="event.stopPropagation(); veledaTryOpenBoard(event, ${note.id})"`
     : `onclick="event.stopPropagation();"`;
 
-  // Barrette d'actions : visible uniquement en mode inspect
+  // Barrette d'actions : TOUJOURS dans le DOM, revelee au HOVER via CSS.
   // Posee dans un wrapper SEPARE pour qu'elle ne deforme jamais
   // la hitbox du texte. La note reste un simple span de texte.
-  const inspectBar = isInspecting ? `
+  const inspectBar = `
     <div class="vnote-bar" onclick="event.stopPropagation();">
       <div class="vnote-bar-info">
         <span class="vnote-bar-dot vnote-bar-dot--${veledaUrgency(note.expires_at)}"></span>
@@ -549,7 +549,7 @@ function renderVeledaNote(note, me, canEdit) {
         </div>
       ` : ''}
     </div>
-  ` : '';
+  `;
 
   // STRUCTURE V12 :
   // - .vnote-wrap : wrapper positionne en absolu (porte left/top + font-family)
@@ -761,27 +761,21 @@ function veledaBoardClick(event) {
   }
 }
 
-// Double-clic sur une note : bascule entre normal -> inspect -> edit
+// Double-clic sur une note : passe directement en mode EDIT
+// (l'inspect/infos se fait desormais au HOVER, plus besoin de double-clic pour ca)
 function veledaOnNoteDblClick(event, noteId) {
   event.stopPropagation();
-  // Si on est deja en inspect sur CETTE note ET qu'on a le droit -> on passe en edit
-  if (state.veledaInspectingId === noteId && veledaUserCanEdit()) {
-    state.veledaInspectingId = null;
-    state.veledaEditingId = noteId;
-    render();
-    setTimeout(() => {
-      const ta = document.querySelector('.vnote--edit textarea');
-      if (ta) {
-        ta.focus();
-        ta.setSelectionRange(ta.value.length, ta.value.length);
-      }
-    }, 50);
-    return;
-  }
-  // Sinon -> on passe en inspect (visible pour tous, edition optionnelle)
-  state.veledaEditingId = null;
-  state.veledaInspectingId = noteId;
+  if (!veledaUserCanEdit()) return;
+  state.veledaInspectingId = null;
+  state.veledaEditingId = noteId;
   render();
+  setTimeout(() => {
+    const ta = document.querySelector('.vnote--edit textarea');
+    if (ta) {
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
+  }, 50);
 }
 
 // ============================================

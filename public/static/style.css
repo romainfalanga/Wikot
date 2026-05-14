@@ -3486,25 +3486,45 @@ main.app-main:has(.veleda-fullpage) {
   filter: drop-shadow(0 0 6px rgba(212,160,23,0.5));
 }
 
-/* Barre inspect : carte ivoire premium, en dehors de la hitbox */
+/* Barre inspect : carte ivoire premium, en dehors de la hitbox.
+   V13 : revelee au HOVER du wrapper (plus de double-clic requis).
+   - cachee par defaut (opacity 0 + pointer-events none)
+   - visible quand on survole .vnote-wrap OU directement .vnote-bar
+   - petit pont de 6px (top: 100%) pour que la souris puisse glisser
+     du texte vers la barre sans la perdre */
 .vnote-bar {
   position: absolute;
-  top: calc(100% + 6px);
+  top: 100%;
   left: 0;
+  margin-top: 0;
+  padding-top: 16px; /* zone-pont invisible pour atteindre la barre */
   display: flex;
   flex-direction: column;
   gap: 6px;
   width: 220px;
-  padding: 10px 12px;
-  background: #fdf6e3;
-  border: 1px solid #d4a017;
-  border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.18);
   font-family: system-ui, -apple-system, sans-serif;
   font-size: 12px;
   color: #3a2f1a;
   z-index: 50;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.vnote-wrap:hover > .vnote-bar,
+.vnote-bar:hover {
+  opacity: 1;
   pointer-events: auto;
+}
+.vnote-bar > .vnote-bar-info,
+.vnote-bar > .vnote-bar-actions {
+  background: #fdf6e3;
+  border: 1px solid #d4a017;
+  border-radius: 8px;
+  padding: 8px 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.18);
 }
 .vnote-bar-info {
   display: flex;

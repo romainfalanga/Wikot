@@ -247,7 +247,7 @@ function startVeledaPolling() {
     }
     const inputEl = document.getElementById('veleda-write-input');
     const isTyping = inputEl && document.activeElement === inputEl;
-    const editingEl = document.querySelector('.veleda-note-editing textarea');
+    const editingEl = document.querySelector('.vnote--edit textarea');
     const isEditing = editingEl && document.activeElement === editingEl;
     const isInteracting = !!state.veledaDragging || !!state.veledaResizing;
     const modalOpen = state.veledaWriteModalOpen;
@@ -419,68 +419,83 @@ function renderVeledaShell(notes) {
 }
 
 // ============================================
-// RENDU D'UNE NOTE (3 etats : normal / inspect / edit)
+// RENDU D'UNE NOTE — V12 : REFONTE TOTALE
+// ============================================
+// Probleme historique : les classes .veleda-note avaient ete redefinies
+// 6 fois dans style.css au fil des versions (V1, V2, V3, V5, V8, V9, V10),
+// avec des padding/min-height/box-shadow/background contradictoires.
+// Meme avec une cascade override, le DOM rendu finissait par avoir un
+// bloc plus grand que le texte.
+//
+// SOLUTION V12 : on utilise un NOUVEAU prefixe de classes "vnote-*" qui
+// n'existe NULLE PART ailleurs dans le CSS. Aucun ancien selecteur ne
+// peut matcher. Cascade vierge -> les seules regles qui s'appliquent
+// sont celles du bloc V12 en fin de feuille de style.
+//
+// On garde 3 etats :
+//   - vnote (normal) : juste le texte, hitbox = texte exact
+//   - vnote vnote--inspect : texte + barrette d'actions sous le texte
+//   - vnote vnote--edit : textarea + toolbar + boutons annuler/enregistrer
+//
+// Aucun width/height inline n'est jamais injecte : la note s'auto-dimensionne
+// strictement a son contenu, quelles que soient les donnees en base.
 // ============================================
 function renderVeledaNote(note, me, canEdit) {
   const color = veledaNoteColor(note);
   const font = veledaNoteFont(note);
-  const rotation = veledaRotationFor(note.id);
   const isEditing = state.veledaEditingId === note.id;
   const isInspecting = state.veledaInspectingId === note.id && !isEditing;
+  const isBoardNote = note.is_board === 1 || note.is_board === true;
 
-  // Position
+  // Position (uniquement left/top, JAMAIS de width/height inline)
   const x = note.pos_x ?? 20;
   const y = note.pos_y ?? 20;
-  // Size : on N'IMPOSE PLUS de width/height inline.
-  // Pourquoi : une note qui a une height stockee en base (issue d'un ancien
-  // resize ou d'un legacy data) produisait un grand rectangle vertical
-  // dont la hitbox debordait sur les notes voisines. Le style inline
-  // bat toute regle CSS, donc impossible a corriger via les feuilles de style.
-  // Resultat : la note s'auto-dimensionne pour epouser exactement son texte.
-  const sizeStyle = '';
+  const posStyle = `left:${x}px; top:${y}px; font-family: '${font}', cursive;`;
 
-  // === MODE EDITION ===
+  // =========================================
+  // MODE EDIT
+  // =========================================
   if (isEditing) {
     const colorBtns = VELEDA_COLORS.map(c => `
       <button type="button"
-        class="veleda-color-pick-mini veleda-color-${c} ${color === c ? 'active' : ''}"
+        class="vnote-edit-color vnote-edit-color--${c} ${color === c ? 'is-active' : ''}"
         onclick="event.stopPropagation(); veledaChangeNoteColor(${note.id}, '${c}')"
         title="${veledaEscape(VELEDA_COLOR_LABELS[c])}">
-        <span class="veleda-color-dot" style="background:${VELEDA_COLOR_HEX[c]};"></span>
+        <span style="background:${VELEDA_COLOR_HEX[c]};"></span>
       </button>
     `).join('');
 
     const fontOpts = VELEDA_FONTS.map(f => `
       <option value="${veledaEscape(f)}" ${font === f ? 'selected' : ''}
-        style="font-family: '${f}', cursive;">
-        ${veledaEscape(f)}
-      </option>
+        style="font-family: '${f}', cursive;">${veledaEscape(f)}</option>
     `).join('');
 
     return `
-      <div class="veleda-note veleda-ink-${color} veleda-note-editing"
-        style="left:${x}px; top:${y}px; ${sizeStyle} transform: rotate(0deg); z-index: 50; font-family: '${font}', cursive;"
+      <div class="vnote vnote--edit vnote--ink-${color}"
+        style="${posStyle}"
         data-note-id="${note.id}"
         onclick="event.stopPropagation();">
-        <textarea class="veleda-inline-edit-input"
+        <textarea class="vnote-edit-input"
           maxlength="${VELEDA_MAX_CONTENT_LEN}"
           style="font-family: '${font}', cursive;"
           onkeydown="veledaOnInlineEditKey(event, ${note.id})"
         >${veledaEscape(note.content)}</textarea>
-        <div class="veleda-inline-toolbar">
-          <div class="veleda-inline-color-row">${colorBtns}</div>
-          <select class="veleda-inline-font-select"
+        <div class="vnote-edit-toolbar">
+          <div class="vnote-edit-colors">${colorBtns}</div>
+          <select class="vnote-edit-fontselect"
             onchange="veledaChangeNoteFont(${note.id}, this.value)"
             onclick="event.stopPropagation();"
             style="font-family: '${font}', cursive;">
             ${fontOpts}
           </select>
         </div>
-        <div class="veleda-inline-edit-actions">
-          <button class="veleda-inline-btn veleda-inline-cancel" onclick="event.stopPropagation(); veledaCancelEdit()">
+        <div class="vnote-edit-actions">
+          <button class="vnote-edit-btn vnote-edit-cancel"
+            onclick="event.stopPropagation(); veledaCancelEdit()">
             <i class="fas fa-times"></i> Annuler
           </button>
-          <button class="veleda-inline-btn veleda-inline-save" onclick="event.stopPropagation(); veledaSaveEdit(${note.id})">
+          <button class="vnote-edit-btn vnote-edit-save"
+            onclick="event.stopPropagation(); veledaSaveEdit(${note.id})">
             <i class="fas fa-check"></i> Enregistrer
           </button>
         </div>
@@ -488,42 +503,45 @@ function renderVeledaNote(note, me, canEdit) {
     `;
   }
 
-  // === MODE NORMAL / INSPECT ===
-  const isBoardNote = note.is_board === 1 || note.is_board === true;
+  // =========================================
+  // MODE NORMAL / INSPECT
+  // =========================================
   const dragHandler = canEdit ? `onmousedown="veledaStartDrag(event, ${note.id})"` : '';
   const dblClickHandler = `ondblclick="veledaOnNoteDblClick(event, ${note.id})"`;
-  const inspectingClass = isInspecting ? 'veleda-note-inspecting' : '';
-  const boardClass = isBoardNote ? 'veleda-note-is-board' : '';
 
-  // Bloc inspect : barrette compacte horizontale, sous la note
-  // - PAS d'icone personne (juste le prenom en petite typo)
-  // - PAS de phrase "sous-tableau, clic simple..." (le lien souligne + bouton "Ouvrir" suffit)
-  // - Layout horizontal compact : [pastille urgence  echeance] [auteur] [actions]
-  const inspectMeta = isInspecting ? `
-    <div class="veleda-note-inspect-meta">
-      <div class="veleda-inspect-info">
-        <span class="veleda-inspect-urgency">
-          <span class="veleda-urgency-dot ${veledaUrgency(note.expires_at)}"></span>
-          <span class="veleda-inspect-expires">${veledaEscape(veledaExpiresLabel(note.expires_at))}</span>
-        </span>
-        <span class="veleda-inspect-author">${veledaEscape((note.created_by_name || '?').split(' ')[0])}</span>
+  // Click sur le contenu :
+  //   - note normale : juste stopPropagation
+  //   - note-tableau : navigation vers le sous-tableau (anti-collision drag)
+  const contentClickHandler = isBoardNote
+    ? `onclick="event.stopPropagation(); veledaTryOpenBoard(event, ${note.id})"`
+    : `onclick="event.stopPropagation();"`;
+
+  // Barrette d'actions : visible uniquement en mode inspect
+  // Posee dans un wrapper SEPARE pour qu'elle ne deforme jamais
+  // la hitbox du texte. La note reste un simple span de texte.
+  const inspectBar = isInspecting ? `
+    <div class="vnote-bar" onclick="event.stopPropagation();">
+      <div class="vnote-bar-info">
+        <span class="vnote-bar-dot vnote-bar-dot--${veledaUrgency(note.expires_at)}"></span>
+        <span class="vnote-bar-expires">${veledaEscape(veledaExpiresLabel(note.expires_at))}</span>
+        <span class="vnote-bar-author">${veledaEscape((note.created_by_name || '?').split(' ')[0])}</span>
       </div>
       ${canEdit ? `
-        <div class="veleda-inspect-actions">
+        <div class="vnote-bar-actions">
           ${isBoardNote ? `
-            <button class="veleda-inspect-btn veleda-inspect-open"
+            <button class="vnote-bar-btn vnote-bar-btn--open"
               onclick="event.stopPropagation(); veledaOpenBoard(${note.id})"
               title="Ouvrir le sous-tableau">
               <i class="fas fa-arrow-right-to-bracket"></i>
               <span>Ouvrir</span>
             </button>
           ` : ''}
-          <button class="veleda-inspect-btn veleda-inspect-edit"
+          <button class="vnote-bar-btn vnote-bar-btn--edit"
             onclick="event.stopPropagation(); veledaStartEdit(${note.id})"
             title="Modifier">
             <i class="fas fa-pen"></i>
           </button>
-          <button class="veleda-inspect-btn veleda-inspect-delete"
+          <button class="vnote-bar-btn vnote-bar-btn--delete"
             onclick="event.stopPropagation(); deleteVeledaNote(${note.id})"
             title="${isBoardNote ? 'Effacer (supprime aussi tout son contenu)' : 'Effacer'}">
             <i class="fas fa-eraser"></i>
@@ -533,33 +551,24 @@ function renderVeledaNote(note, me, canEdit) {
     </div>
   ` : '';
 
-  // Clic simple sur le contenu :
-  //  - note normale : rien (le drag/dblclick gere)
-  //  - note-tableau : navigation vers le sous-tableau, MAIS uniquement si on ne drague pas
-  //    et qu'on ne vient pas de quitter un mode inspect.
-  // On expose un onclick uniquement sur le contenu (pas sur toute la note) pour ne pas
-  // interferer avec drag/inspect/edit.
-  const contentClickHandler = isBoardNote
-    ? `onclick="event.stopPropagation(); veledaTryOpenBoard(event, ${note.id})"`
-    : `onclick="event.stopPropagation();"`;
-
+  // STRUCTURE V12 :
+  // - .vnote-wrap : wrapper positionne en absolu (porte left/top + font-family)
+  //                 contient le texte + la barrette inspect.
+  // - .vnote-text : le texte lui-meme, display: inline-block, width: max-content
+  //                 -> sa hitbox colle EXACTEMENT au texte. C'est lui qui porte
+  //                 les handlers drag/dblclick/click.
+  // - .vnote-bar : la barrette d'actions, positionnee SOUS le texte mais HORS
+  //                de la hitbox de la note. Aucun risque de selection croisee.
   return `
-    <div class="veleda-note veleda-ink-${color} ${canEdit ? 'veleda-note-draggable' : ''} ${inspectingClass} ${boardClass}"
-      style="left:${x}px; top:${y}px; ${sizeStyle} transform: rotate(${rotation}deg); font-family: '${font}', cursive;"
+    <div class="vnote-wrap ${isInspecting ? 'vnote-wrap--inspect' : ''} ${isBoardNote ? 'vnote-wrap--board' : ''}"
+      style="${posStyle}"
       data-note-id="${note.id}"
-      data-is-board="${isBoardNote ? '1' : '0'}"
-      ${dragHandler}
-      ${dblClickHandler}
-      onclick="event.stopPropagation();">
-      <div class="veleda-note-content" ${contentClickHandler}>${veledaEscape(note.content)}</div>
-      ${inspectMeta}
-      ${canEdit && isInspecting ? `
-        <div class="veleda-resize-handle"
-          onmousedown="veledaStartResize(event, ${note.id})"
-          title="Redimensionner">
-          <i class="fas fa-grip-lines" style="transform: rotate(-45deg);"></i>
-        </div>
-      ` : ''}
+      data-is-board="${isBoardNote ? '1' : '0'}">
+      <span class="vnote-text vnote--ink-${color} ${canEdit ? 'vnote-text--draggable' : ''} ${isBoardNote ? 'vnote-text--board' : ''}"
+        ${dragHandler}
+        ${dblClickHandler}
+        ${contentClickHandler}>${veledaEscape(note.content)}</span>
+      ${inspectBar}
     </div>
   `;
 }
@@ -761,7 +770,7 @@ function veledaOnNoteDblClick(event, noteId) {
     state.veledaEditingId = noteId;
     render();
     setTimeout(() => {
-      const ta = document.querySelector('.veleda-note-editing textarea');
+      const ta = document.querySelector('.vnote--edit textarea');
       if (ta) {
         ta.focus();
         ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -908,7 +917,7 @@ function veledaStartEdit(noteId) {
   state.veledaInspectingId = null;
   render();
   setTimeout(() => {
-    const ta = document.querySelector('.veleda-note-editing textarea');
+    const ta = document.querySelector('.vnote--edit textarea');
     if (ta) {
       ta.focus();
       ta.setSelectionRange(ta.value.length, ta.value.length);
@@ -932,7 +941,7 @@ function veledaOnInlineEditKey(event, noteId) {
 }
 
 async function veledaSaveEdit(noteId) {
-  const ta = document.querySelector('.veleda-note-editing textarea');
+  const ta = document.querySelector('.vnote--edit textarea');
   if (!ta) return;
   const newContent = ta.value.trim();
   if (!newContent) {
@@ -970,7 +979,7 @@ async function veledaChangeNoteColor(noteId, color) {
   note.color = color;
   render();
   setTimeout(() => {
-    const ta = document.querySelector('.veleda-note-editing textarea');
+    const ta = document.querySelector('.vnote--edit textarea');
     if (ta) ta.focus();
   }, 30);
   try {
@@ -1000,7 +1009,7 @@ async function veledaChangeNoteFont(noteId, font) {
   note.font = font;
   render();
   setTimeout(() => {
-    const ta = document.querySelector('.veleda-note-editing textarea');
+    const ta = document.querySelector('.vnote--edit textarea');
     if (ta) ta.focus();
   }, 30);
   try {
@@ -1024,11 +1033,12 @@ async function veledaChangeNoteFont(noteId, font) {
 // DRAG & DROP
 // ============================================
 function veledaStartDrag(event, noteId) {
-  if (event.target.closest('.veleda-resize-handle') ||
-      event.target.closest('.veleda-note-inspect-meta') ||
-      event.target.closest('.veleda-inline-edit-input') ||
-      event.target.closest('.veleda-inline-edit-actions') ||
-      event.target.closest('.veleda-inline-toolbar')) return;
+  if (event.target.closest('.vnote-bar') ||
+      event.target.closest('.vnote-edit-input') ||
+      event.target.closest('.vnote-edit-actions') ||
+      event.target.closest('.vnote-edit-toolbar') ||
+      event.target.closest('.vnote-edit-colors') ||
+      event.target.closest('.vnote-edit-fontselect')) return;
   if (event.button !== 0) return;
   if (!veledaUserCanEdit()) return;
   if (state.veledaEditingId === noteId) return;
@@ -1050,13 +1060,10 @@ function veledaStartDrag(event, noteId) {
   document.body.style.cursor = 'grabbing';
   document.body.style.userSelect = 'none';
 
-  const el = document.querySelector(`.veleda-note[data-note-id="${noteId}"]`);
+  const el = document.querySelector(`.vnote-wrap[data-note-id="${noteId}"]`);
   if (el) {
-    el.dataset.origRotation = el.style.transform;
-    el.style.transform = 'rotate(0deg) scale(1.03)';
     el.style.zIndex = '100';
     el.style.transition = 'none';
-    el.style.boxShadow = '0 12px 30px rgba(0,0,0,0.25)';
   }
 }
 
@@ -1067,7 +1074,7 @@ function veledaOnDragMove(event) {
   const newX = state.veledaDragging.origX + dx;
   const newY = state.veledaDragging.origY + dy;
 
-  const el = document.querySelector(`.veleda-note[data-note-id="${state.veledaDragging.id}"]`);
+  const el = document.querySelector(`.vnote-wrap[data-note-id="${state.veledaDragging.id}"]`);
   if (el) {
     el.style.left = newX + 'px';
     el.style.top = newY + 'px';
@@ -1085,20 +1092,18 @@ async function veledaOnDragEnd(event) {
   const board = document.getElementById('veleda-board');
   if (board) {
     const boardRect = board.getBoundingClientRect();
-    const noteEl = document.querySelector(`.veleda-note[data-note-id="${id}"]`);
+    const noteEl = document.querySelector(`.vnote-wrap[data-note-id="${id}"]`);
     const noteRect = noteEl ? noteEl.getBoundingClientRect() : { width: 200, height: 60 };
     newX = Math.max(-50, Math.min(newX, boardRect.width - noteRect.width + 50));
     newY = Math.max(-20, Math.min(newY, boardRect.height - noteRect.height + 20));
   }
 
-  const el = document.querySelector(`.veleda-note[data-note-id="${id}"]`);
+  const el = document.querySelector(`.vnote-wrap[data-note-id="${id}"]`);
   if (el) {
     el.style.left = newX + 'px';
     el.style.top = newY + 'px';
-    el.style.transform = el.dataset.origRotation || '';
     el.style.zIndex = '';
     el.style.transition = '';
-    el.style.boxShadow = '';
   }
 
   document.removeEventListener('mousemove', veledaOnDragMove);
@@ -1131,7 +1136,7 @@ function veledaStartResize(event, noteId) {
   if (!note) return;
 
   // Si pas de taille definie, on prend la taille actuellement rendue
-  const el = document.querySelector(`.veleda-note[data-note-id="${noteId}"]`);
+  const el = document.querySelector(`.vnote-wrap[data-note-id="${noteId}"]`);
   const rect = el ? el.getBoundingClientRect() : { width: 200, height: 60 };
 
   state.veledaResizing = {
@@ -1164,7 +1169,7 @@ function veledaOnResizeMove(event) {
   newW = Math.max(VELEDA_MIN_SIZE, Math.min(newW, VELEDA_MAX_SIZE));
   newH = Math.max(VELEDA_MIN_SIZE, Math.min(newH, VELEDA_MAX_SIZE));
 
-  const el = document.querySelector(`.veleda-note[data-note-id="${state.veledaResizing.id}"]`);
+  const el = document.querySelector(`.vnote-wrap[data-note-id="${state.veledaResizing.id}"]`);
   if (el) {
     el.style.width = newW + 'px';
     el.style.height = newH + 'px';
@@ -1181,11 +1186,10 @@ async function veledaOnResizeEnd(event) {
   newW = Math.max(VELEDA_MIN_SIZE, Math.min(newW, VELEDA_MAX_SIZE));
   newH = Math.max(VELEDA_MIN_SIZE, Math.min(newH, VELEDA_MAX_SIZE));
 
-  const el = document.querySelector(`.veleda-note[data-note-id="${id}"]`);
+  const el = document.querySelector(`.vnote-wrap[data-note-id="${id}"]`);
   if (el) {
     el.style.width = newW + 'px';
     el.style.height = newH + 'px';
-    el.style.transform = el.dataset.origRotation || '';
     el.style.transition = '';
     el.style.zIndex = '';
   }

@@ -96,10 +96,29 @@ async function syncUserProfile() {
     return;
   }
 
-  // Cas 2 : changement de rôle ou de droits d'édition
+  // Cas 2 : changement de rôle, de droits d'édition, ou d'abonnement (V18)
   const roleChanged = fresh.role !== old.role;
   const editRightsChanged = freshCanEdit !== oldCanEdit;
   const hotelChanged = fresh.hotel_id !== old.hotel_id;
+  const subChanged = (fresh.subscription_status || null) !== (old.subscription_status || null);
+
+  // V18 — Cas spécifique : l'abonnement vient d'être activé (paiement validé via webhook)
+  // → on met à jour le state et on recharge les données + render
+  if (subChanged && fresh.subscription_status === 'active' && old.subscription_status !== 'active') {
+    state.user.subscription_status = 'active';
+    localStorage.setItem('wikot_user', JSON.stringify(state.user));
+    showToast('Abonnement activé ! Bienvenue dans Wikot.', 'success');
+    await loadData();
+    render();
+    return;
+  }
+  // V18 — Si l'abonnement passe à un statut bloquant alors qu'on était actif → re-render (pour afficher la page paiement)
+  if (subChanged && fresh.subscription_status !== 'active' && old.subscription_status === 'active') {
+    state.user.subscription_status = fresh.subscription_status;
+    localStorage.setItem('wikot_user', JSON.stringify(state.user));
+    render();
+    return;
+  }
 
   if (roleChanged || editRightsChanged || hotelChanged) {
     // Remplacement complet (pas de merge) pour éviter de garder d'anciens champs fantômes
@@ -349,6 +368,13 @@ function updateSidebarBadges() {
 // ============================================
 function render() {
   const app = document.getElementById('app');
+  // V18 — Si user connecté mais abonnement non actif, on affiche la page de relance paiement
+  // (sauf super_admin qui n'a pas d'hôtel à payer)
+  if (state.token && state.user && state.user.role !== 'super_admin'
+      && state.user.subscription_status && state.user.subscription_status !== 'active') {
+    app.innerHTML = renderSubscriptionRequired();
+    return;
+  }
   // Si un staff est connecté, afficher l'app staff (espace équipe — seul espace de l'app)
   if (state.token && state.user) {
     app.innerHTML = renderMainLayout();

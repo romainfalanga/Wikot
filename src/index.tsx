@@ -5,6 +5,11 @@ type Bindings = {
   DB: D1Database
   OPENROUTER_API_KEY?: string
   WIKOT_CACHE?: KVNamespace
+  // V18 — Stripe (configurer via wrangler secret put / Cloudflare Pages env vars)
+  STRIPE_SECRET_KEY?: string       // sk_test_xxx ou sk_live_xxx
+  STRIPE_WEBHOOK_SECRET?: string   // whsec_xxx (signature webhook)
+  STRIPE_PRICE_ID?: string         // price_xxx (50€/mois recurring)
+  APP_BASE_URL?: string            // ex: https://wikot.fr (pour les redirect success/cancel)
 }
 
 type WikotUser = {
@@ -21,6 +26,7 @@ type WikotUser = {
   can_assign_tasks: number
   can_use_veleda: number
   emoji: string | null
+  subscription_status?: string | null  // V18
 }
 
 type Variables = {
@@ -287,7 +293,7 @@ const authMiddleware = async (c: any, next: any) => {
     return c.json({ error: 'Non authentifié' }, 401)
   }
 
-  // Lookup session + user en une seule requête (perf)
+  // Lookup session + user + statut abonnement hôtel en une seule requête (perf)
   const row = await c.env.DB.prepare(`
     SELECT s.id as session_id, s.expires_at,
            u.id, u.hotel_id, u.email, u.name, u.role,
@@ -296,9 +302,11 @@ const authMiddleware = async (c: any, next: any) => {
            u.can_create_tasks, u.can_assign_tasks,
            u.can_use_veleda,
            u.emoji,
-           u.is_active
+           u.is_active,
+           h.subscription_status
     FROM user_sessions s
     JOIN users u ON s.user_id = u.id
+    LEFT JOIN hotels h ON h.id = u.hotel_id
     WHERE s.token = ?
   `).bind(headerToken).first() as any
 
@@ -309,6 +317,30 @@ const authMiddleware = async (c: any, next: any) => {
   if (new Date() >= new Date(row.expires_at)) {
     await c.env.DB.prepare('DELETE FROM user_sessions WHERE id = ?').bind(row.session_id).run()
     return c.json({ error: 'Session expirée' }, 401)
+  }
+
+  // V18 — Guard abonnement : si l'hôtel n'est pas actif, on bloque l'accès SAUF :
+  //   - super_admin : exempt (il gère l'infra, pas un hôtel)
+  //   - users sans hotel_id : exempt (cas legacy)
+  //   - routes whitelistées (auth/me, auth/logout, billing/*)
+  const subStatus = row.subscription_status as string | null
+  const isStaffNeedingActive = row.role !== 'super_admin' && row.hotel_id !== null
+  if (isStaffNeedingActive && subStatus && subStatus !== 'active') {
+    const path = new URL(c.req.url).pathname
+    const allowed = [
+      '/api/auth/me',
+      '/api/auth/logout',
+      '/api/billing/status',
+      '/api/billing/create-checkout',
+      '/api/billing/portal',
+    ]
+    if (!allowed.includes(path)) {
+      return c.json({
+        error: 'Abonnement requis',
+        code: 'subscription_required',
+        subscription_status: subStatus,
+      }, 402)  // 402 Payment Required
+    }
   }
 
   // Touch last_active (non bloquant — on n'attend pas la promesse pour réduire la latence)
@@ -323,7 +355,8 @@ const authMiddleware = async (c: any, next: any) => {
     can_create_tasks: row.can_create_tasks, can_assign_tasks: row.can_assign_tasks,
     can_use_veleda: row.can_use_veleda,
     emoji: row.emoji,
-    is_active: row.is_active
+    is_active: row.is_active,
+    subscription_status: subStatus,
   })
   await next()
 }
@@ -348,14 +381,17 @@ app.post('/api/auth/login', async (c) => {
   if (!rlEmail.ok) return rateLimitedResponse(c, 900)
 
   const user = await c.env.DB.prepare(`
-    SELECT id, hotel_id, email, name, role,
-           can_edit_procedures, can_edit_info, can_manage_chat,
-           can_edit_settings,
-           can_create_tasks, can_assign_tasks,
-           can_use_veleda,
-           emoji,
-           password_hash, password_hash_v2, password_salt, password_algo
-    FROM users WHERE LOWER(email) = ? AND is_active = 1
+    SELECT u.id, u.hotel_id, u.email, u.name, u.role,
+           u.can_edit_procedures, u.can_edit_info, u.can_manage_chat,
+           u.can_edit_settings,
+           u.can_create_tasks, u.can_assign_tasks,
+           u.can_use_veleda,
+           u.emoji,
+           u.password_hash, u.password_hash_v2, u.password_salt, u.password_algo,
+           h.subscription_status
+    FROM users u
+    LEFT JOIN hotels h ON h.id = u.hotel_id
+    WHERE LOWER(u.email) = ? AND u.is_active = 1
   `).bind(emailKey).first() as any
 
   if (!user) return c.json({ error: 'Email ou mot de passe incorrect' }, 401)
@@ -407,7 +443,8 @@ app.post('/api/auth/login', async (c) => {
       can_manage_chat: user.can_manage_chat, can_edit_settings: user.can_edit_settings,
       can_create_tasks: user.can_create_tasks, can_assign_tasks: user.can_assign_tasks,
       can_use_veleda: user.can_use_veleda,
-      emoji: user.emoji
+      emoji: user.emoji,
+      subscription_status: user.subscription_status,  // V18
     }
   })
 })
@@ -457,6 +494,392 @@ app.put('/api/auth/change-password', authMiddleware, async (c) => {
     .bind(user.id, currentToken).run()
 
   return c.json({ success: true })
+})
+
+// ============================================
+// V18 — STRIPE INTEGRATION (signup + checkout + webhook)
+// ============================================
+// Architecture :
+//  - POST /api/auth/signup      : crée hotel(pending) + admin + Stripe customer + Checkout session
+//                                  → renvoie l'URL Stripe Checkout
+//  - POST /api/stripe/webhook   : reçoit checkout.session.completed + invoice.* + subscription.*
+//                                  → met à jour hotels.subscription_status
+//  - Le frontend ouvre l'URL Stripe Checkout, le user paye, Stripe redirige vers
+//    APP_BASE_URL/?signup=success (ou ?signup=cancel) et envoie le webhook.
+
+// Helper : appel à l'API Stripe en form-encoded (Stripe n'accepte que x-www-form-urlencoded)
+async function stripeFetch(env: Bindings, path: string, body?: Record<string, any>, method = 'POST'): Promise<any> {
+  if (!env.STRIPE_SECRET_KEY) throw new Error('STRIPE_SECRET_KEY non configuré')
+  const headers: Record<string, string> = {
+    'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}`,
+  }
+  let bodyStr: string | undefined
+  if (body) {
+    headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    // Stripe accepte les nested params via [key][subkey]= syntax
+    const params = new URLSearchParams()
+    const flatten = (obj: any, prefix = '') => {
+      for (const [k, v] of Object.entries(obj)) {
+        const key = prefix ? `${prefix}[${k}]` : k
+        if (v === null || v === undefined) continue
+        if (typeof v === 'object' && !Array.isArray(v)) flatten(v, key)
+        else params.append(key, String(v))
+      }
+    }
+    flatten(body)
+    bodyStr = params.toString()
+  }
+  const resp = await fetch(`https://api.stripe.com/v1${path}`, { method, headers, body: bodyStr })
+  const text = await resp.text()
+  if (!resp.ok) {
+    throw new Error(`Stripe API ${path} ${resp.status}: ${text}`)
+  }
+  return JSON.parse(text)
+}
+
+// Helper : vérifie la signature du webhook Stripe (Stripe-Signature header)
+// Format header : t=TIMESTAMP,v1=SIG1,v1=SIG2,...
+// Payload signé : `${timestamp}.${rawBody}` avec HMAC-SHA256(secret)
+// Tolérance par défaut : 5 minutes (anti-replay)
+async function verifyStripeSignature(
+  rawBody: string,
+  sigHeader: string | null,
+  secret: string,
+  toleranceSec = 300
+): Promise<boolean> {
+  if (!sigHeader || !secret) return false
+  const parts = sigHeader.split(',').map(p => p.trim().split('='))
+  const timestamp = parts.find(p => p[0] === 't')?.[1]
+  const signatures = parts.filter(p => p[0] === 'v1').map(p => p[1])
+  if (!timestamp || signatures.length === 0) return false
+  // Anti-replay
+  const tsNum = parseInt(timestamp, 10)
+  if (!Number.isFinite(tsNum)) return false
+  const nowSec = Math.floor(Date.now() / 1000)
+  if (Math.abs(nowSec - tsNum) > toleranceSec) return false
+  // HMAC-SHA256 du payload signé
+  const enc = new TextEncoder()
+  const key = await crypto.subtle.importKey(
+    'raw', enc.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  )
+  const mac = await crypto.subtle.sign('HMAC', key, enc.encode(`${timestamp}.${rawBody}`))
+  const expected = Array.from(new Uint8Array(mac)).map(b => b.toString(16).padStart(2, '0')).join('')
+  // Comparaison à temps constant (toutes les sigs candidates)
+  for (const sig of signatures) {
+    if (sig.length !== expected.length) continue
+    let diff = 0
+    for (let i = 0; i < sig.length; i++) diff |= sig.charCodeAt(i) ^ expected.charCodeAt(i)
+    if (diff === 0) return true
+  }
+  return false
+}
+
+// Génère un slug unique à partir du nom (résout les collisions avec un suffixe -2, -3, ...)
+async function generateUniqueSlug(db: D1Database, name: string): Promise<string> {
+  const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '') || 'hotel'
+  let slug = base
+  let i = 2
+  while (true) {
+    const existing = await db.prepare('SELECT id FROM hotels WHERE slug = ?').bind(slug).first()
+    if (!existing) return slug
+    slug = `${base}-${i}`
+    i++
+    if (i > 1000) throw new Error('Impossible de générer un slug unique')
+  }
+}
+
+// ============================================
+// V18 — POST /api/auth/signup
+// Body : { hotel_name, admin_name, email, password }
+// Action :
+//   1. Crée l'hôtel (status pending)
+//   2. Crée l'admin (rôle admin, mot de passe hashé)
+//   3. Crée un Customer Stripe
+//   4. Crée une Checkout Session Stripe (mode subscription, paiement immédiat, pas d'essai)
+//   5. Renvoie l'URL Stripe au frontend qui redirige
+// ============================================
+app.post('/api/auth/signup', async (c) => {
+  // Vérif config Stripe
+  if (!c.env.STRIPE_SECRET_KEY || !c.env.STRIPE_PRICE_ID) {
+    return c.json({ error: 'Le paiement est temporairement indisponible. Contactez le support.' }, 503)
+  }
+
+  const body = await c.req.json().catch(() => ({})) as {
+    hotel_name?: string; admin_name?: string; email?: string; password?: string
+  }
+  const hotelName = String(body.hotel_name || '').trim()
+  const adminName = String(body.admin_name || '').trim()
+  const email = String(body.email || '').trim().toLowerCase()
+  const password = String(body.password || '')
+
+  if (!hotelName || hotelName.length > 150) return c.json({ error: 'Nom d\'hôtel invalide (1-150 caractères)' }, 400)
+  if (!adminName || adminName.length > 100) return c.json({ error: 'Votre nom est requis (1-100 caractères)' }, 400)
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return c.json({ error: 'Email invalide' }, 400)
+  if (password.length < 8) return c.json({ error: 'Le mot de passe doit faire au moins 8 caractères' }, 400)
+  if (password.length > 200) return c.json({ error: 'Mot de passe trop long' }, 400)
+
+  // Rate-limit anti-spam (5 signups / heure / IP)
+  const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For') || 'unknown'
+  const rl = await checkRateLimit(c.env, 'signup_ip', ip, 5, 3600)
+  if (!rl.ok) return rateLimitedResponse(c, 3600)
+
+  // Vérif email pas déjà utilisé
+  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE LOWER(email) = ?').bind(email).first()
+  if (existing) return c.json({ error: 'Cet email est déjà utilisé. Connectez-vous à la place.' }, 400)
+
+  // 1. Création hôtel (status pending — l'accès sera bloqué tant que le paiement n'est pas confirmé)
+  const slug = await generateUniqueSlug(c.env.DB, hotelName)
+  const hotelInsert = await c.env.DB.prepare(
+    `INSERT INTO hotels (name, slug, subscription_status) VALUES (?, ?, 'pending')`
+  ).bind(hotelName, slug).run()
+  const hotelId = Number(hotelInsert.meta.last_row_id)
+
+  // 2. Création admin
+  const { hash, salt, algo } = await hashPassword(password)
+  try {
+    await c.env.DB.prepare(`
+      INSERT INTO users (hotel_id, email, password_hash, password_hash_v2, password_salt, password_algo, name, role)
+      VALUES (?, ?, '', ?, ?, ?, ?, 'admin')
+    `).bind(hotelId, email, hash, salt, algo, adminName).run()
+  } catch (e: any) {
+    // Rollback : supprime l'hôtel si l'insert user échoue (collision unique email)
+    await c.env.DB.prepare('DELETE FROM hotels WHERE id = ?').bind(hotelId).run()
+    return c.json({ error: 'Cet email est déjà utilisé.' }, 400)
+  }
+
+  // 3. Création Stripe Customer (lié au hotel_id via metadata)
+  let customerId: string
+  try {
+    const customer = await stripeFetch(c.env, '/customers', {
+      email,
+      name: hotelName,
+      'metadata[hotel_id]': hotelId,
+      'metadata[hotel_name]': hotelName,
+      'metadata[admin_name]': adminName,
+    })
+    customerId = customer.id
+    await c.env.DB.prepare('UPDATE hotels SET stripe_customer_id = ? WHERE id = ?').bind(customerId, hotelId).run()
+  } catch (e: any) {
+    console.error('[signup] Stripe customer create failed:', e?.message)
+    // On garde l'hôtel + user créés, mais on renvoie une erreur — l'utilisateur pourra réessayer le paiement
+    return c.json({ error: 'Erreur lors de la création du compte de paiement. Veuillez réessayer.' }, 500)
+  }
+
+  // 4. Création Checkout Session (mode subscription, paiement immédiat, pas d'essai)
+  const baseUrl = c.env.APP_BASE_URL || `${c.req.header('Origin') || 'https://wikot.fr'}`
+  let checkoutUrl: string
+  try {
+    const session = await stripeFetch(c.env, '/checkout/sessions', {
+      mode: 'subscription',
+      customer: customerId,
+      'line_items[0][price]': c.env.STRIPE_PRICE_ID,
+      'line_items[0][quantity]': 1,
+      // PAS de trial — paiement immédiat
+      // 'subscription_data[trial_period_days]': 0,  // explicite = 0 / on omet
+      success_url: `${baseUrl}/?signup=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${baseUrl}/?signup=cancel`,
+      'metadata[hotel_id]': hotelId,
+      'subscription_data[metadata][hotel_id]': hotelId,
+      // Méthodes de paiement : Stripe choisit selon ton compte
+      allow_promotion_codes: 'true',
+      locale: 'fr',
+    })
+    checkoutUrl = session.url
+  } catch (e: any) {
+    console.error('[signup] Stripe checkout create failed:', e?.message)
+    return c.json({ error: 'Erreur lors de la création de la session de paiement. Veuillez réessayer.' }, 500)
+  }
+
+  return c.json({
+    success: true,
+    checkout_url: checkoutUrl,
+    hotel_id: hotelId,
+    message: 'Compte créé. Redirection vers le paiement…'
+  })
+})
+
+// ============================================
+// V18 — POST /api/stripe/webhook
+// Reçoit les événements Stripe (checkout.session.completed, invoice.paid, etc.)
+// Met à jour hotels.subscription_status en conséquence.
+// ============================================
+app.post('/api/stripe/webhook', async (c) => {
+  const rawBody = await c.req.text()
+  const sigHeader = c.req.header('Stripe-Signature')
+  const secret = c.env.STRIPE_WEBHOOK_SECRET
+
+  if (!secret) {
+    console.error('[stripe/webhook] STRIPE_WEBHOOK_SECRET non configuré')
+    return c.json({ error: 'Webhook non configuré' }, 503)
+  }
+  const ok = await verifyStripeSignature(rawBody, sigHeader, secret)
+  if (!ok) {
+    console.warn('[stripe/webhook] Signature invalide')
+    return c.json({ error: 'Signature invalide' }, 400)
+  }
+
+  let event: any
+  try { event = JSON.parse(rawBody) } catch { return c.json({ error: 'Body invalide' }, 400) }
+
+  const type = event.type as string
+  const obj = event.data?.object || {}
+
+  try {
+    switch (type) {
+      case 'checkout.session.completed': {
+        // Le user vient de finaliser le paiement → on active l'hôtel.
+        const hotelId = Number(obj.metadata?.hotel_id || 0)
+        const subscriptionId = obj.subscription as string | undefined
+        const customerId = obj.customer as string | undefined
+        if (hotelId && subscriptionId) {
+          await c.env.DB.prepare(`
+            UPDATE hotels SET subscription_status = 'active',
+                              stripe_subscription_id = ?,
+                              stripe_customer_id = COALESCE(stripe_customer_id, ?)
+            WHERE id = ?
+          `).bind(subscriptionId, customerId || null, hotelId).run()
+        }
+        break
+      }
+      case 'invoice.paid':
+      case 'invoice.payment_succeeded': {
+        // Paiement récurrent OK → on s'assure que c'est actif
+        const subscriptionId = obj.subscription as string | undefined
+        const periodEnd = obj.lines?.data?.[0]?.period?.end // unix timestamp
+        if (subscriptionId) {
+          await c.env.DB.prepare(`
+            UPDATE hotels SET subscription_status = 'active',
+                              subscription_current_period_end = ?
+            WHERE stripe_subscription_id = ?
+          `).bind(periodEnd ? new Date(periodEnd * 1000).toISOString() : null, subscriptionId).run()
+        }
+        break
+      }
+      case 'invoice.payment_failed': {
+        const subscriptionId = obj.subscription as string | undefined
+        if (subscriptionId) {
+          await c.env.DB.prepare(`
+            UPDATE hotels SET subscription_status = 'past_due' WHERE stripe_subscription_id = ?
+          `).bind(subscriptionId).run()
+        }
+        break
+      }
+      case 'customer.subscription.deleted':
+      case 'customer.subscription.canceled': {
+        const subscriptionId = obj.id as string | undefined
+        if (subscriptionId) {
+          await c.env.DB.prepare(`
+            UPDATE hotels SET subscription_status = 'canceled' WHERE stripe_subscription_id = ?
+          `).bind(subscriptionId).run()
+        }
+        break
+      }
+      case 'customer.subscription.updated': {
+        // Status sync (active/past_due/incomplete/canceled/...)
+        const subscriptionId = obj.id as string | undefined
+        const status = obj.status as string | undefined
+        // On mappe les statuts Stripe → nos statuts internes
+        const mapped = (() => {
+          if (status === 'active' || status === 'trialing') return 'active'
+          if (status === 'past_due' || status === 'unpaid') return 'past_due'
+          if (status === 'canceled' || status === 'incomplete_expired') return 'canceled'
+          if (status === 'incomplete') return 'incomplete'
+          return null
+        })()
+        if (subscriptionId && mapped) {
+          await c.env.DB.prepare(`
+            UPDATE hotels SET subscription_status = ? WHERE stripe_subscription_id = ?
+          `).bind(mapped, subscriptionId).run()
+        }
+        break
+      }
+      default:
+        // On accepte les autres events (Stripe veut un 2xx pour ne pas retry)
+        break
+    }
+  } catch (e: any) {
+    console.error('[stripe/webhook] DB error:', e?.message)
+    // On renvoie 200 pour éviter les retry infinis — l'event a été reçu et validé
+    return c.json({ received: true, warning: 'db_error' })
+  }
+
+  return c.json({ received: true })
+})
+
+// ============================================
+// V18 — BILLING (statut abonnement, relance paiement, portail Stripe)
+// ============================================
+
+// GET /api/billing/status — renvoie le statut d'abonnement de l'hôtel courant
+app.get('/api/billing/status', authMiddleware, async (c) => {
+  const user = c.get('user') as any
+  if (!user.hotel_id) return c.json({ status: 'n/a' })
+  const hotel = await c.env.DB.prepare(`
+    SELECT subscription_status, stripe_customer_id, stripe_subscription_id, subscription_current_period_end
+    FROM hotels WHERE id = ?
+  `).bind(user.hotel_id).first() as any
+  return c.json({
+    status: hotel?.subscription_status || 'unknown',
+    current_period_end: hotel?.subscription_current_period_end || null,
+    has_customer: !!hotel?.stripe_customer_id,
+  })
+})
+
+// POST /api/billing/create-checkout — relance une session Checkout (paiement annulé / past_due)
+// Seulement pour admin de l'hôtel (et pas super_admin)
+app.post('/api/billing/create-checkout', authMiddleware, async (c) => {
+  const user = c.get('user') as any
+  if (user.role !== 'admin' || !user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+  if (!c.env.STRIPE_SECRET_KEY || !c.env.STRIPE_PRICE_ID) {
+    return c.json({ error: 'Paiement non configuré' }, 503)
+  }
+  const hotel = await c.env.DB.prepare(`
+    SELECT id, name, stripe_customer_id FROM hotels WHERE id = ?
+  `).bind(user.hotel_id).first() as any
+  if (!hotel) return c.json({ error: 'Hôtel introuvable' }, 404)
+
+  let customerId = hotel.stripe_customer_id
+  if (!customerId) {
+    const customer = await stripeFetch(c.env, '/customers', {
+      email: user.email,
+      name: hotel.name,
+      'metadata[hotel_id]': hotel.id,
+    })
+    customerId = customer.id
+    await c.env.DB.prepare('UPDATE hotels SET stripe_customer_id = ? WHERE id = ?').bind(customerId, hotel.id).run()
+  }
+
+  const baseUrl = c.env.APP_BASE_URL || `${c.req.header('Origin') || 'https://wikot.fr'}`
+  const session = await stripeFetch(c.env, '/checkout/sessions', {
+    mode: 'subscription',
+    customer: customerId,
+    'line_items[0][price]': c.env.STRIPE_PRICE_ID,
+    'line_items[0][quantity]': 1,
+    success_url: `${baseUrl}/?signup=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${baseUrl}/?signup=cancel`,
+    'metadata[hotel_id]': hotel.id,
+    'subscription_data[metadata][hotel_id]': hotel.id,
+    allow_promotion_codes: 'true',
+    locale: 'fr',
+  })
+  return c.json({ checkout_url: session.url })
+})
+
+// POST /api/billing/portal — ouvre le Customer Portal Stripe (changer carte, annuler, factures)
+app.post('/api/billing/portal', authMiddleware, async (c) => {
+  const user = c.get('user') as any
+  if (user.role !== 'admin' || !user.hotel_id) return c.json({ error: 'Non autorisé' }, 403)
+  if (!c.env.STRIPE_SECRET_KEY) return c.json({ error: 'Paiement non configuré' }, 503)
+  const hotel = await c.env.DB.prepare(`
+    SELECT stripe_customer_id FROM hotels WHERE id = ?
+  `).bind(user.hotel_id).first() as any
+  if (!hotel?.stripe_customer_id) return c.json({ error: 'Aucun compte de facturation' }, 400)
+  const baseUrl = c.env.APP_BASE_URL || `${c.req.header('Origin') || 'https://wikot.fr'}`
+  const session = await stripeFetch(c.env, '/billing_portal/sessions', {
+    customer: hotel.stripe_customer_id,
+    return_url: baseUrl,
+  })
+  return c.json({ portal_url: session.url })
 })
 
 // ============================================
@@ -7132,6 +7555,23 @@ app.get('*', (c) => {
       // des scripts defer, dans l'ordre), on lance render() qui remplace le SSR
       // par la vraie vue (login régénéré ou vue connectée).
       document.addEventListener('DOMContentLoaded', function() {
+        // V18 — Détection retour Stripe Checkout (?signup=success | ?signup=cancel)
+        try {
+          var url = new URL(window.location.href);
+          var signupStatus = url.searchParams.get('signup');
+          if (signupStatus && typeof state !== 'undefined') {
+            if (signupStatus === 'success') {
+              state.signupReturnStatus = 'success';
+            } else if (signupStatus === 'cancel') {
+              state.signupReturnStatus = 'cancel';
+            }
+            // Nettoie l'URL pour ne pas re-déclencher au refresh
+            url.searchParams.delete('signup');
+            url.searchParams.delete('session_id');
+            window.history.replaceState({}, '', url.pathname + (url.search || ''));
+          }
+        } catch(e) { console.warn('[boot] signup return detect failed', e); }
+
         if (typeof render === 'function') {
           try { render(); } catch(e) { console.error('[boot] render() error', e); }
         }

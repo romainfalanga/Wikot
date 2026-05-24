@@ -42,9 +42,31 @@ function renderLoginPage() {
           <span class="font-display text-2xl font-semibold" style="color: var(--c-navy);">Wikot</span>
         </div>
 
+        ${state.signupReturnStatus === 'success' ? `
+          <div class="mb-4 p-4 rounded-xl flex items-start gap-3 fade-in"
+            style="background: rgba(22,163,74,0.08); border: 1px solid rgba(22,163,74,0.3); color: #15803D;">
+            <i class="fas fa-circle-check text-lg mt-0.5"></i>
+            <div class="flex-1">
+              <p class="font-semibold text-sm">Paiement confirmé&nbsp;!</p>
+              <p class="text-xs mt-1">Votre compte est activé. Connectez-vous avec l'email et le mot de passe que vous venez de créer.</p>
+            </div>
+            <button onclick="state.signupReturnStatus=null; render();" class="text-lg leading-none" style="color: #15803D; opacity: 0.6;" title="Fermer">×</button>
+          </div>
+        ` : ''}
+        ${state.signupReturnStatus === 'cancel' ? `
+          <div class="mb-4 p-4 rounded-xl flex items-start gap-3 fade-in"
+            style="background: rgba(184,106,31,0.08); border: 1px solid rgba(184,106,31,0.3); color: #B86A1F;">
+            <i class="fas fa-circle-info text-lg mt-0.5"></i>
+            <div class="flex-1">
+              <p class="font-semibold text-sm">Paiement annulé</p>
+              <p class="text-xs mt-1">Votre compte a été créé mais le paiement n'a pas abouti. Connectez-vous pour finaliser l'abonnement.</p>
+            </div>
+            <button onclick="state.signupReturnStatus=null; render();" class="text-lg leading-none" style="color: #B86A1F; opacity: 0.6;" title="Fermer">×</button>
+          </div>
+        ` : ''}
         <div class="bg-white rounded-2xl shadow-premium-lg overflow-hidden fade-in" style="border: 1px solid var(--c-line);">
           <div class="p-7 sm:p-9">
-            ${renderStaffLoginForm()}
+            ${state.authMode === 'signup' ? renderSignupForm() : renderStaffLoginForm()}
           </div>
         </div>
 
@@ -80,7 +102,170 @@ function renderStaffLoginForm() {
       <button type="submit" class="btn-premium w-full font-semibold py-3 rounded-lg transition-all" style="background: var(--c-navy); color: white;">
         <i class="fas fa-sign-in-alt mr-2"></i>Se connecter
       </button>
+    </form>
+
+    <!-- V18 — Lien création de compte hôtel -->
+    <div class="mt-6 pt-6 text-center" style="border-top: 1px solid var(--c-line);">
+      <p class="text-xs mb-3" style="color: rgba(15,27,40,0.55);">
+        Vous gérez un hôtel et souhaitez utiliser Wikot ?
+      </p>
+      <button type="button" onclick="switchAuthMode('signup')"
+        class="inline-flex items-center gap-2 text-sm font-semibold transition-colors"
+        style="color: var(--c-gold-deep);"
+        onmouseover="this.style.color='var(--c-navy)'"
+        onmouseout="this.style.color='var(--c-gold-deep)'">
+        <i class="fas fa-hotel"></i>
+        Créer mon compte hôtel
+        <i class="fas fa-arrow-right text-xs"></i>
+      </button>
+    </div>`;
+}
+
+// V18 — Formulaire d'inscription hôtel + admin (redirige vers Stripe Checkout)
+function renderSignupForm() {
+  const submitting = !!state.signupSubmitting;
+  return `
+    <button type="button" onclick="switchAuthMode('login')"
+      class="text-xs mb-4 inline-flex items-center gap-1.5 transition-colors"
+      style="color: rgba(15,27,40,0.5);"
+      onmouseover="this.style.color='var(--c-navy)'"
+      onmouseout="this.style.color='rgba(15,27,40,0.5)'">
+      <i class="fas fa-arrow-left text-[10px]"></i>
+      Retour à la connexion
+    </button>
+
+    <h2 class="font-display text-2xl font-semibold mb-1" style="color: var(--c-navy);">Créer mon compte hôtel</h2>
+    <p class="text-xs mb-6" style="color: rgba(15,27,40,0.5);">
+      Inscription en moins de 2 minutes. Paiement sécurisé par Stripe.
+    </p>
+
+    <!-- Bandeau prix -->
+    <div class="mb-6 p-4 rounded-xl" style="background: linear-gradient(135deg, rgba(201,169,97,0.10), rgba(201,169,97,0.04)); border: 1px solid var(--c-gold);">
+      <div class="flex items-baseline gap-2 mb-1">
+        <span class="font-display text-3xl font-semibold" style="color: var(--c-navy);">50&nbsp;€</span>
+        <span class="text-sm" style="color: rgba(15,27,40,0.6);">/ mois</span>
+      </div>
+      <p class="text-xs" style="color: rgba(15,27,40,0.65);">
+        <i class="fas fa-check-circle mr-1" style="color: var(--c-gold-deep);"></i>
+        Accès complet · Utilisateurs illimités · Sans engagement
+      </p>
+    </div>
+
+    <form onsubmit="event.preventDefault(); submitSignup();" id="signup-form">
+      <div class="mb-3">
+        <label class="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">Nom de l'hôtel</label>
+        <div class="relative">
+          <i class="fas fa-hotel absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
+          <input id="su_hotel_name" type="text" required maxlength="150" placeholder="Ex: Hôtel Belle Étoile"
+            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm" ${submitting ? 'disabled' : ''}>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">Votre nom</label>
+        <div class="relative">
+          <i class="fas fa-user absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
+          <input id="su_admin_name" type="text" required maxlength="100" placeholder="Prénom Nom"
+            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm" ${submitting ? 'disabled' : ''}>
+        </div>
+      </div>
+      <div class="mb-3">
+        <label class="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">Email administrateur</label>
+        <div class="relative">
+          <i class="fas fa-envelope absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
+          <input id="su_email" type="email" required placeholder="vous@hotel.com"
+            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm" ${submitting ? 'disabled' : ''}>
+        </div>
+      </div>
+      <div class="mb-5">
+        <label class="block text-xs font-semibold mb-1.5 uppercase tracking-wider" style="color: var(--c-navy); opacity:0.7;">Mot de passe</label>
+        <div class="relative">
+          <i class="fas fa-lock absolute left-3.5 top-3.5 text-sm" style="color: var(--c-gold);"></i>
+          <input id="su_password" type="password" required minlength="8" placeholder="Minimum 8 caractères"
+            class="input-premium w-full pl-10 pr-4 py-3 rounded-lg outline-none text-sm" ${submitting ? 'disabled' : ''}>
+        </div>
+      </div>
+
+      ${state.signupError ? `
+        <div class="mb-4 p-3 rounded-lg text-xs flex items-start gap-2" style="background: rgba(200,76,63,0.08); color: #C84C3F; border: 1px solid rgba(200,76,63,0.25);">
+          <i class="fas fa-circle-exclamation mt-0.5"></i>
+          <span>${escapeHtml(state.signupError)}</span>
+        </div>
+      ` : ''}
+
+      <button type="submit" ${submitting ? 'disabled' : ''}
+        class="btn-premium w-full font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2"
+        style="background: var(--c-navy); color: white; ${submitting ? 'opacity: 0.6; cursor: wait;' : ''}">
+        ${submitting ? `
+          <i class="fas fa-spinner fa-spin"></i>
+          Création en cours…
+        ` : `
+          <i class="fas fa-credit-card"></i>
+          Continuer vers le paiement (50&nbsp;€/mois)
+        `}
+      </button>
+
+      <p class="text-[10px] text-center mt-4" style="color: rgba(15,27,40,0.4);">
+        <i class="fas fa-lock mr-1"></i>
+        Paiement sécurisé par Stripe · Vous serez redirigé pour saisir votre carte
+      </p>
     </form>`;
+}
+
+// V18 — Bascule login ↔ signup
+function switchAuthMode(mode) {
+  state.authMode = mode;
+  state.signupError = null;
+  render();
+}
+
+// V18 — Soumission du formulaire signup → crée le compte + redirige vers Stripe Checkout
+async function submitSignup() {
+  const hotel_name = document.getElementById('su_hotel_name')?.value.trim();
+  const admin_name = document.getElementById('su_admin_name')?.value.trim();
+  const email = document.getElementById('su_email')?.value.trim();
+  const password = document.getElementById('su_password')?.value;
+
+  if (!hotel_name || !admin_name || !email || !password) {
+    state.signupError = 'Tous les champs sont requis.';
+    render();
+    return;
+  }
+  if (password.length < 8) {
+    state.signupError = 'Le mot de passe doit faire au moins 8 caractères.';
+    render();
+    return;
+  }
+
+  state.signupSubmitting = true;
+  state.signupError = null;
+  render();
+
+  try {
+    const resp = await fetch('/api/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hotel_name, admin_name, email, password }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      state.signupError = data?.error || 'Erreur lors de la création du compte.';
+      state.signupSubmitting = false;
+      render();
+      return;
+    }
+    if (data?.checkout_url) {
+      // Redirige vers Stripe Checkout — le user paye, et Stripe revient vers / avec ?signup=success
+      window.location.href = data.checkout_url;
+    } else {
+      state.signupError = 'Erreur inattendue (pas d\'URL de paiement).';
+      state.signupSubmitting = false;
+      render();
+    }
+  } catch (e) {
+    state.signupError = 'Erreur réseau. Veuillez réessayer.';
+    state.signupSubmitting = false;
+    render();
+  }
 }
 
 // ============================================
@@ -473,3 +658,141 @@ async function switchHotel(hotelId) {
   showToast('Hôtel sélectionné', 'success');
 }
 
+
+// ============================================
+// V18 — PAGE "ABONNEMENT REQUIS"
+// Affichée à un user connecté dont l'hôtel a un subscription_status ≠ 'active'
+// (pending = jamais payé, past_due = paiement échoué, canceled = annulé)
+// ============================================
+function renderSubscriptionRequired() {
+  const status = state.user.subscription_status || 'pending';
+  const isAdmin = state.user.role === 'admin';
+  const titles = {
+    pending: 'Finaliser votre abonnement',
+    past_due: 'Paiement en attente',
+    canceled: 'Abonnement annulé',
+    incomplete: 'Paiement incomplet',
+  };
+  const messages = {
+    pending: 'Votre compte a bien été créé. Pour accéder à Wikot, finalisez votre paiement.',
+    past_due: 'Votre dernier paiement n\'a pas pu être effectué. Mettez à jour votre moyen de paiement pour continuer à utiliser Wikot.',
+    canceled: 'Votre abonnement a été annulé. Pour réactiver Wikot, souscrivez à nouveau.',
+    incomplete: 'Votre paiement n\'a pas été finalisé. Veuillez le compléter pour accéder à Wikot.',
+  };
+  const icons = {
+    pending: 'fa-credit-card',
+    past_due: 'fa-triangle-exclamation',
+    canceled: 'fa-circle-xmark',
+    incomplete: 'fa-hourglass-half',
+  };
+  return `
+  <div class="min-h-screen flex items-center justify-center p-6" style="background: var(--c-cream);">
+    <div class="w-full max-w-md fade-in">
+      <div class="bg-white rounded-2xl shadow-premium-lg overflow-hidden" style="border: 1px solid var(--c-line);">
+        <!-- Header avec icone -->
+        <div class="px-8 pt-8 pb-6 text-center" style="background: linear-gradient(135deg, rgba(201,169,97,0.08), transparent);">
+          <div class="inline-flex items-center justify-center w-16 h-16 rounded-full mb-4" style="background: var(--c-navy);">
+            <i class="fas ${icons[status] || 'fa-credit-card'} text-2xl" style="color: var(--c-gold);"></i>
+          </div>
+          <h1 class="font-display text-2xl font-semibold mb-2" style="color: var(--c-navy);">
+            ${titles[status] || 'Abonnement requis'}
+          </h1>
+          <p class="text-sm" style="color: rgba(15,27,40,0.65);">
+            ${messages[status] || 'Un abonnement actif est requis pour accéder à Wikot.'}
+          </p>
+        </div>
+
+        <div class="px-8 py-6">
+          <!-- Bandeau prix -->
+          <div class="mb-6 p-4 rounded-xl text-center" style="background: linear-gradient(135deg, rgba(201,169,97,0.10), rgba(201,169,97,0.04)); border: 1px solid var(--c-gold);">
+            <div class="flex items-baseline justify-center gap-2 mb-1">
+              <span class="font-display text-3xl font-semibold" style="color: var(--c-navy);">50&nbsp;€</span>
+              <span class="text-sm" style="color: rgba(15,27,40,0.6);">/ mois</span>
+            </div>
+            <p class="text-xs" style="color: rgba(15,27,40,0.65);">
+              Accès complet · Utilisateurs illimités · Sans engagement
+            </p>
+          </div>
+
+          ${isAdmin ? `
+            <button onclick="goToBillingCheckout()" id="billing-cta-btn"
+              class="btn-premium w-full font-semibold py-3 rounded-lg transition-all flex items-center justify-center gap-2 mb-3"
+              style="background: var(--c-navy); color: white;">
+              <i class="fas fa-credit-card"></i>
+              ${status === 'past_due' ? 'Mettre à jour mon paiement' : 'Procéder au paiement'}
+            </button>
+            ${state.user.stripe_customer_id ? `
+              <button onclick="goToBillingPortal()"
+                class="w-full text-sm font-semibold py-2.5 rounded-lg transition-all"
+                style="color: var(--c-navy); background: transparent; border: 1px solid var(--c-line-strong);">
+                <i class="fas fa-arrow-up-right-from-square mr-2"></i>
+                Gérer ma facturation (Stripe)
+              </button>
+            ` : ''}
+          ` : `
+            <div class="p-4 rounded-lg text-sm text-center" style="background: var(--c-cream-deep); color: var(--c-navy);">
+              <i class="fas fa-info-circle mr-1" style="color: var(--c-gold-deep);"></i>
+              Contactez l'administrateur de votre hôtel pour réactiver l'abonnement.
+            </div>
+          `}
+
+          <button onclick="logout()"
+            class="w-full mt-4 text-xs text-center py-2 transition-colors"
+            style="color: rgba(15,27,40,0.5);"
+            onmouseover="this.style.color='var(--c-navy)'"
+            onmouseout="this.style.color='rgba(15,27,40,0.5)'">
+            <i class="fas fa-sign-out-alt mr-1"></i>Se déconnecter
+          </button>
+        </div>
+      </div>
+
+      <p class="text-center text-xs mt-6" style="color: rgba(15,27,40,0.4);">
+        <i class="fas fa-lock mr-1"></i>
+        Paiement sécurisé par Stripe
+      </p>
+    </div>
+  </div>`;
+}
+
+// V18 — Lance une nouvelle session Stripe Checkout (pour user déjà connecté en past_due / canceled)
+async function goToBillingCheckout() {
+  const btn = document.getElementById('billing-cta-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Redirection…';
+  }
+  try {
+    const resp = await fetch('/api/billing/create-checkout', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${state.token}`, 'Content-Type': 'application/json' },
+    });
+    const data = await resp.json();
+    if (data?.checkout_url) {
+      window.location.href = data.checkout_url;
+    } else {
+      showToast(data?.error || 'Erreur lors de la création de la session', 'error');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-credit-card"></i> Procéder au paiement'; }
+    }
+  } catch (e) {
+    showToast('Erreur réseau', 'error');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-credit-card"></i> Procéder au paiement'; }
+  }
+}
+
+// V18 — Ouvre le Customer Portal Stripe (mettre à jour CB, annuler, factures)
+async function goToBillingPortal() {
+  try {
+    const resp = await fetch('/api/billing/portal', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${state.token}`, 'Content-Type': 'application/json' },
+    });
+    const data = await resp.json();
+    if (data?.portal_url) {
+      window.location.href = data.portal_url;
+    } else {
+      showToast(data?.error || 'Erreur', 'error');
+    }
+  } catch (e) {
+    showToast('Erreur réseau', 'error');
+  }
+}

@@ -1755,13 +1755,10 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
   font-style: italic;
 }
 
-/* ----- Responsive ----- */
+/* ----- Responsive -----
+   V17.5 : on NE touche PLUS aux dimensions du tableau en mobile :
+   la taille fixe 1440x810 est conservee, le main scrolle si necessaire. */
 @media (max-width: 768px) {
-  .veleda-board-fullpage {
-    height: calc(100vh - 56px);
-    min-height: calc(100vh - 56px);
-    padding: 20px 14px;
-  }
   .veleda-board-fullpage .veleda-note {
     max-width: 260px;
     font-size: 1.05rem;
@@ -2023,18 +2020,21 @@ h1 { font-family: Arial, Helvetica, sans-serif; }
    ========================================================= */
 
 /* ----- Fond mural derriere le tableau (papier japonais creme) -----
-   PLEIN ECRAN STRICT mais RESPECTUEUX du menu :
-   le tableau remplit le main (a cote de la sidebar) sans deborder dessus.
-   Aucun scroll possible, ni vertical ni horizontal. */
+   V17.5 : TABLEAU TAILLE FIXE 1440x810
+   - Le tableau a une taille fixe pensee pour les ecrans modernes (16:9).
+   - Sur grand ecran : centre dans la zone main avec marges visibles autour.
+   - Sur ecran plus petit : le main scrolle (H+V) pour ne RIEN cacher du tableau.
+   - Aucun debordement sur la sidebar : la sidebar reste fixe a sa place. */
 html:has(.veleda-fullpage),
 body:has(.veleda-fullpage) {
+  /* On laisse le body gerer son overflow normalement, le scroll se fait sur le main */
   overflow: hidden !important;
   height: 100vh !important;
   max-height: 100vh !important;
 }
-/* Le main qui contient la vue Veleda ne scrolle pas */
+/* Le main qui contient la vue Veleda : scrollable (H+V) si le tableau depasse */
 main.app-main:has(.veleda-fullpage) {
-  overflow: hidden !important;
+  overflow: auto !important;
   padding: 0 !important;
 }
 /* Le wrapper de vue n'a aucun padding/max-width pour Veleda */
@@ -2047,32 +2047,42 @@ main.app-main:has(.veleda-fullpage) {
   flex: 1 1 auto !important;
   display: flex !important;
   flex-direction: column !important;
-  overflow: hidden !important;
+  overflow: visible !important;
 }
+/* V17.5 : le wrapper centre le tableau, et scrolle si le tableau depasse */
 .veleda-fullpage {
   position: relative;
   width: 100%;
-  height: 100%;
-  min-height: 0;
-  flex: 1 1 auto;
+  /* On prend AU MOINS la hauteur du main (sinon le centrage ne marche pas)
+     ET on s'agrandit si le tableau a besoin de plus (pour le scroll) */
+  min-height: 100%;
   background-color: #EFEAE2;
   background-image:
     radial-gradient(circle at 20% 20%, rgba(201,169,97,0.06) 0%, transparent 50%),
     radial-gradient(circle at 80% 70%, rgba(15,27,40,0.04) 0%, transparent 50%),
     repeating-linear-gradient(45deg, transparent 0 2px, rgba(0,0,0,0.012) 2px 3px);
-  padding: 12px;
-  overflow: hidden;
+  /* Centrage du tableau dans le main via flex */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
   box-sizing: border-box;
 }
 
-/* ----- LE TABLEAU : aluminium brosse + ivoire + texture pointillee -----
-   Dimensions strictes : tient sur l'ecran sans aucun debordement */
+/* ----- LE TABLEAU : taille FIXE 1440x810 (16:9, ecrans modernes) -----
+   V17.5 : le tableau est ENTIEREMENT visible sur grand ecran (centre),
+   et scrollable via le main sur ecrans plus petits. */
 .veleda-board-fullpage {
   position: relative;
   margin: 0;
-  width: 100%;
-  height: 100%;
-  max-height: 100%;
+  /* Taille fixe : 1440x810 (ratio 16:9, taille HD+ standardisee) */
+  width: 1440px;
+  height: 810px;
+  min-width: 1440px;  /* empeche tout shrink */
+  min-height: 810px;
+  max-width: 1440px;
+  max-height: 810px;
+  flex-shrink: 0;     /* essentiel : le tableau ne se compresse pas en flex */
   /* Cadre alu brosse */
   border: 10px solid transparent;
   border-radius: 16px;

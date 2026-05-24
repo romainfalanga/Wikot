@@ -5953,9 +5953,16 @@ app.get('/api/tasks', authMiddleware, async (c) => {
   await materializeTasksForDate(c.env.DB, user.hotel_id, dateStr)
 
   // 2) Récupère toutes les instances du jour avec leurs assignments
+  // V17 : on remonte aussi le lien procedure_id (instance OU template) + son titre
   const instances = await c.env.DB.prepare(
-    `SELECT ti.id, ti.template_id, ti.task_date, ti.title, ti.description, ti.suggested_time, ti.category, ti.status, ti.is_unassigned_visible, ti.priority, ti.duration_min, ti.created_at
+    `SELECT ti.id, ti.template_id, ti.task_date, ti.title, ti.description, ti.suggested_time,
+            ti.category, ti.status, ti.is_unassigned_visible, ti.priority, ti.duration_min, ti.created_at,
+            COALESCE(ti.procedure_id, tt.procedure_id) AS procedure_id,
+            COALESCE(p_inst.title, p_tpl.title)         AS procedure_title
      FROM task_instances ti
+     LEFT JOIN task_templates tt ON tt.id = ti.template_id
+     LEFT JOIN procedures p_inst ON p_inst.id = ti.procedure_id AND p_inst.hotel_id = ti.hotel_id
+     LEFT JOIN procedures p_tpl  ON p_tpl.id  = tt.procedure_id  AND p_tpl.hotel_id  = ti.hotel_id
      WHERE ti.hotel_id = ? AND ti.task_date = ?
      ORDER BY
        CASE ti.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,
@@ -5995,11 +6002,15 @@ app.get('/api/tasks', authMiddleware, async (c) => {
 app.get('/api/tasks/templates', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!user.hotel_id) return c.json({ error: 'Hôtel non défini' }, 400)
+  // V17 : on ramene aussi procedure_id + le titre de la procedure liee
   const r = await c.env.DB.prepare(
-    `SELECT id, title, description, recurrence_type, recurrence_days, monthly_day,
-            active_from, active_to, suggested_time, category, priority, duration_min,
-            is_active, created_at
-     FROM task_templates WHERE hotel_id = ? ORDER BY is_active DESC, title`
+    `SELECT t.id, t.title, t.description, t.recurrence_type, t.recurrence_days, t.monthly_day,
+            t.active_from, t.active_to, t.suggested_time, t.category, t.priority, t.duration_min,
+            t.is_active, t.created_at, t.procedure_id,
+            p.title AS procedure_title
+     FROM task_templates t
+     LEFT JOIN procedures p ON p.id = t.procedure_id AND p.hotel_id = t.hotel_id
+     WHERE t.hotel_id = ? ORDER BY t.is_active DESC, t.title`
   ).bind(user.hotel_id).all()
   return c.json({ templates: r.results || [] })
 })
@@ -6037,18 +6048,25 @@ app.post('/api/tasks/templates', authMiddleware, async (c) => {
   const priority = ['normal', 'high', 'urgent'].includes(body.priority) ? body.priority : 'normal'
   const durationMin = Number.isFinite(body.duration_min) && body.duration_min > 0 && body.duration_min < 1440 ? body.duration_min : null
 
+  // V17 : lien procedure (verifie qu'elle appartient au meme hotel)
+  let procedureId: number | null = null
+  if (Number.isInteger(body.procedure_id) && body.procedure_id > 0) {
+    const proc = await c.env.DB.prepare('SELECT id, hotel_id FROM procedures WHERE id = ?').bind(body.procedure_id).first() as any
+    if (proc && proc.hotel_id === user.hotel_id) procedureId = body.procedure_id
+  }
+
   const r = await c.env.DB.prepare(
     `INSERT INTO task_templates
        (hotel_id, title, description, recurrence_type, recurrence_days, monthly_day,
-        active_from, active_to, suggested_time, category, priority, duration_min, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        active_from, active_to, suggested_time, category, priority, duration_min, created_by, procedure_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     user.hotel_id, title,
     body.description || null, rec.recurrence_type, rec.recurrence_days, rec.monthly_day,
     body.active_from || null, body.active_to || null,
     body.suggested_time || null, body.category || null,
     priority, durationMin,
-    user.id
+    user.id, procedureId
   ).run()
   return c.json({ id: r.meta.last_row_id, success: true })
 })
@@ -6080,6 +6098,18 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
     ? body.duration_min
     : (body.duration_min === null ? null : undefined)
 
+  // V17 : lien procedure. body.procedure_id peut etre :
+  //   - un int valide  -> on lie a cette procedure (apres verif hotel_id)
+  //   - null           -> on retire le lien
+  //   - undefined      -> on ne touche pas au lien existant
+  let procedureUpdate: number | null | undefined = undefined
+  if (body.procedure_id === null) {
+    procedureUpdate = null
+  } else if (Number.isInteger(body.procedure_id) && body.procedure_id > 0) {
+    const proc = await c.env.DB.prepare('SELECT id, hotel_id FROM procedures WHERE id = ?').bind(body.procedure_id).first() as any
+    if (proc && proc.hotel_id === user.hotel_id) procedureUpdate = body.procedure_id
+  }
+
   await c.env.DB.prepare(
     `UPDATE task_templates SET
        title = COALESCE(?, title),
@@ -6094,6 +6124,7 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
        priority = COALESCE(?, priority),
        duration_min = ${durationMin !== undefined ? '?' : 'duration_min'},
        is_active = COALESCE(?, is_active),
+       procedure_id = ${procedureUpdate !== undefined ? '?' : 'procedure_id'},
        updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
   ).bind(
@@ -6109,6 +6140,7 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
     priority,
     ...(durationMin !== undefined ? [durationMin] : []),
     typeof body.is_active === 'number' ? body.is_active : null,
+    ...(procedureUpdate !== undefined ? [procedureUpdate] : []),
     id
   ).run()
 
@@ -6142,14 +6174,21 @@ app.post('/api/tasks/instances', authMiddleware, async (c) => {
     ? body.assignee_ids.filter((n: any) => Number.isInteger(n))
     : []
 
+  // V17 : lien procedure (verifie qu'elle appartient au meme hotel)
+  let procedureId: number | null = null
+  if (Number.isInteger(body.procedure_id) && body.procedure_id > 0) {
+    const proc = await c.env.DB.prepare('SELECT id, hotel_id FROM procedures WHERE id = ?').bind(body.procedure_id).first() as any
+    if (proc && proc.hotel_id === user.hotel_id) procedureId = body.procedure_id
+  }
+
   const r = await c.env.DB.prepare(
     `INSERT INTO task_instances
-       (hotel_id, template_id, task_date, title, description, suggested_time, category, priority, duration_min, created_by)
-     VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (hotel_id, template_id, task_date, title, description, suggested_time, category, priority, duration_min, created_by, procedure_id)
+     VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).bind(
     user.hotel_id, date, title,
     body.description || null, body.suggested_time || null, body.category || null,
-    priority, durationMin, user.id
+    priority, durationMin, user.id, procedureId
   ).run()
   const newId = r.meta.last_row_id as number
 
@@ -6183,6 +6222,16 @@ app.put('/api/tasks/instances/:id', authMiddleware, async (c) => {
   const durationMin = Number.isFinite(body.duration_min) && body.duration_min > 0 && body.duration_min < 1440
     ? body.duration_min
     : (body.duration_min === null ? null : undefined)
+
+  // V17 : lien procedure (cf. PUT templates pour la convention)
+  let procedureUpdate: number | null | undefined = undefined
+  if (body.procedure_id === null) {
+    procedureUpdate = null
+  } else if (Number.isInteger(body.procedure_id) && body.procedure_id > 0) {
+    const proc = await c.env.DB.prepare('SELECT id, hotel_id FROM procedures WHERE id = ?').bind(body.procedure_id).first() as any
+    if (proc && proc.hotel_id === user.hotel_id) procedureUpdate = body.procedure_id
+  }
+
   await c.env.DB.prepare(
     `UPDATE task_instances SET
        title = COALESCE(?, title),
@@ -6193,6 +6242,7 @@ app.put('/api/tasks/instances/:id', authMiddleware, async (c) => {
        duration_min = ${durationMin !== undefined ? '?' : 'duration_min'},
        task_date = COALESCE(?, task_date),
        status = COALESCE(?, status),
+       procedure_id = ${procedureUpdate !== undefined ? '?' : 'procedure_id'},
        updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`
   ).bind(
@@ -6204,6 +6254,7 @@ app.put('/api/tasks/instances/:id', authMiddleware, async (c) => {
     ...(durationMin !== undefined ? [durationMin] : []),
     body.task_date || null,
     body.status || null,
+    ...(procedureUpdate !== undefined ? [procedureUpdate] : []),
     id
   ).run()
   return c.json({ success: true })

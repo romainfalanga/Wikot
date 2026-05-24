@@ -1534,6 +1534,9 @@ async function loadBackWikotTasksForHub() {
 
 // Crée la conversation Back Wikot avec le contexte workflow + entre dans l'atelier
 async function openBackWikotWorkshop() {
+  // V17 : on ouvre toujours en mode lecture seule (Back Wikot ecrit)
+  // L'utilisateur peut basculer en edition manuelle via le bouton du header
+  state.backWikotManualEdit = false;
   // Création conversation côté backend (avec workflow_mode + target_kind/id si update)
   const body = {
     mode: 'max',
@@ -1641,6 +1644,10 @@ async function resumeBackWikotConversation(convId) {
 }
 
 // Retour à l'écran d'accueil (4 boutons) : reset l'état atelier
+function _resetBackWikotManualEdit() {
+  state.backWikotManualEdit = false;
+}
+
 function backToBackWikotHome() {
   state.backWikotStep = 'home';
   state.backWikotWorkflowMode = null;
@@ -1649,6 +1656,7 @@ function backToBackWikotHome() {
   state.backWikotForm = null;
   state.backWikotFormDirty = false;
   state.backWikotSelectSearch = '';
+  state.backWikotManualEdit = false;
   // On ne ferme pas la conversation côté serveur — historique préservé
   const s = wikotState('max');
   s.currentConvId = null;
@@ -1662,6 +1670,36 @@ function updateBackWikotFormField(field, value) {
   if (!state.backWikotForm) return;
   state.backWikotForm[field] = value;
   state.backWikotFormDirty = true;
+}
+
+// V17 : helpers pour les ETAPES d'une procedure (edition manuelle)
+function updateBackWikotStepField(idx, field, value) {
+  if (!state.backWikotForm || state.backWikotForm.kind !== 'procedure') return;
+  const steps = state.backWikotForm.steps || [];
+  if (!steps[idx]) return;
+  steps[idx][field] = value;
+  state.backWikotForm.steps = steps;
+  state.backWikotFormDirty = true;
+}
+
+function updateBackWikotStepLinkedProc(idx, linkedId) {
+  if (!state.backWikotForm || state.backWikotForm.kind !== 'procedure') return;
+  const steps = state.backWikotForm.steps || [];
+  if (!steps[idx]) return;
+  steps[idx].linked_procedure_id = linkedId ? parseInt(linkedId, 10) : null;
+  state.backWikotFormDirty = true;
+}
+
+// V17 : toggle entre lecture seule (Back Wikot ecrit) et edition manuelle (user ecrit)
+function toggleBackWikotManualEdit() {
+  state.backWikotManualEdit = !state.backWikotManualEdit;
+  render();
+  setTimeout(() => {
+    if (state.backWikotManualEdit) {
+      const firstInput = document.querySelector('.backwikot-manual-input');
+      if (firstInput) firstInput.focus();
+    }
+  }, 50);
 }
 
 function addBackWikotStep() {
@@ -2629,11 +2667,23 @@ function renderBackWikotWorkshop() {
             <p class="text-[11px] text-navy-500 truncate">${state.backWikotFormDirty ? '<i class="fas fa-circle text-orange-400 text-[6px] mr-1"></i>Modifications non enregistrées' : 'Atelier de rédaction'}</p>
           </div>
         </div>
-        <button onclick="saveBackWikotForm()" ${isSaving ? 'disabled' : ''}
-          class="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 disabled:from-gray-300 disabled:to-gray-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold shadow-sm inline-flex items-center gap-1.5 shrink-0 transition-all">
-          <i class="fas ${isSaving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}"></i>
-          <span class="hidden sm:inline">${isSaving ? 'Enregistrement…' : 'Enregistrer'}</span>
-        </button>
+        <div class="flex items-center gap-2 shrink-0">
+          ${(f.kind === 'procedure' || f.kind === 'info_item') ? `
+            <button onclick="toggleBackWikotManualEdit()" type="button"
+              class="${state.backWikotManualEdit
+                ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white border-orange-500 hover:from-orange-600 hover:to-amber-600'
+                : 'bg-white border-gray-200 text-navy-700 hover:bg-gray-50'} border px-3 py-2 rounded-lg text-sm font-semibold inline-flex items-center gap-1.5 transition-all shadow-sm"
+              title="${state.backWikotManualEdit ? 'Revenir à la vue Back Wikot' : 'Modifier les champs à la main'}">
+              <i class="fas ${state.backWikotManualEdit ? 'fa-check' : 'fa-pen-to-square'}"></i>
+              <span class="hidden sm:inline">${state.backWikotManualEdit ? 'Édition manuelle' : 'Modifier manuellement'}</span>
+            </button>
+          ` : ''}
+          <button onclick="saveBackWikotForm()" ${isSaving ? 'disabled' : ''}
+            class="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 disabled:from-gray-300 disabled:to-gray-400 text-white px-3 sm:px-4 py-2 rounded-lg text-sm font-semibold shadow-sm inline-flex items-center gap-1.5 shrink-0 transition-all">
+            <i class="fas ${isSaving ? 'fa-spinner fa-spin' : 'fa-floppy-disk'}"></i>
+            <span class="hidden sm:inline">${isSaving ? 'Enregistrement…' : 'Enregistrer'}</span>
+          </button>
+        </div>
       </div>
 
       <!-- Layout responsive : form (gauche/haut) + chat (droite/bas) -->
@@ -2729,9 +2779,45 @@ function renderBackWikotProcedureForm(f) {
   const cats = state.categories || [];
   const allProcs = state.backWikotProceduresCache || state.procedures || [];
   const linkable = allProcs.filter(p => p.id !== f.id);
+  const editing = !!state.backWikotManualEdit;
+
+  const catOptions = cats.map(c =>
+    `<option value="${c.id}" ${f.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name || '')}</option>`
+  ).join('');
 
   const stepsHtml = (f.steps || []).map((st, idx) => {
     const linkedProc = st.linked_procedure_id ? linkable.find(p => p.id === st.linked_procedure_id) : null;
+    if (editing) {
+      const linkOptions = linkable.map(p =>
+        `<option value="${p.id}" ${st.linked_procedure_id === p.id ? 'selected' : ''}>${escapeHtml(p.title || '')}</option>`
+      ).join('');
+      return `
+        <div class="bg-orange-50/40 border border-orange-200 rounded-xl p-3 space-y-2">
+          <div class="flex items-start gap-2">
+            <span class="w-7 h-7 rounded-full bg-gradient-to-br from-orange-400 to-rose-500 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-1">${idx + 1}</span>
+            <div class="flex-1 min-w-0 space-y-2">
+              <input type="text" value="${escapeHtml(st.title || '')}" placeholder="Titre de l'étape"
+                class="backwikot-manual-input w-full px-3 py-2 border border-orange-200 rounded-lg text-sm bg-white focus:border-orange-400 focus:ring-2 focus:ring-orange-200 outline-none"
+                oninput="updateBackWikotStepField(${idx}, 'title', this.value)" />
+              <textarea rows="3" placeholder="Détail de l'étape..."
+                class="backwikot-manual-input w-full px-3 py-2 border border-orange-200 rounded-lg text-sm bg-white focus:border-orange-400 focus:ring-2 focus:ring-orange-200 outline-none resize-y"
+                oninput="updateBackWikotStepField(${idx}, 'content', this.value)">${escapeHtml(st.content || '')}</textarea>
+              <div class="flex items-center gap-2">
+                <select class="flex-1 px-2 py-1.5 border border-orange-200 rounded-lg text-xs bg-white focus:border-orange-400 outline-none"
+                  onchange="updateBackWikotStepLinkedProc(${idx}, this.value)">
+                  <option value="">— Pas de sous-procédure liée —</option>
+                  ${linkOptions}
+                </select>
+                <button onclick="removeBackWikotStep(${idx})" type="button"
+                  class="px-2.5 py-1.5 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs">
+                  <i class="fas fa-trash"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
     return `
       <div class="bg-gray-50 border border-gray-200 rounded-xl p-3 space-y-2 ${fieldHighlightClass('steps')}">
         <div class="flex items-start gap-2">
@@ -2751,6 +2837,59 @@ function renderBackWikotProcedureForm(f) {
   }).join('');
 
   const cat = findCatById(cats, f.category_id);
+
+  if (editing) {
+    return `
+      <div class="space-y-4">
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Titre <span class="text-red-500">*</span></label>
+          <input type="text" value="${escapeHtml(f.title || '')}" placeholder="Titre de la procédure"
+            class="backwikot-manual-input w-full px-3 py-2 border border-orange-200 rounded-lg text-sm bg-white focus:border-orange-400 focus:ring-2 focus:ring-orange-200 outline-none"
+            oninput="updateBackWikotFormField('title', this.value)" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Déclencheur <span class="text-red-500">*</span></label>
+          <input type="text" value="${escapeHtml(f.trigger_event || '')}" placeholder="Quand cette procédure s'applique-t-elle ?"
+            class="backwikot-manual-input w-full px-3 py-2 border border-orange-200 rounded-lg text-sm bg-white focus:border-orange-400 focus:ring-2 focus:ring-orange-200 outline-none"
+            oninput="updateBackWikotFormField('trigger_event', this.value)" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Description</label>
+          <textarea rows="2" placeholder="Description courte de la procédure..."
+            class="backwikot-manual-input w-full px-3 py-2 border border-orange-200 rounded-lg text-sm bg-white focus:border-orange-400 focus:ring-2 focus:ring-orange-200 outline-none resize-y"
+            oninput="updateBackWikotFormField('description', this.value)">${escapeHtml(f.description || '')}</textarea>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Catégorie</label>
+          <select class="w-full px-3 py-2 border border-orange-200 rounded-lg text-sm bg-white focus:border-orange-400 outline-none"
+            onchange="updateBackWikotFormField('category_id', this.value ? parseInt(this.value) : null)">
+            <option value="">— Sans catégorie —</option>
+            ${catOptions}
+          </select>
+        </div>
+        <div class="pt-2 border-t border-gray-200">
+          <div class="flex items-center justify-between mb-2">
+            <label class="text-xs font-semibold text-navy-700">
+              Étapes <span class="text-red-500">*</span> <span class="text-navy-400 font-normal">(${(f.steps || []).length})</span>
+            </label>
+            <button onclick="addBackWikotStep()" type="button"
+              class="px-2.5 py-1.5 rounded-lg bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold inline-flex items-center gap-1.5">
+              <i class="fas fa-plus"></i> Ajouter une étape
+            </button>
+          </div>
+          <div class="space-y-2">
+            ${stepsHtml || '<div class="text-center py-6 text-xs text-navy-400 italic bg-orange-50/30 rounded-lg border border-dashed border-orange-200">Aucune étape. Clique sur « Ajouter une étape » ci-dessus.</div>'}
+          </div>
+        </div>
+        <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 text-[11px] text-orange-800 flex items-start gap-2">
+          <i class="fas fa-pen-to-square mt-0.5"></i>
+          <div>
+            <strong>Édition manuelle activée.</strong> Tu modifies les champs directement. Pour rendre la main à Back Wikot, clique sur le bouton orange en haut.
+          </div>
+        </div>
+      </div>
+    `;
+  }
 
   return `
     <div class="space-y-4">
@@ -2786,14 +2925,14 @@ function renderBackWikotProcedureForm(f) {
           Étapes <span class="text-red-500">*</span> <span class="text-navy-400 font-normal">(${(f.steps || []).length})</span>
         </label>
         <div class="space-y-2">
-          ${stepsHtml || '<div class="text-center py-6 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">Aucune étape pour le moment. Demande à Back Wikot d\'ajouter ou de modifier les étapes.</div>'}
+          ${stepsHtml || '<div class="text-center py-6 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">Aucune étape pour le moment. Demande à Back Wikot d\'ajouter ou de modifier les étapes, ou clique sur <strong>Modifier manuellement</strong> en haut.</div>'}
         </div>
       </div>
 
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
         <i class="fas fa-circle-info mt-0.5"></i>
         <div>
-          <strong>Formulaire en lecture seule.</strong> Seul Back Wikot peut écrire dedans. Pour modifier un champ, demande-lui dans le chat à droite. Quand tout te convient, clique sur <strong>Enregistrer</strong> en haut.
+          <strong>Formulaire en lecture seule.</strong> Back Wikot écrit dedans. Tu peux aussi cliquer sur <strong>Modifier manuellement</strong> en haut pour éditer directement.
         </div>
       </div>
     </div>
@@ -2804,6 +2943,44 @@ function renderBackWikotProcedureForm(f) {
 function renderBackWikotInfoForm(f) {
   const cats = state.hotelInfoCategories || [];
   const cat = findCatById(cats, f.category_id);
+  const editing = !!state.backWikotManualEdit;
+  const catOptions = cats.map(c =>
+    `<option value="${c.id}" ${f.category_id === c.id ? 'selected' : ''}>${escapeHtml(c.name || '')}</option>`
+  ).join('');
+
+  if (editing) {
+    return `
+      <div class="space-y-4">
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Titre <span class="text-red-500">*</span></label>
+          <input type="text" value="${escapeHtml(f.title || '')}" placeholder="Titre de l'information"
+            class="backwikot-manual-input w-full px-3 py-2 border border-orange-200 rounded-lg text-sm bg-white focus:border-orange-400 focus:ring-2 focus:ring-orange-200 outline-none"
+            oninput="updateBackWikotFormField('title', this.value)" />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Catégorie</label>
+          <select class="w-full px-3 py-2 border border-orange-200 rounded-lg text-sm bg-white focus:border-orange-400 outline-none"
+            onchange="updateBackWikotFormField('category_id', this.value ? parseInt(this.value) : null)">
+            <option value="">— Sans catégorie —</option>
+            ${catOptions}
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-navy-700 mb-1 block">Contenu <span class="text-red-500">*</span></label>
+          <textarea rows="10" placeholder="Contenu de l'information..."
+            class="backwikot-manual-input w-full px-3 py-3 border border-orange-200 rounded-lg text-sm bg-white focus:border-orange-400 focus:ring-2 focus:ring-orange-200 outline-none leading-relaxed resize-y"
+            oninput="updateBackWikotFormField('content', this.value)">${escapeHtml(f.content || '')}</textarea>
+        </div>
+        <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 text-[11px] text-orange-800 flex items-start gap-2">
+          <i class="fas fa-pen-to-square mt-0.5"></i>
+          <div>
+            <strong>Édition manuelle activée.</strong> Tu modifies les champs directement. Pour rendre la main à Back Wikot, clique sur le bouton orange en haut.
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div class="space-y-4">
       <div>
@@ -2828,7 +3005,7 @@ function renderBackWikotInfoForm(f) {
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
         <i class="fas fa-circle-info mt-0.5"></i>
         <div>
-          <strong>Formulaire en lecture seule.</strong> Seul Back Wikot peut écrire dedans. Pour modifier un champ, demande-lui dans le chat à droite. Quand tout te convient, clique sur <strong>Enregistrer</strong> en haut.
+          <strong>Formulaire en lecture seule.</strong> Back Wikot écrit dedans. Tu peux aussi cliquer sur <strong>Modifier manuellement</strong> en haut pour éditer directement.
         </div>
       </div>
     </div>

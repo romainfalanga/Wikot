@@ -38,6 +38,18 @@ const TASK_CATEGORY_CONFIG = {
   autre:       { label: 'Autre', icon: 'fa-circle-dot', color: 'rgba(15,27,40,0.55)' }
 };
 
+// ===== V17 — Ouvrir une procédure depuis une tâche =====
+// Délègue à viewProcedure() de 04-procedures.js, qui gère déjà le chargement + push history.
+function openProcedureFromTask(procedureId) {
+  if (!procedureId) return;
+  if (typeof viewProcedure === 'function') {
+    viewProcedure(procedureId);
+  } else {
+    // Fallback ultra-défensif
+    showToast('Impossible d\'ouvrir la procédure', 'error');
+  }
+}
+
 // ===== Helpers de date =====
 function todayIsoStr() { return new Date().toISOString().slice(0, 10); }
 function shiftDate(isoStr, days) {
@@ -363,6 +375,18 @@ function renderTaskCard(inst, assignments, opts, myId) {
                 ${cat ? `<span><i class="fas ${cat.icon} mr-1" style="color: ${cat.color};"></i>${cat.label}</span>` : ''}
                 ${inst.template_id ? `<span class="italic"><i class="fas fa-rotate mr-1"></i>récurrente</span>` : ''}
               </div>
+              ${inst.procedure_id ? `
+                <div class="mt-2">
+                  <button onclick="openProcedureFromTask(${inst.procedure_id})" type="button"
+                    class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-md transition-all"
+                    style="background: linear-gradient(135deg, rgba(201,169,97,0.15), rgba(201,169,97,0.08)); color: var(--c-navy); border: 1px solid var(--c-gold);"
+                    title="Voir la procédure détaillée à suivre">
+                    <i class="fas fa-book-open" style="color: var(--c-gold-deep);"></i>
+                    Voir la procédure${inst.procedure_title ? ` : ${escapeHtml(inst.procedure_title)}` : ''}
+                    <i class="fas fa-arrow-right text-[9px] ml-0.5"></i>
+                  </button>
+                </div>
+              ` : ''}
               <div class="mt-2 flex flex-wrap items-center gap-1">${assigneeChips}</div>
             </div>
             ${(canEdit || canAssign) ? `
@@ -516,6 +540,7 @@ function renderWeekTaskMini(inst, assignments, myId, canAssign) {
         ${isUnassigned ? `<i class="fas fa-circle-question text-[9px]" style="color: #B86A1F;" title="Non attribuée"></i>` : ''}
         ${cat ? `<i class="fas ${cat.icon} text-[9px]" style="color: ${cat.color};"></i>` : ''}
         ${inst.suggested_time ? `<span class="text-[9px] font-mono" style="color: var(--c-gold-deep);">${escapeHtml(inst.suggested_time.slice(0, 5))}</span>` : ''}
+        ${inst.procedure_id ? `<i class="fas fa-book-open text-[8px]" style="color: var(--c-gold-deep);" title="Procédure liée${inst.procedure_title ? ' : ' + escapeHtml(inst.procedure_title) : ''}"></i>` : ''}
         ${inst.priority === 'urgent' ? `<i class="fas fa-bolt text-[8px] ml-auto" style="color: ${prio.color};"></i>` : (inst.priority === 'high' ? `<i class="fas fa-circle-exclamation text-[8px] ml-auto" style="color: ${prio.color};"></i>` : '')}
       </div>
       <p class="text-[10.5px] font-semibold leading-tight ${isDone ? 'line-through opacity-60' : ''}" style="color: var(--c-navy); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(inst.title)}</p>
@@ -828,6 +853,21 @@ function showTaskCreateModal(dateStr, recurring = false, templateId = null, inst
         </div>
       </div>
 
+      <!-- V17 : lien vers une procedure du wiki -->
+      <div class="mb-3">
+        <label class="block text-xs font-semibold mb-1.5" style="color: var(--c-navy);">
+          <i class="fas fa-book-open mr-1" style="color: var(--c-gold-deep);"></i>
+          Procédure liée (optionnel)
+          <span class="font-normal" style="color: rgba(15,27,40,0.5);">— la procédure détaillée à suivre pour réaliser cette tâche</span>
+        </label>
+        <select id="tcm_procedure_id" class="w-full px-3 py-2.5 input-premium rounded-lg text-sm">
+          <option value="">— Aucune procédure liée —</option>
+          ${((state.procedures || [])).map(p =>
+            `<option value="${p.id}" ${item.procedure_id === p.id ? 'selected' : ''}>${escapeHtml(p.title || '')}</option>`
+          ).join('')}
+        </select>
+      </div>
+
       <!-- Bloc d'attribution : UNIQUEMENT pour les instances (jour précis), JAMAIS pour les modèles -->
       ${(showAssignBlock && staff.length > 0) ? `
         <div id="tcm_assign_block" style="display: ${initialMode === 'oneoff' ? 'block' : 'none'};">
@@ -1017,6 +1057,9 @@ async function submitTaskCreateModal(templateId, instanceId) {
   const duration_min = (Number.isFinite(durationVal) && durationVal > 0) ? durationVal : null;
   const category = document.getElementById('tcm_category').value || null;
   const priority = document.getElementById('tcm_priority').value || 'normal';
+  // V17 : procedure liee (optionnel)
+  const procIdRaw = document.getElementById('tcm_procedure_id')?.value || '';
+  const procedure_id = procIdRaw ? parseInt(procIdRaw, 10) : null;
 
   // Pré-assignation
   const assigneeIds = [];
@@ -1045,7 +1088,8 @@ async function submitTaskCreateModal(templateId, instanceId) {
       title, description,
       recurrence_type, recurrence_days, monthly_day,
       suggested_time, duration_min, category, priority,
-      active_from, active_to
+      active_from, active_to,
+      procedure_id  // V17
     };
     if (templateId) {
       const activeEl = document.getElementById('tcm_active');
@@ -1068,7 +1112,8 @@ async function submitTaskCreateModal(templateId, instanceId) {
     body = {
       title, description, task_date,
       suggested_time, duration_min, category, priority,
-      assignee_ids: assigneeIds
+      assignee_ids: assigneeIds,
+      procedure_id // V17 — lien procédure
     };
     if (instanceId) {
       url = `/tasks/instances/${instanceId}`;

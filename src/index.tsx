@@ -5837,9 +5837,10 @@ function validateOptionalInt(val: any, min: number, max: number, fieldName: stri
 }
 
 // Helper : nettoyage des notes expirées d'un hôtel (idempotent, peu coûteux grâce à l'index)
+// V18.2 : les notes avec expires_at IS NULL sont permanentes => jamais supprimees ici.
 async function cleanupExpiredVeledaNotes(db: D1Database, hotelId: number) {
   await db.prepare(
-    'DELETE FROM veleda_notes WHERE hotel_id = ? AND expires_at < CURRENT_TIMESTAMP'
+    'DELETE FROM veleda_notes WHERE hotel_id = ? AND expires_at IS NOT NULL AND expires_at < CURRENT_TIMESTAMP'
   ).bind(hotelId).run()
 }
 
@@ -5895,6 +5896,8 @@ app.get('/api/veleda-notes', authMiddleware, async (c) => {
   }
 
   // Liste les notes du tableau demande
+  // V18.2 : les notes permanentes (expires_at IS NULL) sont triees APRES
+  // celles avec expiration (qui restent classees par urgence croissante).
   const query = parentId === null
     ? `SELECT n.id, n.title, n.content, n.expires_at, n.created_by, n.created_by_name,
               n.created_at, n.updated_at,
@@ -5904,7 +5907,7 @@ app.get('/api/veleda-notes', authMiddleware, async (c) => {
        FROM veleda_notes n
        LEFT JOIN users u ON n.created_by = u.id
        WHERE n.hotel_id = ? AND n.parent_note_id IS NULL
-       ORDER BY n.expires_at ASC, n.id DESC
+       ORDER BY (n.expires_at IS NULL) ASC, n.expires_at ASC, n.id DESC
        LIMIT 200`
     : `SELECT n.id, n.title, n.content, n.expires_at, n.created_by, n.created_by_name,
               n.created_at, n.updated_at,
@@ -5914,7 +5917,7 @@ app.get('/api/veleda-notes', authMiddleware, async (c) => {
        FROM veleda_notes n
        LEFT JOIN users u ON n.created_by = u.id
        WHERE n.hotel_id = ? AND n.parent_note_id = ?
-       ORDER BY n.expires_at ASC, n.id DESC
+       ORDER BY (n.expires_at IS NULL) ASC, n.expires_at ASC, n.id DESC
        LIMIT 200`
 
   const stmt = parentId === null
@@ -5981,7 +5984,7 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
   const body = await c.req.json().catch(() => ({})) as any
   const title = typeof body.title === 'string' ? body.title.trim() : ''
   const content = typeof body.content === 'string' ? body.content.trim() : ''
-  const expiresAt = typeof body.expires_at === 'string' ? body.expires_at.trim() : ''
+  const expiresAtRaw = typeof body.expires_at === 'string' ? body.expires_at.trim() : ''
 
   // Validation stricte
   if (!content) return c.json({ error: 'Le contenu de la note est requis' }, 400)
@@ -5991,19 +5994,24 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
   if (title.length > VELEDA_MAX_TITLE_LEN) {
     return c.json({ error: `Titre trop long (max ${VELEDA_MAX_TITLE_LEN} caractères)` }, 400)
   }
-  if (!expiresAt) return c.json({ error: 'Date d\'expiration requise' }, 400)
 
-  // Parse robuste de la date (accepte ISO ou "YYYY-MM-DDTHH:mm")
-  const expiresDate = new Date(expiresAt)
-  if (isNaN(expiresDate.getTime())) {
-    return c.json({ error: 'Date d\'expiration invalide' }, 400)
-  }
-  if (expiresDate.getTime() <= Date.now()) {
-    return c.json({ error: 'La date d\'expiration doit être dans le futur' }, 400)
-  }
-  // Plafond raisonnable : 1 an max (au-delà c'est plus une note éphémère)
-  if (expiresDate.getTime() > Date.now() + 365 * 24 * 60 * 60 * 1000) {
-    return c.json({ error: 'Date d\'expiration trop lointaine (1 an maximum)' }, 400)
+  // V18.2 : expires_at est desormais OPTIONNEL.
+  //   - chaine vide / absent / null => note permanente (expires_at IS NULL en base)
+  //   - chaine ISO => parsing strict (futur + max 1 an)
+  let expiresIsoForInsert: string | null = null
+  if (expiresAtRaw && body.expires_at !== null) {
+    const expiresDate = new Date(expiresAtRaw)
+    if (isNaN(expiresDate.getTime())) {
+      return c.json({ error: 'Date d\'expiration invalide' }, 400)
+    }
+    if (expiresDate.getTime() <= Date.now()) {
+      return c.json({ error: 'La date d\'expiration doit être dans le futur' }, 400)
+    }
+    // Plafond raisonnable : 1 an max (au-delà c'est plus une note éphémère)
+    if (expiresDate.getTime() > Date.now() + 365 * 24 * 60 * 60 * 1000) {
+      return c.json({ error: 'Date d\'expiration trop lointaine (1 an maximum)' }, 400)
+    }
+    expiresIsoForInsert = expiresDate.toISOString()
   }
 
   // Validation des champs de layout (optionnels)
@@ -6071,7 +6079,7 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
     user.hotel_id,
     title || null,
     content,
-    expiresDate.toISOString(),
+    expiresIsoForInsert,
     user.id,
     user.name,
     posXv.value,
@@ -6090,7 +6098,7 @@ app.post('/api/veleda-notes', authMiddleware, async (c) => {
       id: result.meta.last_row_id,
       title: title || null,
       content,
-      expires_at: expiresDate.toISOString(),
+      expires_at: expiresIsoForInsert,
       created_by: user.id,
       created_by_name: user.name,
       created_at: new Date().toISOString(),
@@ -6168,15 +6176,27 @@ app.put('/api/veleda-notes/:id', authMiddleware, async (c) => {
     values.push(ct)
   }
 
-  if (typeof body.expires_at === 'string' && body.expires_at.trim()) {
-    const d = new Date(body.expires_at.trim())
-    if (isNaN(d.getTime())) return c.json({ error: 'Date d\'expiration invalide' }, 400)
-    if (d.getTime() <= Date.now()) return c.json({ error: 'La date d\'expiration doit être dans le futur' }, 400)
-    if (d.getTime() > Date.now() + 365 * 24 * 60 * 60 * 1000) {
-      return c.json({ error: 'Date d\'expiration trop lointaine (1 an maximum)' }, 400)
+  // V18.2 : expires_at edit
+  //   - null              => on retire l'expiration (note permanente)
+  //   - "" (string vide)  => idem (retirer)
+  //   - "YYYY-..."        => parsing strict
+  //   - undefined         => on ne touche pas le champ
+  if (body.expires_at === null) {
+    fields.push('expires_at = NULL')
+  } else if (typeof body.expires_at === 'string') {
+    const raw = body.expires_at.trim()
+    if (!raw) {
+      fields.push('expires_at = NULL')
+    } else {
+      const d = new Date(raw)
+      if (isNaN(d.getTime())) return c.json({ error: 'Date d\'expiration invalide' }, 400)
+      if (d.getTime() <= Date.now()) return c.json({ error: 'La date d\'expiration doit être dans le futur' }, 400)
+      if (d.getTime() > Date.now() + 365 * 24 * 60 * 60 * 1000) {
+        return c.json({ error: 'Date d\'expiration trop lointaine (1 an maximum)' }, 400)
+      }
+      fields.push('expires_at = ?')
+      values.push(d.toISOString())
     }
-    fields.push('expires_at = ?')
-    values.push(d.toISOString())
   }
 
   // Champs de layout (pos_x, pos_y, width, height) — optionnels et indépendants

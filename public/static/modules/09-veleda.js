@@ -34,6 +34,10 @@ const VELEDA_COLOR_HEX = {
 };
 
 // 10 polices autorisees (doit matcher VELEDA_ALLOWED_FONTS serveur)
+// V18.2 : on a retire le selecteur de polices ; seule "Permanent Marker"
+// est conservee car c'est celle qui imite le mieux un vrai trait de feutre
+// sur un tableau Veleda. On garde la liste blanche pour la compat avec les
+// notes deja en base (qui peuvent avoir d'autres polices historiques).
 const VELEDA_FONTS = [
   'Permanent Marker',
   'Kalam',
@@ -46,7 +50,7 @@ const VELEDA_FONTS = [
   'Reenie Beanie',
   'Just Another Hand'
 ];
-const VELEDA_DEFAULT_FONT = 'Kalam';
+const VELEDA_DEFAULT_FONT = 'Permanent Marker';
 
 // Banque de 50 emote-icones (doit matcher VELEDA_EMOJI_BANK serveur)
 const VELEDA_EMOJI_BANK = [
@@ -81,7 +85,9 @@ function veledaEscape(str) {
     .replace(/'/g, '&#039;');
 }
 
+// V18.2 : si expires_at est null/undefined => note permanente, urgence neutre.
 function veledaUrgency(expiresAtIso) {
+  if (!expiresAtIso) return 'green';
   const remainingMs = new Date(expiresAtIso).getTime() - Date.now();
   if (remainingMs < 24 * 3600 * 1000) return 'red';
   if (remainingMs < 7 * 24 * 3600 * 1000) return 'amber';
@@ -89,6 +95,7 @@ function veledaUrgency(expiresAtIso) {
 }
 
 function veledaExpiresLabel(expiresAtIso) {
+  if (!expiresAtIso) return 'permanente';
   const remainingMs = new Date(expiresAtIso).getTime() - Date.now();
   if (remainingMs <= 0) return 'expiree';
   const minutes = Math.floor(remainingMs / 60000);
@@ -594,8 +601,11 @@ function renderVeledaWriteModal() {
   const expiresLocal = state.veledaDraftExpiresLocal || veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
   const minLocal = veledaToDatetimeLocal(new Date(Date.now() + 60 * 1000));
   const selectedColor = state.veledaDraftColor || 'black';
-  const selectedFont = state.veledaDraftFont || VELEDA_DEFAULT_FONT;
+  // V18.2 : la police est fixee a Permanent Marker (plus de selecteur dans l'UI)
+  const selectedFont = VELEDA_DEFAULT_FONT;
   const isBoardChecked = !!state.veledaDraftIsBoard;
+  // V18.2 : date de disparition optionnelle. Par defaut : pas d'expiration.
+  const hasExpiry = !!state.veledaDraftHasExpiry;
 
   const colorButtons = VELEDA_COLORS.map(c => `
     <button type="button"
@@ -608,16 +618,20 @@ function renderVeledaWriteModal() {
     </button>
   `).join('');
 
-  // Apercu pour chaque police : ecrit le nom dans la police elle-meme
-  const fontButtons = VELEDA_FONTS.map(f => `
-    <button type="button"
-      class="veleda-font-pick ${selectedFont === f ? 'active' : ''}"
-      onclick="veledaSetDraftFont('${f}')"
-      title="${veledaEscape(f)}"
-      style="font-family: '${f}', cursive;">
-      ${veledaEscape(f)}
-    </button>
-  `).join('');
+  // V18.2 : bloc datetime-picker rendu conditionnellement (seulement si hasExpiry)
+  const expirySection = hasExpiry
+    ? `
+      <div class="veleda-expiry-picker-wrap">
+        ${window.wkDtp ? window.wkDtp.renderDateTime({
+          id: 'veleda-expires',
+          valueDate: expiresLocal.slice(0, 10),
+          valueTime: expiresLocal.slice(11, 16),
+          minDate: minLocal.slice(0, 10),
+          onChange: 'veledaSyncExpiresFromPicker'
+        }) : `<input id="veleda-expires-input" type="datetime-local" min="${minLocal}" value="${expiresLocal}" onchange="veledaSetExpires(this.value)">`}
+      </div>
+    `
+    : '';
 
   return `
     <div class="veleda-modal-overlay" onclick="closeVeledaWriteModalIfBackdrop(event)">
@@ -650,23 +664,19 @@ function renderVeledaWriteModal() {
           </label>
           <div class="veleda-color-row">${colorButtons}</div>
 
-          <label class="veleda-field-label">
-            Police d'ecriture
-            <span class="veleda-field-hint">— 10 styles manuscrits</span>
+          <label class="veleda-isexpiry-row ${hasExpiry ? 'is-checked' : ''}">
+            <input type="checkbox"
+              class="veleda-isexpiry-checkbox"
+              ${hasExpiry ? 'checked' : ''}
+              onchange="veledaSetDraftHasExpiry(this.checked)">
+            <span class="veleda-isexpiry-content">
+              <span class="veleda-isexpiry-title">
+                <i class="fas fa-calendar-day"></i>
+                Definir une date et heure de disparition
+              </span>
+            </span>
           </label>
-          <div class="veleda-font-grid">${fontButtons}</div>
-
-          <label class="veleda-field-label">
-            <i class="fas fa-calendar-day" style="margin-right:4px;"></i>
-            Date et heure de disparition
-          </label>
-          ${window.wkDtp ? window.wkDtp.renderDateTime({
-            id: 'veleda-expires',
-            valueDate: expiresLocal.slice(0, 10),
-            valueTime: expiresLocal.slice(11, 16),
-            minDate: minLocal.slice(0, 10),
-            onChange: 'veledaSyncExpiresFromPicker'
-          }) : `<input id="veleda-expires-input" type="datetime-local" min="${minLocal}" value="${expiresLocal}" onchange="veledaSetExpires(this.value)">`}
+          ${expirySection}
 
           <label class="veleda-isboard-row ${isBoardChecked ? 'is-checked' : ''}">
             <input type="checkbox"
@@ -677,9 +687,6 @@ function renderVeledaWriteModal() {
               <span class="veleda-isboard-title">
                 <i class="fas fa-chalkboard"></i>
                 Faire de cette note un sous-tableau
-              </span>
-              <span class="veleda-isboard-hint">
-                La note sera soulignee en bleu et cliquable. Elle ouvrira son propre tableau VELEDA pour organiser les idees liees.
               </span>
             </span>
           </label>
@@ -753,6 +760,17 @@ function veledaSetDraftIsBoard(checked) {
   }, 30);
 }
 
+// V18.2 : toggle "Definir une date de disparition".
+//   - checked   => le picker s'affiche, on initialise a J+24h si pas deja fait
+//   - unchecked => la note sera permanente (pas d'expires_at envoye au backend)
+function veledaSetDraftHasExpiry(checked) {
+  state.veledaDraftHasExpiry = !!checked;
+  if (checked && !state.veledaDraftExpiresLocal) {
+    state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+  }
+  render();
+}
+
 // ============================================
 // CLIC SUR LE TABLEAU (en dehors d'une note) -> ferme inspect
 // ============================================
@@ -811,14 +829,12 @@ function veledaSyncExpiresFromPicker(localStr /*, id */) {
 
 async function submitVeledaCreate() {
   const content = (state.veledaDraftContent || '').trim();
-  // V16 : lecture directe du picker si dispo, fallback sur le state
-  let expiresLocal = state.veledaDraftExpiresLocal;
-  if (window.wkDtp) {
-    const fromPicker = window.wkDtp.getDateTimeLocal('veleda-expires');
-    if (fromPicker) expiresLocal = fromPicker;
-  }
+  const hasExpiry = !!state.veledaDraftHasExpiry;
+  // V16/V18.2 : on ne lit le picker que si l'utilisateur a active l'expiration.
+  let expiresIso = null;
   const color = state.veledaDraftColor || 'black';
-  const font = state.veledaDraftFont || VELEDA_DEFAULT_FONT;
+  // V18.2 : police fixee a VELEDA_DEFAULT_FONT (plus de selecteur)
+  const font = VELEDA_DEFAULT_FONT;
   const isBoard = !!state.veledaDraftIsBoard;
   const parentNoteId = state.veledaCurrentBoardId || null;
   const btn = document.getElementById('veleda-submit-btn');
@@ -832,24 +848,30 @@ async function submitVeledaCreate() {
     }
     return;
   }
-  if (!expiresLocal) {
-    alert('Choisis une date et une heure de disparition.');
-    return;
-  }
   if (VELEDA_COLORS.indexOf(color) === -1) {
     alert('Couleur invalide.');
     return;
   }
-  if (VELEDA_FONTS.indexOf(font) === -1) {
-    alert('Police invalide.');
-    return;
+
+  // V18.2 : si l'utilisateur a coche "Definir une date" -> validation stricte,
+  // sinon expiresIso reste null (note permanente).
+  if (hasExpiry) {
+    let expiresLocal = state.veledaDraftExpiresLocal;
+    if (window.wkDtp) {
+      const fromPicker = window.wkDtp.getDateTimeLocal('veleda-expires');
+      if (fromPicker) expiresLocal = fromPicker;
+    }
+    if (!expiresLocal) {
+      alert('Choisis une date et une heure de disparition (ou decoche la case).');
+      return;
+    }
+    const expiresDate = new Date(expiresLocal);
+    if (isNaN(expiresDate.getTime()) || expiresDate.getTime() <= Date.now()) {
+      alert('La date de disparition doit etre dans le futur.');
+      return;
+    }
+    expiresIso = expiresDate.toISOString();
   }
-  const expiresDate = new Date(expiresLocal);
-  if (isNaN(expiresDate.getTime()) || expiresDate.getTime() <= Date.now()) {
-    alert('La date de disparition doit etre dans le futur.');
-    return;
-  }
-  const expiresIso = expiresDate.toISOString();
 
   // Position initiale : un emplacement libre dans le coin haut-gauche
   const board = document.getElementById('veleda-board');
@@ -886,6 +908,7 @@ async function submitVeledaCreate() {
     // Reset du brouillon
     state.veledaDraftContent = '';
     state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+    state.veledaDraftHasExpiry = false;
     state.veledaDraftColor = 'black';
     state.veledaDraftFont = VELEDA_DEFAULT_FONT;
     state.veledaDraftIsBoard = false;

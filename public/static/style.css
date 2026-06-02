@@ -2871,6 +2871,66 @@ main.app-main:has(.veleda-fullpage) {
   color: #C9A961;
 }
 
+/* ----- V18.2 : CHECKBOX "Definir une date de disparition" : bandeau dore ----- */
+.veleda-isexpiry-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 2px solid rgba(201,169,97,0.22);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(201,169,97,0.05) 0%, rgba(244,213,141,0.08) 100%);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  position: relative;
+}
+.veleda-isexpiry-row:hover {
+  border-color: rgba(201,169,97,0.5);
+  background: linear-gradient(135deg, rgba(201,169,97,0.08) 0%, rgba(244,213,141,0.12) 100%);
+}
+.veleda-isexpiry-row.is-checked {
+  border-color: #C9A961;
+  background: linear-gradient(135deg, rgba(201,169,97,0.1) 0%, rgba(244,213,141,0.16) 100%);
+  box-shadow:
+    0 0 0 3px rgba(201,169,97,0.15),
+    0 4px 10px rgba(201,169,97,0.12);
+}
+.veleda-isexpiry-checkbox {
+  margin: 0;
+  width: 20px;
+  height: 20px;
+  accent-color: #C9A961;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.veleda-isexpiry-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.veleda-isexpiry-title {
+  font-family: 'Permanent Marker', cursive;
+  letter-spacing: 0.3px;
+  font-weight: 400;
+  font-size: 1.05rem;
+  color: #0F172A;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.veleda-isexpiry-title i {
+  color: #C9A961;
+  filter: drop-shadow(0 1px 2px rgba(201,169,97,0.35));
+}
+/* Petit wrapper autour du picker pour qu'il "depende" visuellement
+   de la case "Definir une date" cochee juste au-dessus. */
+.veleda-expiry-picker-wrap {
+  padding: 4px 4px 4px 28px;
+  border-left: 2px dashed rgba(201,169,97,0.3);
+  margin-left: 10px;
+}
+
 /* ----- CHECKBOX "Sous-tableau" : bandeau bleu premium ----- */
 /* FIX (V18.1) : suppression du ::before decoratif qui ressemblait a une
    2e case a cocher visuellement, et nettoyage du overflow:hidden inutile. */

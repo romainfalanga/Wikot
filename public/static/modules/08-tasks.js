@@ -1454,8 +1454,20 @@ const tasksDnd = {
   scrollRafId: null,
   scrollDir: 0,        // -1 = gauche, +1 = droite, 0 = stop
   scrollSpeed: 0,      // px/frame
-  shiftHeld: false
+  shiftHeld: false,
+  globalDragOverHandler: null  // ref pour add/removeEventListener
 };
+
+// Handler global de dragover : appele DEPUIS N'IMPORTE OU sur la page
+// pendant le drag. C'est lui qui rend l'auto-scroll fonctionnel meme quand
+// la souris quitte les colonnes (gap entre colonnes, bord de l'ecran, etc.)
+function tasksGlobalDragOver(ev) {
+  // preventDefault est OBLIGATOIRE pour que le drop soit accepte partout.
+  // Sans ca, le navigateur refuse le drop et l'auto-scroll ne s'active pas.
+  ev.preventDefault();
+  tasksDnd.shiftHeld = !!ev.shiftKey;
+  tasksMaybeAutoScroll(ev.clientX);
+}
 
 function tasksHandleDragStart(ev, el) {
   const id = parseInt(el.getAttribute('data-task-instance-id'), 10);
@@ -1469,12 +1481,23 @@ function tasksHandleDragStart(ev, el) {
   } catch (e) { /* noop */ }
   el.classList.add('is-dragging');
   document.body.classList.add('tasks-dnd-active');
-  // Track shift via dragover (ev.shiftKey n'est pas fiable sur dragstart)
+
+  // Listener global : capture dragover SUR TOUT LE DOCUMENT pour declencher
+  // l'auto-scroll meme quand la souris n'est plus sur une colonne (bord ecran,
+  // gap entre colonnes, scrollbar, etc.). On garde une ref pour pouvoir le
+  // detacher proprement au dragend.
+  tasksDnd.globalDragOverHandler = tasksGlobalDragOver;
+  document.addEventListener('dragover', tasksDnd.globalDragOverHandler);
 }
 
 function tasksHandleDragEnd(ev, el) {
   el.classList.remove('is-dragging');
   document.body.classList.remove('tasks-dnd-active');
+  // Detache le listener global de dragover
+  if (tasksDnd.globalDragOverHandler) {
+    document.removeEventListener('dragover', tasksDnd.globalDragOverHandler);
+    tasksDnd.globalDragOverHandler = null;
+  }
   // Nettoyage des highlights restants
   document.querySelectorAll('.tasks-day-col.is-drop-target').forEach(c => c.classList.remove('is-drop-target'));
   // Stop auto-scroll
@@ -1600,8 +1623,8 @@ async function tasksHandleDrop(ev, col) {
 // Quand la souris est dans la zone gauche/droite du scroller kanban,
 // on lance un RAF qui translate scrollLeft. Vitesse proportionnelle a la
 // proximite du bord (max 18 px/frame ~ 60fps = 1080 px/s).
-const TASKS_DND_EDGE_ZONE = 100;   // px : zone "magnetique" pres du bord
-const TASKS_DND_MAX_SPEED = 18;    // px par frame
+const TASKS_DND_EDGE_ZONE = 140;   // px : zone "magnetique" pres du bord
+const TASKS_DND_MAX_SPEED = 26;    // px par frame (~1560 px/s a 60fps)
 
 function tasksMaybeAutoScroll(clientX) {
   const scroller = document.getElementById('tasks-day-kanban-scroller');

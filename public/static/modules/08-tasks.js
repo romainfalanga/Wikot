@@ -343,26 +343,15 @@ function renderTasksDayView() {
     }
   }
 
-  // Rendu des colonnes
-  const columnsHtml = [];
-
-  // Colonne "Non attribuees" : toujours rendue si pas filtre "mes taches"
-  // V18.4 : on l'affiche meme vide pour servir de drop-zone "desattribuer"
-  if (!showOnlyMine) {
-    columnsHtml.push(renderTaskColumn({
-      title: 'Non attribuées',
-      icon: 'fa-circle-question',
-      iconColor: '#B86A1F',
-      headerBg: 'rgba(184,106,31,0.10)',
-      headerBorder: 'rgba(184,106,31,0.35)',
-      isFree: true,
-      isMine: false,
-      entries: unassignedCol,
-      opts,
-      myId,
-      userId: -1 // marqueur "non attribuees" pour le drop
-    }));
-  }
+  // V18.8 : nouvelle architecture en 2 bandes scrollables horizontalement
+  //  - Bande HAUTE (#tasks-unassigned-strip)  : toutes les taches NON attribuees,
+  //    cartes alignees cote a cote en ligne, scroll horizontal. Sert aussi de
+  //    drop-zone pour DESATTRIBUER une tache.
+  //  - Bande BASSE (#tasks-day-kanban-scroller) : kanban des EMPLOYES (colonnes
+  //    verticales), scroll horizontal independant.
+  // Plus besoin d'auto-scroll pendant le drag : l'utilisateur positionne d'abord
+  // les 2 bandes (tache visible en haut, personne visible en bas) puis fait un
+  // drag court entre les deux. Ergonomie tres robuste.
 
   // Une colonne par membre du staff (l'utilisateur courant en premier)
   const orderedStaff = [...visibleStaff].sort((a, b) => {
@@ -371,6 +360,7 @@ function renderTasksDayView() {
     return (a.name || '').localeCompare(b.name || '');
   });
 
+  const columnsHtml = [];
   for (const s of orderedStaff) {
     const entries = columnsByUser[s.id] || [];
     const isMine = s.id === myId;
@@ -391,12 +381,13 @@ function renderTasksDayView() {
     }));
   }
 
-  // V18.4 : on attache les indicateurs de scroll (zones gauche/droite)
-  // et un wrapper qui sert de scrolleur pour l'auto-scroll pendant le drag.
-  // L'observer en bas de wrapper se charge d'initialiser les chevrons
-  // overflow apres insertion dans le DOM (sans avoir besoin de setTimeout
-  // depuis le code appelant).
+  // Rendu de la bande HAUTE des taches non attribuees (sauf si filtre "mes taches")
+  const unassignedHtml = (!showOnlyMine)
+    ? renderUnassignedStrip(unassignedCol, opts, myId)
+    : '';
+
   return `
+    ${unassignedHtml}
     <div class="tasks-day-kanban-wrap">
       <div class="tasks-day-kanban-edge tasks-day-kanban-edge-left" aria-hidden="true"></div>
       <div class="tasks-day-kanban-edge tasks-day-kanban-edge-right" aria-hidden="true"></div>
@@ -407,6 +398,40 @@ function renderTasksDayView() {
       <img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
            alt="" aria-hidden="true" style="display:none;"
            onload="tasksKanbanUpdateEdges(document.getElementById('tasks-day-kanban-scroller'))">
+    </div>
+  `;
+}
+
+// V18.8 : Bande horizontale des taches non attribuees au-dessus du kanban.
+// Cartes alignees cote a cote, scroll horizontal independant. La bande
+// elle-meme sert de drop-zone pour DESATTRIBUER (data-drop-user-id=-1).
+function renderUnassignedStrip(entries, opts, myId) {
+  const count = entries.length;
+  const dropAttr = opts.canAssign ? `data-drop-user-id="-1"` : '';
+
+  // Etat vide : on garde la bande visible pour servir de drop-zone "desattribuer"
+  const bodyHtml = count === 0
+    ? `<div class="tasks-unassigned-empty">
+         <i class="fas fa-circle-check mr-2" style="color: rgba(15,27,40,0.30);"></i>
+         Toutes les tâches sont attribuées${opts.canAssign ? ' — glissez ici pour désattribuer' : ''}
+       </div>`
+    : entries.map(e => renderTaskCardCompact(e.inst, e.list, { ...opts, free: true, highlight: false, _stripVariant: true }, myId)).join('');
+
+  return `
+    <div class="tasks-unassigned-wrap" ${dropAttr}>
+      <div class="tasks-unassigned-header">
+        <div class="tasks-unassigned-title">
+          <i class="fas fa-circle-question" style="color: #B86A1F;"></i>
+          <span>Tâches non attribuées</span>
+          ${count > 0 ? `<span class="tasks-unassigned-badge">${count}</span>` : ''}
+        </div>
+        <div class="tasks-unassigned-hint">
+          ${opts.canAssign && count > 0 ? '<i class="fas fa-arrows-up-down-left-right text-xs mr-1.5"></i>Glissez vers une personne pour attribuer' : ''}
+        </div>
+      </div>
+      <div class="tasks-unassigned-strip" id="tasks-unassigned-strip">
+        ${bodyHtml}
+      </div>
     </div>
   `;
 }
@@ -1631,7 +1656,9 @@ function tasksDragTick() {
   // 2) Detection du drop target sous le curseur
   // Le ghost a pointer-events:none donc elementFromPoint passe a travers
   const elUnder = document.elementFromPoint(x, y);
-  const col = elUnder ? elUnder.closest('.tasks-day-col[data-drop-user-id]') : null;
+  // V18.8 : la drop-zone est soit une colonne employe (.tasks-day-col),
+  // soit la bande des taches non attribuees (.tasks-unassigned-wrap, userId=-1)
+  const col = elUnder ? elUnder.closest('[data-drop-user-id]') : null;
   if (col !== tasksDnd.currentDropCol) {
     if (tasksDnd.currentDropCol) tasksDnd.currentDropCol.classList.remove('is-drop-target');
     if (col) col.classList.add('is-drop-target');
@@ -1694,7 +1721,8 @@ function tasksCleanupDrag() {
   if (tasksDnd.draggingCard) tasksDnd.draggingCard.classList.remove('is-dragging');
   if (tasksDnd.currentDropCol) tasksDnd.currentDropCol.classList.remove('is-drop-target');
   document.body.classList.remove('tasks-dnd-active');
-  document.querySelectorAll('.tasks-day-col.is-drop-target')
+  // V18.8 : la bande des non-attribuees est aussi une drop-zone
+  document.querySelectorAll('.is-drop-target')
     .forEach(c => c.classList.remove('is-drop-target'));
   document.querySelectorAll('.tasks-day-kanban-edge.is-active')
     .forEach(e => e.classList.remove('is-active'));

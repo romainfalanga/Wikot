@@ -427,7 +427,13 @@ function renderMainLayout() {
         </div>
       </div>
 
-      <div id="main-content-container" class="flex-1 ${state.currentView === 'conversations' ? 'overflow-hidden w-full' : 'p-4 md:p-6 lg:p-8 max-w-7xl mx-auto w-full mobile-content-padding'}">
+      <div id="main-content-container" class="flex-1 ${
+        state.currentView === 'conversations'
+          ? 'overflow-hidden w-full'
+          : state.currentView === 'tasks'
+            ? 'p-4 md:p-6 lg:p-8 w-full mobile-content-padding'
+            : 'p-4 md:p-6 lg:p-8 max-w-7xl mx-auto w-full mobile-content-padding'
+      }">
         ${renderCurrentView()}
       </div>
     </main>

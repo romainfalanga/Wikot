@@ -346,8 +346,9 @@ function renderTasksDayView() {
   // Rendu des colonnes
   const columnsHtml = [];
 
-  // Colonne "Non attribuees" (uniquement si non vide et non filtre mes-taches)
-  if (unassignedCol.length > 0 && !showOnlyMine) {
+  // Colonne "Non attribuees" : toujours rendue si pas filtre "mes taches"
+  // V18.4 : on l'affiche meme vide pour servir de drop-zone "desattribuer"
+  if (!showOnlyMine) {
     columnsHtml.push(renderTaskColumn({
       title: 'Non attribuées',
       icon: 'fa-circle-question',
@@ -358,7 +359,8 @@ function renderTasksDayView() {
       isMine: false,
       entries: unassignedCol,
       opts,
-      myId
+      myId,
+      userId: -1 // marqueur "non attribuees" pour le drop
     }));
   }
 
@@ -384,20 +386,34 @@ function renderTasksDayView() {
       isMine,
       entries,
       opts,
-      myId
+      myId,
+      userId: s.id
     }));
   }
 
+  // V18.4 : on attache les indicateurs de scroll (zones gauche/droite)
+  // et un wrapper qui sert de scrolleur pour l'auto-scroll pendant le drag.
+  // L'observer en bas de wrapper se charge d'initialiser les chevrons
+  // overflow apres insertion dans le DOM (sans avoir besoin de setTimeout
+  // depuis le code appelant).
   return `
-    <div class="tasks-day-kanban">
-      ${columnsHtml.join('')}
+    <div class="tasks-day-kanban-wrap">
+      <div class="tasks-day-kanban-edge tasks-day-kanban-edge-left" aria-hidden="true"></div>
+      <div class="tasks-day-kanban-edge tasks-day-kanban-edge-right" aria-hidden="true"></div>
+      <div class="tasks-day-kanban" id="tasks-day-kanban-scroller"
+           onscroll="tasksKanbanUpdateEdges(this)">
+        ${columnsHtml.join('')}
+      </div>
+      <img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+           alt="" aria-hidden="true" style="display:none;"
+           onload="tasksKanbanUpdateEdges(document.getElementById('tasks-day-kanban-scroller'))">
     </div>
   `;
 }
 
 // ===== Une colonne kanban (1 personne ou "non attribuees") =====
 function renderTaskColumn(cfg) {
-  const { title, icon, iconColor, headerBg, headerBorder, headerTextColor, isFree, isMine, entries, opts, myId } = cfg;
+  const { title, icon, iconColor, headerBg, headerBorder, headerTextColor, isFree, isMine, entries, opts, myId, userId } = cfg;
   const count = entries.length;
   const doneCount = entries.filter(e => e.mine && e.mine.status === 'done').length;
   const pendingCount = count - doneCount;
@@ -406,8 +422,18 @@ function renderTaskColumn(cfg) {
   // (=> highlight dore) ou "libre" (=> bouton "Prendre")
   const cardOpts = { ...opts, highlight: isMine, free: isFree };
 
+  // V18.4 : drop zone -> data-drop-user-id (-1 = "non attribuees"), seulement
+  // si l'utilisateur courant a can_assign_tasks (sinon le drop ne fait rien)
+  const dropAttr = opts.canAssign
+    ? `data-drop-user-id="${userId != null ? userId : -1}"
+       ondragover="tasksHandleDragOver(event, this)"
+       ondragenter="tasksHandleDragEnter(event, this)"
+       ondragleave="tasksHandleDragLeave(event, this)"
+       ondrop="tasksHandleDrop(event, this)"`
+    : '';
+
   return `
-    <div class="tasks-day-col">
+    <div class="tasks-day-col" ${dropAttr}>
       <div class="tasks-day-col-header" style="background: ${headerBg}; border-color: ${headerBorder};">
         <div class="tasks-day-col-header-main">
           <i class="fas ${icon}" style="color: ${iconColor};"></i>
@@ -420,7 +446,7 @@ function renderTaskColumn(cfg) {
       </div>
       <div class="tasks-day-col-body">
         ${count === 0
-          ? `<div class="tasks-day-col-empty">${isFree ? 'Toutes les tâches sont attribuées' : 'Rien à faire'}</div>`
+          ? `<div class="tasks-day-col-empty">${isFree ? 'Glissez ici pour désattribuer' : 'Glissez une tâche ici'}</div>`
           : entries.map(e => renderTaskCardCompact(e.inst, e.list, cardOpts, myId)).join('')}
       </div>
     </div>
@@ -441,17 +467,29 @@ function renderTaskCardCompact(inst, assignments, opts, myId) {
   const prio = TASK_PRIORITY_CONFIG[inst.priority || 'normal'];
   const cat = inst.category ? TASK_CATEGORY_CONFIG[inst.category] : null;
 
+  // V18.4 : drag & drop -- seulement si l'utilisateur peut attribuer
+  const isDraggable = !!canAssign;
+
   // Style de la carte : doree pour "mes taches", grisee pour les terminees
   const cardClass = [
     'tasks-day-card',
     isMine ? 'is-mine' : '',
     isDone ? 'is-done' : '',
-    opts.free ? 'is-free' : ''
+    opts.free ? 'is-free' : '',
+    isDraggable ? 'is-draggable' : ''
   ].filter(Boolean).join(' ');
 
   // Bordure gauche coloree selon priorite (urgent/high)
   const priorityBorder = inst.priority && inst.priority !== 'normal'
     ? `border-left: 4px solid ${prio.color};`
+    : '';
+
+  // V18.4 : drag attributes (utilise dataset pour transporter l'instance id)
+  const dragAttrs = isDraggable
+    ? `draggable="true"
+       data-task-instance-id="${inst.id}"
+       ondragstart="tasksHandleDragStart(event, this)"
+       ondragend="tasksHandleDragEnd(event, this)"`
     : '';
 
   // Pastilles : on liste les AUTRES assignees (puisque la colonne represente deja une personne)
@@ -482,7 +520,8 @@ function renderTaskCardCompact(inst, assignments, opts, myId) {
          </div>`;
 
   return `
-    <div class="${cardClass}" style="${priorityBorder}">
+    <div class="${cardClass}" style="${priorityBorder}" ${dragAttrs}>
+      ${isDraggable ? `<div class="tasks-day-card-grip" title="Glisser pour réattribuer"><i class="fas fa-grip-vertical"></i></div>` : ''}
       <div class="tasks-day-card-row">
         ${leftButton}
         <div class="tasks-day-card-main">
@@ -1395,3 +1434,249 @@ async function refreshTaskBadge() {
     }
   } catch (e) { /* silencieux */ }
 }
+
+// ============================================================
+// V18.4 — DRAG & DROP des taches sur les colonnes (kanban jour)
+// ============================================================
+// Strategie :
+//   1) Cartes draggables (HTML5 native) -> dataTransfer porte l'instance_id
+//   2) Colonnes drop-targets -> data-drop-user-id (-1 = "non attribuees")
+//   3) Auto-scroll horizontal pendant le drag quand la souris s'approche
+//      des bords gauche/droit du conteneur kanban (zone de 100px)
+//   4) Au drop : on REMPLACE l'attribution par le seul destinataire.
+//      Tenir Shift au drop => on AJOUTE le destinataire aux assignes existants.
+// ============================================================
+
+// Etat interne du drag (pas dans `state` car volatile et pas a re-rendre)
+const tasksDnd = {
+  draggingInstanceId: null,
+  draggingCard: null,
+  scrollRafId: null,
+  scrollDir: 0,        // -1 = gauche, +1 = droite, 0 = stop
+  scrollSpeed: 0,      // px/frame
+  shiftHeld: false
+};
+
+function tasksHandleDragStart(ev, el) {
+  const id = parseInt(el.getAttribute('data-task-instance-id'), 10);
+  if (!Number.isInteger(id)) return;
+  tasksDnd.draggingInstanceId = id;
+  tasksDnd.draggingCard = el;
+  // dataTransfer doit etre setData (sinon Firefox ne triggera pas drop)
+  try {
+    ev.dataTransfer.setData('text/plain', String(id));
+    ev.dataTransfer.effectAllowed = 'move';
+  } catch (e) { /* noop */ }
+  el.classList.add('is-dragging');
+  document.body.classList.add('tasks-dnd-active');
+  // Track shift via dragover (ev.shiftKey n'est pas fiable sur dragstart)
+}
+
+function tasksHandleDragEnd(ev, el) {
+  el.classList.remove('is-dragging');
+  document.body.classList.remove('tasks-dnd-active');
+  // Nettoyage des highlights restants
+  document.querySelectorAll('.tasks-day-col.is-drop-target').forEach(c => c.classList.remove('is-drop-target'));
+  // Stop auto-scroll
+  tasksStopAutoScroll();
+  tasksDnd.draggingInstanceId = null;
+  tasksDnd.draggingCard = null;
+}
+
+function tasksHandleDragOver(ev, col) {
+  // ABSOLUMENT preventDefault sinon le drop n'est pas autorise
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = ev.shiftKey ? 'copy' : 'move';
+  tasksDnd.shiftHeld = !!ev.shiftKey;
+  // Auto-scroll horizontal selon la position de la souris
+  tasksMaybeAutoScroll(ev.clientX);
+}
+
+function tasksHandleDragEnter(ev, col) {
+  ev.preventDefault();
+  col.classList.add('is-drop-target');
+}
+
+function tasksHandleDragLeave(ev, col) {
+  // dragleave est trigger meme en entrant dans un enfant -> on verifie
+  // que la souris quitte vraiment la colonne (relatedTarget hors col)
+  if (col.contains(ev.relatedTarget)) return;
+  col.classList.remove('is-drop-target');
+}
+
+async function tasksHandleDrop(ev, col) {
+  ev.preventDefault();
+  col.classList.remove('is-drop-target');
+  tasksStopAutoScroll();
+
+  const instId = parseInt(ev.dataTransfer.getData('text/plain'), 10) || tasksDnd.draggingInstanceId;
+  if (!Number.isInteger(instId)) return;
+
+  const targetUserId = parseInt(col.getAttribute('data-drop-user-id'), 10);
+  if (!Number.isInteger(targetUserId)) return;
+
+  const data = state.tasksData;
+  if (!data) return;
+  const inst = (data.instances || []).find(i => i.id === instId);
+  if (!inst) return;
+
+  // Liste actuelle des user_ids assignes a cette instance
+  const currentAssignees = (data.assignments || [])
+    .filter(a => a.task_instance_id === instId)
+    .map(a => a.user_id);
+
+  // Construction de la nouvelle liste :
+  //  - targetUserId = -1 (drop sur "Non attribuees") => liste vide (desassigner tout)
+  //  - Sinon, par defaut : REMPLACE par [targetUserId] (transfert)
+  //  - Si Shift tenu pendant le drop : AJOUTE targetUserId a la liste existante
+  let newUserIds;
+  if (targetUserId === -1) {
+    newUserIds = [];
+  } else if (ev.shiftKey) {
+    // Ajout : evite doublon
+    const set = new Set(currentAssignees);
+    set.add(targetUserId);
+    newUserIds = Array.from(set);
+  } else {
+    // Transfert : remplace
+    newUserIds = [targetUserId];
+  }
+
+  // Skip si pas de changement reel
+  const sameSet = newUserIds.length === currentAssignees.length
+    && newUserIds.every(u => currentAssignees.includes(u));
+  if (sameSet) return;
+
+  // Optimistic UI : on met a jour le state local immediatement avant l'API
+  // pour que le visuel reagisse instantanement (la vue re-render).
+  const staffById = new Map((data.staff || []).map(s => [s.id, s]));
+  const otherAssignments = (data.assignments || []).filter(a => a.task_instance_id !== instId);
+  const oldAssignsForInst = (data.assignments || []).filter(a => a.task_instance_id === instId);
+  const newAssignsForInst = newUserIds.map(uid => {
+    const existing = oldAssignsForInst.find(a => a.user_id === uid);
+    if (existing) return existing; // preserve status/done/notes
+    const s = staffById.get(uid);
+    return {
+      id: -Date.now() - uid,  // id temporaire negatif
+      task_instance_id: instId,
+      user_id: uid,
+      status: 'pending',
+      completed_at: null,
+      notes: null,
+      user_name: s ? s.name : '?'
+    };
+  });
+  data.assignments = [...otherAssignments, ...newAssignsForInst];
+  render();
+
+  // Appel API en arriere-plan
+  try {
+    const res = await api(`/tasks/instances/${instId}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({ user_ids: newUserIds })
+    });
+    if (!res) throw new Error('echec API');
+    showToast(
+      targetUserId === -1
+        ? 'Tâche désattribuée'
+        : ev.shiftKey
+          ? `Ajouté à ${staffById.get(targetUserId)?.name || 'l\'équipier'}`
+          : `Transférée à ${staffById.get(targetUserId)?.name || 'l\'équipier'}`,
+      'success'
+    );
+    // Re-sync propre (pour recuperer les vrais IDs d'assignments)
+    await loadTasksForDate(state.tasksDate);
+    refreshTaskBadge();
+    render();
+  } catch (e) {
+    showToast('Erreur lors de l\'attribution', 'error');
+    // Rollback : on recharge depuis l'API
+    await loadTasksForDate(state.tasksDate);
+    render();
+  }
+}
+
+// ===== Auto-scroll horizontal pendant le drag =====
+// Quand la souris est dans la zone gauche/droite du scroller kanban,
+// on lance un RAF qui translate scrollLeft. Vitesse proportionnelle a la
+// proximite du bord (max 18 px/frame ~ 60fps = 1080 px/s).
+const TASKS_DND_EDGE_ZONE = 100;   // px : zone "magnetique" pres du bord
+const TASKS_DND_MAX_SPEED = 18;    // px par frame
+
+function tasksMaybeAutoScroll(clientX) {
+  const scroller = document.getElementById('tasks-day-kanban-scroller');
+  if (!scroller) return;
+  const rect = scroller.getBoundingClientRect();
+  const distLeft = clientX - rect.left;
+  const distRight = rect.right - clientX;
+
+  let dir = 0;
+  let speed = 0;
+  if (distLeft >= 0 && distLeft < TASKS_DND_EDGE_ZONE) {
+    dir = -1;
+    speed = TASKS_DND_MAX_SPEED * (1 - distLeft / TASKS_DND_EDGE_ZONE);
+  } else if (distRight >= 0 && distRight < TASKS_DND_EDGE_ZONE) {
+    dir = 1;
+    speed = TASKS_DND_MAX_SPEED * (1 - distRight / TASKS_DND_EDGE_ZONE);
+  }
+
+  tasksDnd.scrollDir = dir;
+  tasksDnd.scrollSpeed = Math.max(2, Math.round(speed));
+
+  // Toggle visuel des zones edge
+  const leftEdge = document.querySelector('.tasks-day-kanban-edge-left');
+  const rightEdge = document.querySelector('.tasks-day-kanban-edge-right');
+  if (leftEdge) leftEdge.classList.toggle('is-active', dir === -1);
+  if (rightEdge) rightEdge.classList.toggle('is-active', dir === 1);
+
+  if (dir !== 0 && tasksDnd.scrollRafId === null) {
+    tasksDnd.scrollRafId = requestAnimationFrame(tasksAutoScrollTick);
+  } else if (dir === 0 && tasksDnd.scrollRafId !== null) {
+    tasksStopAutoScroll();
+  }
+}
+
+function tasksAutoScrollTick() {
+  const scroller = document.getElementById('tasks-day-kanban-scroller');
+  if (!scroller || tasksDnd.scrollDir === 0) {
+    tasksStopAutoScroll();
+    return;
+  }
+  scroller.scrollLeft += tasksDnd.scrollDir * tasksDnd.scrollSpeed;
+  tasksDnd.scrollRafId = requestAnimationFrame(tasksAutoScrollTick);
+}
+
+function tasksStopAutoScroll() {
+  if (tasksDnd.scrollRafId !== null) {
+    cancelAnimationFrame(tasksDnd.scrollRafId);
+    tasksDnd.scrollRafId = null;
+  }
+  tasksDnd.scrollDir = 0;
+  tasksDnd.scrollSpeed = 0;
+  const leftEdge = document.querySelector('.tasks-day-kanban-edge-left');
+  const rightEdge = document.querySelector('.tasks-day-kanban-edge-right');
+  if (leftEdge) leftEdge.classList.remove('is-active');
+  if (rightEdge) rightEdge.classList.remove('is-active');
+}
+
+// Indicateur "il y a du contenu hors-ecran" : on highlight les bords meme
+// HORS drag pour signaler qu'il faut scroller pour voir d'autres colonnes.
+function tasksKanbanUpdateEdges(scroller) {
+  if (!scroller) return;
+  const leftEdge = scroller.parentElement.querySelector('.tasks-day-kanban-edge-left');
+  const rightEdge = scroller.parentElement.querySelector('.tasks-day-kanban-edge-right');
+  if (!leftEdge || !rightEdge) return;
+  const canLeft = scroller.scrollLeft > 4;
+  const canRight = scroller.scrollLeft + scroller.clientWidth < scroller.scrollWidth - 4;
+  leftEdge.classList.toggle('has-overflow', canLeft);
+  rightEdge.classList.toggle('has-overflow', canRight);
+}
+
+// Expose explicitement les handlers (utilises depuis onload="...")
+window.tasksHandleDragStart  = tasksHandleDragStart;
+window.tasksHandleDragEnd    = tasksHandleDragEnd;
+window.tasksHandleDragOver   = tasksHandleDragOver;
+window.tasksHandleDragEnter  = tasksHandleDragEnter;
+window.tasksHandleDragLeave  = tasksHandleDragLeave;
+window.tasksHandleDrop       = tasksHandleDrop;
+window.tasksKanbanUpdateEdges = tasksKanbanUpdateEdges;

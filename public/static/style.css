@@ -4568,3 +4568,182 @@ main.app-main:has(.veleda-fullpage) {
     max-height: 70vh;
   }
 }
+
+/* ============================================================
+   V18.4 — Drag & Drop des taches (kanban jour)
+   ============================================================
+   - Cartes draggable -> curseur grab / grabbing
+   - Colonnes drop-target -> highlight dore + glow
+   - Zones edge gauche/droite -> indicateurs de scroll
+   - Auto-scroll horizontal pendant le drag
+*/
+
+/* Wrapper du kanban avec les zones edges en absolute */
+.tasks-day-kanban-wrap {
+  position: relative;
+}
+
+/* Cartes draggables : curseur grab + grip discret en haut-droite */
+.tasks-day-card.is-draggable {
+  cursor: grab;
+}
+.tasks-day-card.is-draggable:active {
+  cursor: grabbing;
+}
+.tasks-day-card-grip {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(15,27,40,0.18);
+  font-size: 10px;
+  pointer-events: none;
+  transition: color 0.15s ease;
+}
+.tasks-day-card.is-draggable:hover .tasks-day-card-grip {
+  color: var(--c-gold-deep);
+}
+/* Quand les actions hover sont affichees, on cache le grip pour eviter overlap */
+.tasks-day-card:hover .tasks-day-card-actions ~ .tasks-day-card-grip,
+.tasks-day-card:hover .tasks-day-card-grip {
+  /* le grip reste discret meme au hover, les actions etant prioritaires */
+}
+/* Si actions visibles (hover), on decale le grip vers la gauche */
+.tasks-day-card.is-draggable:hover .tasks-day-card-actions ~ * .tasks-day-card-grip,
+.tasks-day-card.is-draggable .tasks-day-card-actions:hover ~ .tasks-day-card-grip {
+  opacity: 0;
+}
+
+/* Carte en cours de drag : translucide + rotation legere */
+.tasks-day-card.is-dragging {
+  opacity: 0.45;
+  transform: scale(0.97) rotate(-1.2deg);
+  cursor: grabbing !important;
+  box-shadow: 0 12px 30px rgba(15,27,40,0.25);
+  z-index: 50;
+}
+
+/* Pendant le drag actif (classe sur body) : feedback global */
+body.tasks-dnd-active .tasks-day-col {
+  transition: all 0.18s ease;
+}
+body.tasks-dnd-active .tasks-day-col:not(.is-drop-target) {
+  /* Toutes les colonnes pas survolees deviennent leg subtilement plus discretes */
+  opacity: 0.88;
+}
+body.tasks-dnd-active .tasks-day-col[data-drop-user-id]:not(.is-drop-target):hover {
+  /* Hover sur une autre colonne pendant drag : preparation visuelle */
+  border-color: var(--c-line-strong);
+}
+body.tasks-dnd-active {
+  /* Empeche la selection de texte pendant le drag */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Colonne cible du drop : highlight dore avec glow */
+.tasks-day-col.is-drop-target {
+  border-color: var(--c-gold-deep) !important;
+  box-shadow:
+    0 0 0 3px rgba(201,169,97,0.25),
+    0 12px 28px rgba(201,169,97,0.18);
+  transform: translateY(-2px);
+  opacity: 1 !important;
+}
+.tasks-day-col.is-drop-target .tasks-day-col-header {
+  background: var(--c-gold) !important;
+  border-color: var(--c-gold-deep) !important;
+}
+.tasks-day-col.is-drop-target .tasks-day-col-header * {
+  color: #fff !important;
+}
+.tasks-day-col.is-drop-target .tasks-day-col-body {
+  background: linear-gradient(180deg, rgba(201,169,97,0.10) 0%, transparent 60%);
+}
+.tasks-day-col.is-drop-target .tasks-day-col-empty {
+  color: var(--c-gold-deep);
+  font-weight: 700;
+  font-style: normal;
+}
+
+/* Indicateurs de bord : flèches discrètes qui apparaissent quand
+   il y a du contenu hors-ecran (has-overflow), et qui pulsent quand
+   l'auto-scroll est actif (is-active). */
+.tasks-day-kanban-edge {
+  position: absolute;
+  top: 0;
+  bottom: 12px;
+  width: 50px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  color: var(--c-gold-deep);
+}
+.tasks-day-kanban-edge-left {
+  left: 0;
+  background: linear-gradient(90deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.7) 50%, transparent 100%);
+}
+.tasks-day-kanban-edge-right {
+  right: 0;
+  background: linear-gradient(270deg, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.7) 50%, transparent 100%);
+}
+.tasks-day-kanban-edge.has-overflow {
+  opacity: 0.55;
+}
+.tasks-day-kanban-edge-left.has-overflow::before {
+  content: '\f053';   /* fa-chevron-left */
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+}
+.tasks-day-kanban-edge-right.has-overflow::before {
+  content: '\f054';   /* fa-chevron-right */
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+}
+/* Quand l'auto-scroll est actif : pulse dore franc */
+.tasks-day-kanban-edge.is-active {
+  opacity: 1 !important;
+  animation: tasks-edge-pulse 0.7s ease-in-out infinite;
+}
+.tasks-day-kanban-edge.is-active.tasks-day-kanban-edge-left {
+  background: linear-gradient(90deg, rgba(201,169,97,0.45) 0%, rgba(201,169,97,0.25) 50%, transparent 100%);
+  color: #fff;
+}
+.tasks-day-kanban-edge.is-active.tasks-day-kanban-edge-right {
+  background: linear-gradient(270deg, rgba(201,169,97,0.45) 0%, rgba(201,169,97,0.25) 50%, transparent 100%);
+  color: #fff;
+}
+@keyframes tasks-edge-pulse {
+  0%, 100% { transform: scaleX(1); }
+  50% { transform: scaleX(1.15); }
+}
+
+/* Mobile : on garde le drag mais on rend les colonnes un peu plus etroites
+   pour qu'on voie plus de personnes a la fois sur grand ecran. */
+@media (min-width: 1280px) {
+  .tasks-day-col {
+    flex: 0 0 300px;
+  }
+}
+@media (min-width: 1920px) {
+  /* Sur tres grand ecran, on profite vraiment de la largeur */
+  .tasks-day-col {
+    flex: 0 0 320px;
+  }
+}
+
+/* Sur mobile/tactile, le drag HTML5 natif a des soucis -> on garde au
+   moins la modale d'attribution (bouton user-tag) comme fallback.
+   On peut aussi cacher le grip sur small screens. */
+@media (max-width: 640px) {
+  .tasks-day-card-grip { display: none; }
+}

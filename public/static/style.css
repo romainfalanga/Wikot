@@ -4240,3 +4240,331 @@ main.app-main:has(.veleda-fullpage) {
 .veleda-modal-body .veleda-isboard-row {
   scroll-margin-bottom: 32px;
 }
+
+/* ============================================================
+   V18.3 — Vue jour des taches : KANBAN par personne
+   ============================================================
+   Une colonne par membre du staff + une "Non attribuees".
+   Tri chronologique haut-bas dans chaque colonne. Scroll
+   horizontal si l'equipe est nombreuse. La colonne de
+   l'utilisateur courant est doree (Wikot gold).
+*/
+.tasks-day-kanban {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+.tasks-day-kanban::-webkit-scrollbar {
+  height: 10px;
+}
+.tasks-day-kanban::-webkit-scrollbar-track {
+  background: rgba(15,27,40,0.04);
+  border-radius: 6px;
+}
+.tasks-day-kanban::-webkit-scrollbar-thumb {
+  background: rgba(15,27,40,0.18);
+  border-radius: 6px;
+}
+.tasks-day-kanban::-webkit-scrollbar-thumb:hover {
+  background: rgba(15,27,40,0.3);
+}
+
+/* ----- Une colonne ----- */
+.tasks-day-col {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid var(--c-line);
+  border-radius: 12px;
+  overflow: hidden;
+  scroll-snap-align: start;
+  max-height: 75vh;
+}
+.tasks-day-col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid;
+  flex: 0 0 auto;
+}
+.tasks-day-col-header-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.tasks-day-col-title {
+  font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+.tasks-day-col-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.tasks-day-col-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+.tasks-day-col-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  overflow-y: auto;
+  background: linear-gradient(180deg, rgba(15,27,40,0.02) 0%, transparent 60%);
+}
+.tasks-day-col-body::-webkit-scrollbar { width: 6px; }
+.tasks-day-col-body::-webkit-scrollbar-thumb {
+  background: rgba(15,27,40,0.15);
+  border-radius: 3px;
+}
+.tasks-day-col-empty {
+  text-align: center;
+  font-size: 12px;
+  color: rgba(15,27,40,0.35);
+  font-style: italic;
+  padding: 24px 8px;
+}
+
+/* ----- Une carte compacte ----- */
+.tasks-day-card {
+  background: #fff;
+  border: 1px solid var(--c-line);
+  border-radius: 10px;
+  padding: 10px;
+  transition: all 0.15s ease;
+  position: relative;
+}
+.tasks-day-card:hover {
+  border-color: var(--c-line-strong);
+  box-shadow: 0 4px 10px rgba(15,27,40,0.06);
+  transform: translateY(-1px);
+}
+.tasks-day-card.is-mine {
+  background: linear-gradient(180deg, rgba(201,169,97,0.10) 0%, #fff 70%);
+  border-color: var(--c-gold);
+  box-shadow: 0 1px 0 rgba(201,169,97,0.20);
+}
+.tasks-day-card.is-mine:hover {
+  border-color: var(--c-gold-deep);
+  box-shadow: 0 4px 12px rgba(201,169,97,0.18);
+}
+.tasks-day-card.is-done {
+  opacity: 0.6;
+  background: var(--c-cream-deep);
+}
+.tasks-day-card.is-free {
+  border-style: dashed;
+  border-color: var(--c-gold);
+  background: linear-gradient(180deg, rgba(184,106,31,0.05) 0%, #fff 70%);
+}
+
+.tasks-day-card-row {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+}
+
+/* Bouton check a gauche */
+.tasks-day-card-check {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.tasks-day-card-check.is-pending {
+  background: #fff;
+  border: 2px solid var(--c-gold);
+  color: var(--c-navy);
+}
+.tasks-day-card-check.is-pending:hover {
+  background: var(--c-cream-deep);
+  border-color: var(--c-gold-deep);
+}
+.tasks-day-card-check.is-checked {
+  background: var(--c-gold);
+  color: #fff;
+}
+.tasks-day-card-check.is-checked:hover {
+  background: var(--c-gold-deep);
+}
+.tasks-day-card-check.is-free {
+  background: #fff;
+  border: 2px dashed var(--c-line-strong);
+  color: var(--c-gold-deep);
+}
+.tasks-day-card-check.is-free:hover {
+  border-color: var(--c-gold);
+  background: rgba(201,169,97,0.05);
+}
+.tasks-day-card-check.is-readonly {
+  background: var(--c-cream-deep);
+  cursor: default;
+}
+
+/* Zone principale */
+.tasks-day-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.tasks-day-card-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--c-gold-deep);
+  letter-spacing: 0.2px;
+}
+.tasks-day-card-time i { font-size: 10px; }
+.tasks-day-card-time-anytime {
+  color: rgba(15,27,40,0.4);
+  font-weight: 600;
+  font-style: italic;
+}
+.tasks-day-card-title {
+  font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1.25;
+  color: var(--c-navy);
+  word-break: break-word;
+}
+.tasks-day-card-title.is-strike {
+  text-decoration: line-through;
+  color: rgba(15,27,40,0.5);
+}
+.tasks-day-card-prio,
+.tasks-day-card-cat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  width: fit-content;
+}
+.tasks-day-card-cat {
+  background: var(--c-cream-deep);
+  color: var(--c-navy);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.tasks-day-card-desc {
+  font-size: 11px;
+  color: rgba(15,27,40,0.6);
+  line-height: 1.35;
+  margin-top: 2px;
+}
+.tasks-day-card-proc {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, rgba(201,169,97,0.15), rgba(201,169,97,0.08));
+  color: var(--c-navy);
+  border: 1px solid var(--c-gold);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  width: fit-content;
+  margin-top: 2px;
+}
+.tasks-day-card-proc i { color: var(--c-gold-deep); font-size: 10px; }
+.tasks-day-card-proc:hover {
+  background: linear-gradient(135deg, rgba(201,169,97,0.22), rgba(201,169,97,0.12));
+  transform: translateY(-1px);
+}
+.tasks-day-card-shared {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: rgba(15,27,40,0.5);
+  font-style: italic;
+  margin-top: 2px;
+}
+.tasks-day-card-shared-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+
+/* Actions (admin / can_assign) en bas a droite */
+.tasks-day-card-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: none;
+  gap: 4px;
+}
+.tasks-day-card:hover .tasks-day-card-actions { display: inline-flex; }
+.tasks-day-card-actions button {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  background: rgba(255,255,255,0.95);
+  color: var(--c-navy);
+  border: 1px solid var(--c-line);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  transition: all 0.12s ease;
+}
+.tasks-day-card-actions button:hover {
+  background: var(--c-cream-deep);
+  border-color: var(--c-gold);
+}
+.tasks-day-card-actions button.is-danger {
+  color: #C84C3F;
+}
+.tasks-day-card-actions button.is-danger:hover {
+  background: rgba(200,76,63,0.10);
+  border-color: rgba(200,76,63,0.35);
+}
+
+/* Responsive : sur tablette/mobile, les colonnes restent en scroll
+   horizontal mais on les retrecit un peu. */
+@media (max-width: 640px) {
+  .tasks-day-col {
+    flex: 0 0 260px;
+    max-height: 70vh;
+  }
+}

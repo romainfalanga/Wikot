@@ -245,6 +245,11 @@ function renderTasksHeader() {
 }
 
 // ===== Vue jour =====
+// ===== Vue jour : KANBAN par personne (V18.3) =====
+// Refonte complete : chaque membre de l'equipe a SA colonne, tri chronologique
+// haut->bas (suggested_time), les taches multi-assignees apparaissent dans
+// chaque colonne concernee. Une colonne "Non attribuees" est ajoutee au debut.
+// Cela permet d'un coup d'oeil de voir QUI fait QUOI et QUAND dans la journee.
 function renderTasksDayView() {
   const data = state.tasksData;
   const myId = state.user.id;
@@ -252,24 +257,10 @@ function renderTasksDayView() {
   const canCreate = !!me.can_create_tasks || userCanCreateTasks();
   const canAssign = !!me.can_assign_tasks || userCanAssignTasks();
 
+  // Index : assignments par instance
   const assignsByInst = {};
   for (const a of (data.assignments || [])) {
     (assignsByInst[a.task_instance_id] = assignsByInst[a.task_instance_id] || []).push(a);
-  }
-
-  // Tri / regroupement
-  const myPending = [], myDone = [], unassigned = [], others = [];
-  for (const inst of (data.instances || [])) {
-    const list = assignsByInst[inst.id] || [];
-    const mine = list.find(a => a.user_id === myId);
-    if (mine) {
-      if (mine.status === 'done') myDone.push({ inst, list, mine });
-      else myPending.push({ inst, list, mine });
-    } else if (list.length === 0) {
-      unassigned.push({ inst, list });
-    } else {
-      others.push({ inst, list });
-    }
   }
 
   const hasAny = (data.instances || []).length > 0;
@@ -282,41 +273,247 @@ function renderTasksDayView() {
       </div>`;
   }
 
-  const opts = { data, canCreate, canAssign };
-  const showOnlyMine = state.tasksFilterMine;
+  // Staff de l'hotel (admin + employes) - vient du backend
+  const staff = data.staff || [];
+  const showOnlyMine = !!state.tasksFilterMine;
 
+  // Si filtre "Mes taches" actif : on n'affiche QUE la colonne de l'utilisateur courant
+  const visibleStaff = showOnlyMine
+    ? staff.filter(s => s.id === myId)
+    : staff;
+
+  // Construction des colonnes : pour chaque membre, on liste les instances
+  // ou il/elle est assigne(e). Une tache multi-assignee apparaitra dans
+  // chaque colonne des personnes assignees -> chacun voit ce qu'il a a faire.
+  const columnsByUser = {};
+  for (const s of visibleStaff) columnsByUser[s.id] = [];
+  const unassignedCol = [];
+
+  for (const inst of (data.instances || [])) {
+    const list = assignsByInst[inst.id] || [];
+    if (list.length === 0) {
+      // Tache libre (non attribuee) - on l'affiche seulement si pas filtre "mes taches"
+      if (!showOnlyMine) unassignedCol.push({ inst, list });
+    } else {
+      // On insere la tache dans chaque colonne d'un assigne visible
+      for (const a of list) {
+        if (columnsByUser[a.user_id]) {
+          columnsByUser[a.user_id].push({ inst, list, mine: a });
+        }
+      }
+    }
+  }
+
+  // Tri chronologique haut->bas dans chaque colonne :
+  // 1) Taches avec suggested_time AVANT celles sans
+  // 2) Puis par suggested_time croissant
+  // 3) Priorite urgent/high d'abord en cas d'egalite d'heure
+  // 4) Taches deja "done" descendues au bas de leur groupe horaire
+  const sortFn = (a, b) => {
+    const adone = a.mine && a.mine.status === 'done' ? 1 : 0;
+    const bdone = b.mine && b.mine.status === 'done' ? 1 : 0;
+    if (adone !== bdone) return adone - bdone; // done en bas
+    const atime = a.inst.suggested_time || '99:99';
+    const btime = b.inst.suggested_time || '99:99';
+    if (atime !== btime) return atime < btime ? -1 : 1;
+    const prio = { urgent: 0, high: 1, normal: 2, low: 3 };
+    const ap = prio[a.inst.priority] ?? 2;
+    const bp = prio[b.inst.priority] ?? 2;
+    if (ap !== bp) return ap - bp;
+    return a.inst.id - b.inst.id;
+  };
+  for (const uid of Object.keys(columnsByUser)) columnsByUser[uid].sort(sortFn);
+  unassignedCol.sort((a, b) => {
+    const atime = a.inst.suggested_time || '99:99';
+    const btime = b.inst.suggested_time || '99:99';
+    return atime === btime ? a.inst.id - b.inst.id : (atime < btime ? -1 : 1);
+  });
+
+  const opts = { data, canCreate, canAssign };
+
+  // Cas filtre "Mes taches" mais user n'a aucune tache du jour
   if (showOnlyMine) {
-    if (myPending.length === 0 && myDone.length === 0) {
+    const myCol = columnsByUser[myId] || [];
+    if (myCol.length === 0) {
       return `<div class="card-premium p-10 text-center">
         <i class="fas fa-user-check text-4xl mb-3" style="color: var(--c-line-strong);"></i>
         <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucune tâche pour vous ce jour</p>
         <p class="text-sm mt-1" style="color: rgba(15,27,40,0.55);">Désactivez le filtre pour voir toutes les tâches de l'équipe.</p>
       </div>`;
     }
-    return `
-      ${myPending.length > 0 ? renderTaskSection('À faire', myPending, { ...opts, highlight: true }, myId) : ''}
-      ${myDone.length > 0 ? renderTaskSection('Terminées', myDone, { ...opts, highlight: true, faded: true }, myId) : ''}
-    `;
+  }
+
+  // Rendu des colonnes
+  const columnsHtml = [];
+
+  // Colonne "Non attribuees" (uniquement si non vide et non filtre mes-taches)
+  if (unassignedCol.length > 0 && !showOnlyMine) {
+    columnsHtml.push(renderTaskColumn({
+      title: 'Non attribuées',
+      icon: 'fa-circle-question',
+      iconColor: '#B86A1F',
+      headerBg: 'rgba(184,106,31,0.10)',
+      headerBorder: 'rgba(184,106,31,0.35)',
+      isFree: true,
+      isMine: false,
+      entries: unassignedCol,
+      opts,
+      myId
+    }));
+  }
+
+  // Une colonne par membre du staff (l'utilisateur courant en premier)
+  const orderedStaff = [...visibleStaff].sort((a, b) => {
+    if (a.id === myId) return -1;
+    if (b.id === myId) return 1;
+    return (a.name || '').localeCompare(b.name || '');
+  });
+
+  for (const s of orderedStaff) {
+    const entries = columnsByUser[s.id] || [];
+    const isMine = s.id === myId;
+    const isAdmin = s.role === 'admin';
+    columnsHtml.push(renderTaskColumn({
+      title: s.name + (isMine ? ' (moi)' : ''),
+      icon: isAdmin ? 'fa-user-tie' : 'fa-user',
+      iconColor: isMine ? '#fff' : (isAdmin ? 'var(--c-gold-deep)' : 'rgba(15,27,40,0.55)'),
+      headerBg: isMine ? 'var(--c-gold)' : (isAdmin ? 'rgba(201,169,97,0.12)' : 'var(--c-cream-deep)'),
+      headerBorder: isMine ? 'var(--c-gold-deep)' : 'var(--c-line)',
+      headerTextColor: isMine ? '#fff' : 'var(--c-navy)',
+      isFree: false,
+      isMine,
+      entries,
+      opts,
+      myId
+    }));
   }
 
   return `
-    ${myPending.length > 0 ? renderTaskSection('Mes tâches', myPending, { ...opts, highlight: true }, myId) : ''}
-    ${myDone.length > 0 ? renderTaskSection('Mes tâches terminées', myDone, { ...opts, highlight: true, faded: true }, myId) : ''}
-    ${unassigned.length > 0 ? renderTaskSection('Tâches non attribuées', unassigned, { ...opts, free: true }, myId) : ''}
-    ${others.length > 0 ? renderTaskSection("Tâches de l'équipe", others, opts, myId) : ''}
+    <div class="tasks-day-kanban">
+      ${columnsHtml.join('')}
+    </div>
   `;
 }
 
-function renderTaskSection(title, entries, opts, myId) {
+// ===== Une colonne kanban (1 personne ou "non attribuees") =====
+function renderTaskColumn(cfg) {
+  const { title, icon, iconColor, headerBg, headerBorder, headerTextColor, isFree, isMine, entries, opts, myId } = cfg;
+  const count = entries.length;
+  const doneCount = entries.filter(e => e.mine && e.mine.status === 'done').length;
+  const pendingCount = count - doneCount;
+
+  // Card-opts pour le rendu compact : on indique si la colonne est "la mienne"
+  // (=> highlight dore) ou "libre" (=> bouton "Prendre")
+  const cardOpts = { ...opts, highlight: isMine, free: isFree };
+
   return `
-    <div class="mb-6">
-      <h3 class="font-display text-sm font-semibold uppercase tracking-wider mb-3" style="color: ${opts.highlight ? 'var(--c-gold-deep)' : 'rgba(15,27,40,0.5)'};">
-        ${title} <span class="text-xs ml-1" style="color: rgba(15,27,40,0.4);">(${entries.length})</span>
-      </h3>
-      <div class="grid grid-cols-1 gap-2">
-        ${entries.map(e => renderTaskCard(e.inst, e.list, opts, myId)).join('')}
+    <div class="tasks-day-col">
+      <div class="tasks-day-col-header" style="background: ${headerBg}; border-color: ${headerBorder};">
+        <div class="tasks-day-col-header-main">
+          <i class="fas ${icon}" style="color: ${iconColor};"></i>
+          <span class="tasks-day-col-title" style="color: ${headerTextColor || 'var(--c-navy)'};">${escapeHtml(title)}</span>
+        </div>
+        <div class="tasks-day-col-badges">
+          ${pendingCount > 0 ? `<span class="tasks-day-col-badge" style="background: ${isMine ? 'rgba(255,255,255,0.25)' : 'var(--c-navy)'}; color: ${isMine ? '#fff' : '#fff'};">${pendingCount}</span>` : ''}
+          ${doneCount > 0 ? `<span class="tasks-day-col-badge" style="background: ${isMine ? 'rgba(255,255,255,0.18)' : 'rgba(15,27,40,0.10)'}; color: ${isMine ? '#fff' : 'rgba(15,27,40,0.55)'};"><i class="fas fa-check text-[9px] mr-0.5"></i>${doneCount}</span>` : ''}
+        </div>
       </div>
-    </div>`;
+      <div class="tasks-day-col-body">
+        ${count === 0
+          ? `<div class="tasks-day-col-empty">${isFree ? 'Toutes les tâches sont attribuées' : 'Rien à faire'}</div>`
+          : entries.map(e => renderTaskCardCompact(e.inst, e.list, cardOpts, myId)).join('')}
+      </div>
+    </div>
+  `;
+}
+
+// ===== Carte compacte pour la vue Kanban par personne (V18.3) =====
+// Hauteur reduite, info essentielle : heure, titre, priorite, procedure,
+// petites pastilles des autres assignes. La case de validation reste a gauche.
+function renderTaskCardCompact(inst, assignments, opts, myId) {
+  const mine = assignments.find(a => a.user_id === myId);
+  const isMine = !!mine;
+  const isDone = mine && mine.status === 'done';
+  const allDone = inst.status === 'done';
+  const canEdit = opts.canCreate;
+  const canAssign = opts.canAssign;
+
+  const prio = TASK_PRIORITY_CONFIG[inst.priority || 'normal'];
+  const cat = inst.category ? TASK_CATEGORY_CONFIG[inst.category] : null;
+
+  // Style de la carte : doree pour "mes taches", grisee pour les terminees
+  const cardClass = [
+    'tasks-day-card',
+    isMine ? 'is-mine' : '',
+    isDone ? 'is-done' : '',
+    opts.free ? 'is-free' : ''
+  ].filter(Boolean).join(' ');
+
+  // Bordure gauche coloree selon priorite (urgent/high)
+  const priorityBorder = inst.priority && inst.priority !== 'normal'
+    ? `border-left: 4px solid ${prio.color};`
+    : '';
+
+  // Pastilles : on liste les AUTRES assignees (puisque la colonne represente deja une personne)
+  // Cela permet de voir d'un coup d'oeil si une tache est partagee.
+  const otherAssignees = assignments.filter(a => !opts.free && (opts._currentColumnUserId ? a.user_id !== opts._currentColumnUserId : true));
+  // NB : on simplifie : on affiche tous les noms, le titre de colonne montre deja "qui"
+  const sharedChips = assignments.length > 1
+    ? `<div class="tasks-day-card-shared">
+         <i class="fas fa-users text-[9px]" style="color: rgba(15,27,40,0.4);"></i>
+         <span class="tasks-day-card-shared-text">${assignments.map(a => escapeHtml((a.user_name || '?').split(' ')[0])).join(' · ')}</span>
+       </div>`
+    : '';
+
+  // Bouton de validation a gauche : 3 etats
+  //  - libre (free) : main "Prendre la tache"
+  //  - assignee a moi (isMine) : check coche / a cocher
+  //  - assignee aux autres : horloge passive
+  const leftButton = opts.free
+    ? `<button onclick="event.stopPropagation(); completeTask(${inst.id})" class="tasks-day-card-check is-free" title="Prendre cette tâche libre">
+         <i class="fas fa-hand text-[10px]"></i>
+       </button>`
+    : isMine
+      ? `<button onclick="event.stopPropagation(); ${isDone ? `uncompleteTask(${inst.id})` : `completeTask(${inst.id})`}" class="tasks-day-card-check ${isDone ? 'is-checked' : 'is-pending'}" title="${isDone ? 'Annuler la validation' : 'Valider'}">
+           ${isDone ? '<i class="fas fa-check text-[11px]"></i>' : ''}
+         </button>`
+      : `<div class="tasks-day-card-check is-readonly" title="${allDone ? 'Terminée' : 'En attente'}">
+           ${allDone ? '<i class="fas fa-check text-[10px]" style="color: var(--c-gold-deep);"></i>' : '<i class="fas fa-clock text-[10px]" style="color: rgba(15,27,40,0.3);"></i>'}
+         </div>`;
+
+  return `
+    <div class="${cardClass}" style="${priorityBorder}">
+      <div class="tasks-day-card-row">
+        ${leftButton}
+        <div class="tasks-day-card-main">
+          ${inst.suggested_time
+            ? `<div class="tasks-day-card-time"><i class="fas fa-clock"></i>${escapeHtml(inst.suggested_time)}${inst.duration_min ? ` · ${formatDuration(inst.duration_min)}` : ''}</div>`
+            : `<div class="tasks-day-card-time tasks-day-card-time-anytime"><i class="fas fa-infinity"></i>Quand possible</div>`}
+          <div class="tasks-day-card-title ${isDone ? 'is-strike' : ''}">${escapeHtml(inst.title)}</div>
+          ${inst.priority && inst.priority !== 'normal'
+            ? `<span class="tasks-day-card-prio" style="background: ${prio.bg}; color: ${prio.color};"><i class="fas ${prio.icon} text-[8px]"></i>${prio.label}</span>`
+            : ''}
+          ${cat ? `<span class="tasks-day-card-cat"><i class="fas ${cat.icon}" style="color: ${cat.color};"></i>${cat.label}</span>` : ''}
+          ${inst.description ? `<div class="tasks-day-card-desc">${escapeHtml(inst.description)}</div>` : ''}
+          ${inst.procedure_id ? `
+            <button onclick="event.stopPropagation(); openProcedureFromTask(${inst.procedure_id})" type="button"
+              class="tasks-day-card-proc" title="Voir la procédure détaillée à suivre">
+              <i class="fas fa-book-open"></i>
+              Voir la procédure${inst.procedure_title ? ` : ${escapeHtml(inst.procedure_title)}` : ''}
+            </button>
+          ` : ''}
+          ${sharedChips}
+        </div>
+      </div>
+      ${(canEdit || canAssign) ? `
+        <div class="tasks-day-card-actions">
+          ${canAssign ? `<button onclick="event.stopPropagation(); showTaskAssignModal(${inst.id})" title="Attribuer"><i class="fas fa-user-tag"></i></button>` : ''}
+          ${canEdit ? `<button onclick="event.stopPropagation(); showTaskInstanceForm(${inst.id}, '${state.tasksDate}')" title="Modifier"><i class="fas fa-pen"></i></button>` : ''}
+          ${canEdit ? `<button class="is-danger" onclick="event.stopPropagation(); deleteTaskInstance(${inst.id})" title="Supprimer"><i class="fas fa-trash"></i></button>` : ''}
+        </div>
+      ` : ''}
+    </div>
+  `;
 }
 
 function renderTaskCard(inst, assignments, opts, myId) {

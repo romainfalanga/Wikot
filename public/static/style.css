@@ -4584,11 +4584,33 @@ main.app-main:has(.veleda-fullpage) {
 }
 
 /* Cartes draggables : curseur grab + grip discret en haut-droite */
+/* V18.7 : touch-action:none neutralise le scroll natif du navigateur quand
+   on commence un drag au doigt/trackpad. Sans ca, le navigateur prend la
+   main pour scroller la page et le drag ne demarre jamais. */
 .tasks-day-card.is-draggable {
   cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .tasks-day-card.is-draggable:active {
   cursor: grabbing;
+}
+
+/* V18.7 : Ghost qui suit le curseur pendant le drag (clone position:fixed) */
+.tasks-day-card-ghost {
+  pointer-events: none;
+  opacity: 0.92;
+  transform: scale(1.03) rotate(-2deg);
+  box-shadow: 0 18px 40px rgba(15,27,40,0.35), 0 4px 12px rgba(15,27,40,0.2);
+  transition: none !important;
+  z-index: 9999;
+  /* Le ghost reprend la largeur calculee via JS (style.width = rect.width).
+     Pas de hover ni d'animation pour rester reactif. */
+}
+.tasks-day-card-ghost .tasks-day-card-actions,
+.tasks-day-card-ghost .tasks-day-card-grip {
+  display: none !important;
 }
 .tasks-day-card-grip {
   position: absolute;

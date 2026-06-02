@@ -422,14 +422,12 @@ function renderTaskColumn(cfg) {
   // (=> highlight dore) ou "libre" (=> bouton "Prendre")
   const cardOpts = { ...opts, highlight: isMine, free: isFree };
 
-  // V18.4 : drop zone -> data-drop-user-id (-1 = "non attribuees"), seulement
-  // si l'utilisateur courant a can_assign_tasks (sinon le drop ne fait rien)
+  // V18.7 : drop zone -> data-drop-user-id (-1 = "non attribuees"), seulement
+  // si l'utilisateur courant a can_assign_tasks. Plus aucun event drag inline :
+  // on utilise pointer events au niveau global (cf. tasksPointerDown / Move / Up)
+  // qui detecte le drop target via elementFromPoint().
   const dropAttr = opts.canAssign
-    ? `data-drop-user-id="${userId != null ? userId : -1}"
-       ondragover="tasksHandleDragOver(event, this)"
-       ondragenter="tasksHandleDragEnter(event, this)"
-       ondragleave="tasksHandleDragLeave(event, this)"
-       ondrop="tasksHandleDrop(event, this)"`
+    ? `data-drop-user-id="${userId != null ? userId : -1}"`
     : '';
 
   return `
@@ -484,12 +482,12 @@ function renderTaskCardCompact(inst, assignments, opts, myId) {
     ? `border-left: 4px solid ${prio.color};`
     : '';
 
-  // V18.4 : drag attributes (utilise dataset pour transporter l'instance id)
+  // V18.7 : pointer events au lieu de HTML5 drag. Le pointerdown ne demarre
+  // pas immediatement le drag : on attend un seuil de mouvement de 5px pour
+  // distinguer un clic d'un drag (sinon impossible de cliquer la case "fait").
   const dragAttrs = isDraggable
-    ? `draggable="true"
-       data-task-instance-id="${inst.id}"
-       ondragstart="tasksHandleDragStart(event, this)"
-       ondragend="tasksHandleDragEnd(event, this)"`
+    ? `data-task-instance-id="${inst.id}"
+       onpointerdown="tasksPointerDown(event, this)"`
     : '';
 
   // Pastilles : on liste les AUTRES assignees (puisque la colonne represente deja une personne)
@@ -1436,108 +1434,285 @@ async function refreshTaskBadge() {
 }
 
 // ============================================================
-// V18.4 — DRAG & DROP des taches sur les colonnes (kanban jour)
+// V18.7 — DRAG & DROP via POINTER EVENTS (refonte totale)
 // ============================================================
-// Strategie :
-//   1) Cartes draggables (HTML5 native) -> dataTransfer porte l'instance_id
-//   2) Colonnes drop-targets -> data-drop-user-id (-1 = "non attribuees")
-//   3) Auto-scroll horizontal pendant le drag quand la souris s'approche
-//      des bords gauche/droit du conteneur kanban (zone de 100px)
-//   4) Au drop : on REMPLACE l'attribution par le seul destinataire.
-//      Tenir Shift au drop => on AJOUTE le destinataire aux assignes existants.
+// Pourquoi pas HTML5 drag native ? Plusieurs bugs bloquants :
+//  - dragover n'est pas emis quand la souris est immobile (Chrome)
+//  - clientX peut etre incoherent / a zero sur certains events
+//  - le navigateur intercepte parfois le drag pour son propre scroll natif
+//  - aucun controle sur le visuel du ghost (image translucide moche)
+//
+// Strategie pointer events (utilisee par Trello / Notion / Linear) :
+//   1) pointerdown sur la carte -> on memorise + setPointerCapture
+//   2) Au premier pointermove qui depasse 5px (seuil), on demarre le drag :
+//      - clone la carte en "ghost" position:fixed qui suit le curseur
+//      - lance un RAF en BOUCLE CONTINUE qui lit lastPointerX/Y
+//      - le RAF gere auto-scroll + detection drop target via elementFromPoint
+//   3) Pendant le drag : chaque pointermove maj lastPointerX/Y. Le RAF s'en
+//      sert pour scroller meme quand la souris est IMMOBILE -> resout
+//      definitivement le bug de l'auto-scroll qui ne se declenchait pas.
+//   4) pointerup -> finalise le drop sur la colonne sous lastPointerX/Y
 // ============================================================
 
-// Etat interne du drag (pas dans `state` car volatile et pas a re-rendre)
+// Constantes
+const TASKS_DND_EDGE_ZONE = 160;   // px : zone magnetique pres du bord viewport
+const TASKS_DND_MAX_SPEED = 32;    // px par frame (~1920 px/s a 60fps)
+const TASKS_DND_DRAG_THRESHOLD = 5; // px : seuil avant de demarrer le drag
+
+// Etat interne du drag (volatile, pas dans `state`)
 const tasksDnd = {
+  // Phase pre-drag (pointerdown -> threshold)
+  pendingPointerId: null,
+  pendingCard: null,
+  pendingInstanceId: null,
+  startX: 0,
+  startY: 0,
+  // Phase drag actif
+  active: false,
+  draggingCard: null,         // carte source originale
   draggingInstanceId: null,
-  draggingCard: null,
-  scrollRafId: null,
-  scrollDir: 0,        // -1 = gauche, +1 = droite, 0 = stop
-  scrollSpeed: 0,      // px/frame
+  ghost: null,                // element clone qui suit le curseur
+  ghostOffsetX: 0,            // decalage curseur -> coin sup-gauche du ghost
+  ghostOffsetY: 0,
+  lastPointerX: 0,            // derniere position connue (utilisee par RAF)
+  lastPointerY: 0,
   shiftHeld: false,
-  globalDragOverHandler: null  // ref pour add/removeEventListener
+  // RAF unique : auto-scroll + maj position + detection target
+  rafId: null,
+  // Drop target actuel (highlighte)
+  currentDropCol: null
 };
 
-// Handler global de dragover : appele DEPUIS N'IMPORTE OU sur la page
-// pendant le drag. C'est lui qui rend l'auto-scroll fonctionnel meme quand
-// la souris quitte les colonnes (gap entre colonnes, bord de l'ecran, etc.)
-function tasksGlobalDragOver(ev) {
-  // preventDefault est OBLIGATOIRE pour que le drop soit accepte partout.
-  // Sans ca, le navigateur refuse le drop et l'auto-scroll ne s'active pas.
-  ev.preventDefault();
-  tasksDnd.shiftHeld = !!ev.shiftKey;
-  tasksMaybeAutoScroll(ev.clientX);
-}
+// --- Handler pointerdown sur une carte ---
+// On NE demarre PAS le drag tout de suite : on attend un mouvement de 5px
+// pour ne pas casser les clics normaux (case "fait", bouton actions, etc.)
+function tasksPointerDown(ev, el) {
+  // Souris : seul le bouton gauche. Touch / pen : tous acceptes.
+  if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+  // Ne pas demarrer si on clique sur un controle interactif de la carte
+  const interactive = ev.target.closest(
+    'button, input, label, .tasks-day-card-actions, .tasks-day-card-grip-btn'
+  );
+  if (interactive) return;
 
-function tasksHandleDragStart(ev, el) {
   const id = parseInt(el.getAttribute('data-task-instance-id'), 10);
   if (!Number.isInteger(id)) return;
-  tasksDnd.draggingInstanceId = id;
-  tasksDnd.draggingCard = el;
-  // dataTransfer doit etre setData (sinon Firefox ne triggera pas drop)
-  try {
-    ev.dataTransfer.setData('text/plain', String(id));
-    ev.dataTransfer.effectAllowed = 'move';
-  } catch (e) { /* noop */ }
-  el.classList.add('is-dragging');
+
+  tasksDnd.pendingPointerId = ev.pointerId;
+  tasksDnd.pendingCard = el;
+  tasksDnd.pendingInstanceId = id;
+  tasksDnd.startX = ev.clientX;
+  tasksDnd.startY = ev.clientY;
+  tasksDnd.shiftHeld = !!ev.shiftKey;
+
+  // Ecoute globale du mouvement et du relachement pour cette interaction
+  window.addEventListener('pointermove', tasksPointerMove, { passive: false });
+  window.addEventListener('pointerup', tasksPointerUp, { passive: false });
+  window.addEventListener('pointercancel', tasksPointerUp, { passive: false });
+  window.addEventListener('keydown', tasksDragKeyDown);
+}
+
+// --- pointermove global ---
+// 1) Tant que le seuil n'est pas atteint -> on regarde si on doit demarrer
+// 2) Une fois le drag actif -> on maj lastPointerX/Y (le RAF fait le reste)
+function tasksPointerMove(ev) {
+  // Filtre : on ne traite que le pointer qui a initie l'interaction
+  if (tasksDnd.pendingPointerId !== null && ev.pointerId !== tasksDnd.pendingPointerId) return;
+  if (tasksDnd.active && ev.pointerId !== tasksDnd.pendingPointerId) return;
+
+  tasksDnd.shiftHeld = !!ev.shiftKey;
+
+  if (!tasksDnd.active) {
+    // Phase pre-drag : on attend de depasser le seuil
+    const dx = ev.clientX - tasksDnd.startX;
+    const dy = ev.clientY - tasksDnd.startY;
+    if (Math.hypot(dx, dy) < TASKS_DND_DRAG_THRESHOLD) return;
+    // Seuil franchi -> demarre le drag
+    tasksStartActiveDrag(ev);
+  }
+
+  // Drag actif : mise a jour de la position
+  tasksDnd.lastPointerX = ev.clientX;
+  tasksDnd.lastPointerY = ev.clientY;
+
+  // Repositionne le ghost (suit le curseur)
+  if (tasksDnd.ghost) {
+    tasksDnd.ghost.style.left = (ev.clientX - tasksDnd.ghostOffsetX) + 'px';
+    tasksDnd.ghost.style.top  = (ev.clientY - tasksDnd.ghostOffsetY) + 'px';
+  }
+
+  // Empeche la selection de texte et le scroll natif pendant le drag
+  ev.preventDefault();
+}
+
+// --- Demarre le drag actif (creation du ghost, RAF, etc.) ---
+function tasksStartActiveDrag(ev) {
+  const card = tasksDnd.pendingCard;
+  if (!card) return;
+
+  tasksDnd.active = true;
+  tasksDnd.draggingCard = card;
+  tasksDnd.draggingInstanceId = tasksDnd.pendingInstanceId;
+  tasksDnd.lastPointerX = ev.clientX;
+  tasksDnd.lastPointerY = ev.clientY;
+
+  // Carte source : translucide pour montrer l'origine
+  card.classList.add('is-dragging');
   document.body.classList.add('tasks-dnd-active');
 
-  // Listener global : capture dragover SUR TOUT LE DOCUMENT pour declencher
-  // l'auto-scroll meme quand la souris n'est plus sur une colonne (bord ecran,
-  // gap entre colonnes, scrollbar, etc.). On garde une ref pour pouvoir le
-  // detacher proprement au dragend.
-  tasksDnd.globalDragOverHandler = tasksGlobalDragOver;
-  document.addEventListener('dragover', tasksDnd.globalDragOverHandler);
-}
+  // Capture le pointer pour garantir qu'on continue a recevoir les events
+  // meme si le curseur sort de la fenetre / passe au-dessus d'iframes
+  try { card.setPointerCapture(ev.pointerId); } catch (e) { /* noop */ }
 
-function tasksHandleDragEnd(ev, el) {
-  el.classList.remove('is-dragging');
-  document.body.classList.remove('tasks-dnd-active');
-  // Detache le listener global de dragover
-  if (tasksDnd.globalDragOverHandler) {
-    document.removeEventListener('dragover', tasksDnd.globalDragOverHandler);
-    tasksDnd.globalDragOverHandler = null;
+  // Cree le ghost : clone visuel de la carte qui suit le curseur en fixed
+  const rect = card.getBoundingClientRect();
+  tasksDnd.ghostOffsetX = ev.clientX - rect.left;
+  tasksDnd.ghostOffsetY = ev.clientY - rect.top;
+
+  const ghost = card.cloneNode(true);
+  ghost.classList.add('tasks-day-card-ghost');
+  ghost.classList.remove('is-dragging');
+  ghost.style.position = 'fixed';
+  ghost.style.left = (ev.clientX - tasksDnd.ghostOffsetX) + 'px';
+  ghost.style.top  = (ev.clientY - tasksDnd.ghostOffsetY) + 'px';
+  ghost.style.width = rect.width + 'px';
+  ghost.style.pointerEvents = 'none';   // ne capte pas les events
+  ghost.style.zIndex = '9999';
+  document.body.appendChild(ghost);
+  tasksDnd.ghost = ghost;
+
+  // Lance le RAF en boucle continue (auto-scroll + drop target detection)
+  if (tasksDnd.rafId === null) {
+    tasksDnd.rafId = requestAnimationFrame(tasksDragTick);
   }
-  // Nettoyage des highlights restants
-  document.querySelectorAll('.tasks-day-col.is-drop-target').forEach(c => c.classList.remove('is-drop-target'));
-  // Stop auto-scroll
-  tasksStopAutoScroll();
-  tasksDnd.draggingInstanceId = null;
+}
+
+// --- RAF tick : boucle continue pendant le drag ---
+// CE TICK TOURNE EN CONTINU MEME QUAND LA SOURIS NE BOUGE PAS.
+// C'est ce qui rend l'auto-scroll vraiment fonctionnel : meme si l'utilisateur
+// reste immobile au bord droit de l'ecran, le scroll continue de defiler.
+function tasksDragTick() {
+  if (!tasksDnd.active) {
+    tasksDnd.rafId = null;
+    return;
+  }
+
+  const x = tasksDnd.lastPointerX;
+  const y = tasksDnd.lastPointerY;
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+
+  // 1) Auto-scroll horizontal du kanban
+  const scroller = document.getElementById('tasks-day-kanban-scroller');
+  if (scroller) {
+    let dir = 0;
+    let speed = 0;
+    const distLeft = x;
+    const distRight = vw - x;
+    if (distLeft < TASKS_DND_EDGE_ZONE) {
+      dir = -1;
+      const ratio = Math.max(0, distLeft) / TASKS_DND_EDGE_ZONE;
+      speed = TASKS_DND_MAX_SPEED * (1 - ratio);
+    } else if (distRight < TASKS_DND_EDGE_ZONE) {
+      dir = 1;
+      const ratio = Math.max(0, distRight) / TASKS_DND_EDGE_ZONE;
+      speed = TASKS_DND_MAX_SPEED * (1 - ratio);
+    }
+    if (dir !== 0) {
+      const sp = Math.max(3, Math.round(speed));
+      scroller.scrollLeft += dir * sp;
+    }
+    // Indicateurs visuels des bords actifs
+    const leftEdge = document.querySelector('.tasks-day-kanban-edge-left');
+    const rightEdge = document.querySelector('.tasks-day-kanban-edge-right');
+    if (leftEdge) leftEdge.classList.toggle('is-active', dir === -1);
+    if (rightEdge) rightEdge.classList.toggle('is-active', dir === 1);
+  }
+
+  // 2) Detection du drop target sous le curseur
+  // Le ghost a pointer-events:none donc elementFromPoint passe a travers
+  const elUnder = document.elementFromPoint(x, y);
+  const col = elUnder ? elUnder.closest('.tasks-day-col[data-drop-user-id]') : null;
+  if (col !== tasksDnd.currentDropCol) {
+    if (tasksDnd.currentDropCol) tasksDnd.currentDropCol.classList.remove('is-drop-target');
+    if (col) col.classList.add('is-drop-target');
+    tasksDnd.currentDropCol = col;
+  }
+
+  tasksDnd.rafId = requestAnimationFrame(tasksDragTick);
+}
+
+// --- pointerup / pointercancel : finalise le drop ---
+function tasksPointerUp(ev) {
+  if (tasksDnd.pendingPointerId === null) return;
+  if (ev.pointerId !== tasksDnd.pendingPointerId) return;
+
+  const wasActive = tasksDnd.active;
+  const draggedInstId = tasksDnd.draggingInstanceId;
+  const dropCol = tasksDnd.currentDropCol;
+  const shiftHeld = ev.shiftKey || tasksDnd.shiftHeld;
+
+  // Cleanup commun (avant l'eventuel drop, pour eviter de re-render avec le ghost)
+  tasksCleanupDrag();
+
+  // Si le drag etait actif ET cancel != true ET on a un drop target -> drop
+  if (wasActive && ev.type !== 'pointercancel' && dropCol && draggedInstId) {
+    const targetUserId = parseInt(dropCol.getAttribute('data-drop-user-id'), 10);
+    if (Number.isInteger(targetUserId)) {
+      // Lance l'attribution (asynchrone, gere son propre toast/render)
+      tasksDoAssignTransfer(draggedInstId, targetUserId, shiftHeld);
+    }
+  }
+}
+
+// --- ESC : annule le drag en cours ---
+function tasksDragKeyDown(ev) {
+  if (ev.key === 'Escape' && tasksDnd.active) {
+    tasksCleanupDrag();
+  }
+}
+
+// --- Nettoyage commun ---
+function tasksCleanupDrag() {
+  // Retire les listeners globaux
+  window.removeEventListener('pointermove', tasksPointerMove);
+  window.removeEventListener('pointerup', tasksPointerUp);
+  window.removeEventListener('pointercancel', tasksPointerUp);
+  window.removeEventListener('keydown', tasksDragKeyDown);
+
+  // Arrete le RAF
+  if (tasksDnd.rafId !== null) {
+    cancelAnimationFrame(tasksDnd.rafId);
+    tasksDnd.rafId = null;
+  }
+
+  // Retire le ghost
+  if (tasksDnd.ghost && tasksDnd.ghost.parentNode) {
+    tasksDnd.ghost.parentNode.removeChild(tasksDnd.ghost);
+  }
+
+  // Retire les classes visuelles
+  if (tasksDnd.draggingCard) tasksDnd.draggingCard.classList.remove('is-dragging');
+  if (tasksDnd.currentDropCol) tasksDnd.currentDropCol.classList.remove('is-drop-target');
+  document.body.classList.remove('tasks-dnd-active');
+  document.querySelectorAll('.tasks-day-col.is-drop-target')
+    .forEach(c => c.classList.remove('is-drop-target'));
+  document.querySelectorAll('.tasks-day-kanban-edge.is-active')
+    .forEach(e => e.classList.remove('is-active'));
+
+  // Reset state
+  tasksDnd.pendingPointerId = null;
+  tasksDnd.pendingCard = null;
+  tasksDnd.pendingInstanceId = null;
+  tasksDnd.active = false;
   tasksDnd.draggingCard = null;
+  tasksDnd.draggingInstanceId = null;
+  tasksDnd.ghost = null;
+  tasksDnd.currentDropCol = null;
+  tasksDnd.shiftHeld = false;
 }
 
-function tasksHandleDragOver(ev, col) {
-  // ABSOLUMENT preventDefault sinon le drop n'est pas autorise
-  ev.preventDefault();
-  ev.dataTransfer.dropEffect = ev.shiftKey ? 'copy' : 'move';
-  tasksDnd.shiftHeld = !!ev.shiftKey;
-  // Auto-scroll horizontal selon la position de la souris
-  tasksMaybeAutoScroll(ev.clientX);
-}
-
-function tasksHandleDragEnter(ev, col) {
-  ev.preventDefault();
-  col.classList.add('is-drop-target');
-}
-
-function tasksHandleDragLeave(ev, col) {
-  // dragleave est trigger meme en entrant dans un enfant -> on verifie
-  // que la souris quitte vraiment la colonne (relatedTarget hors col)
-  if (col.contains(ev.relatedTarget)) return;
-  col.classList.remove('is-drop-target');
-}
-
-async function tasksHandleDrop(ev, col) {
-  ev.preventDefault();
-  col.classList.remove('is-drop-target');
-  tasksStopAutoScroll();
-
-  const instId = parseInt(ev.dataTransfer.getData('text/plain'), 10) || tasksDnd.draggingInstanceId;
-  if (!Number.isInteger(instId)) return;
-
-  const targetUserId = parseInt(col.getAttribute('data-drop-user-id'), 10);
-  if (!Number.isInteger(targetUserId)) return;
-
+// --- Logique d'attribution (transferee, ajout avec Shift, ou desattribuer si -1) ---
+async function tasksDoAssignTransfer(instId, targetUserId, shiftHeld) {
   const data = state.tasksData;
   if (!data) return;
   const inst = (data.instances || []).find(i => i.id === instId);
@@ -1548,39 +1723,33 @@ async function tasksHandleDrop(ev, col) {
     .filter(a => a.task_instance_id === instId)
     .map(a => a.user_id);
 
-  // Construction de la nouvelle liste :
-  //  - targetUserId = -1 (drop sur "Non attribuees") => liste vide (desassigner tout)
-  //  - Sinon, par defaut : REMPLACE par [targetUserId] (transfert)
-  //  - Si Shift tenu pendant le drop : AJOUTE targetUserId a la liste existante
+  // Construction de la nouvelle liste
   let newUserIds;
   if (targetUserId === -1) {
     newUserIds = [];
-  } else if (ev.shiftKey) {
-    // Ajout : evite doublon
+  } else if (shiftHeld) {
     const set = new Set(currentAssignees);
     set.add(targetUserId);
     newUserIds = Array.from(set);
   } else {
-    // Transfert : remplace
     newUserIds = [targetUserId];
   }
 
-  // Skip si pas de changement reel
+  // Skip si aucun changement
   const sameSet = newUserIds.length === currentAssignees.length
     && newUserIds.every(u => currentAssignees.includes(u));
   if (sameSet) return;
 
-  // Optimistic UI : on met a jour le state local immediatement avant l'API
-  // pour que le visuel reagisse instantanement (la vue re-render).
+  // Optimistic UI
   const staffById = new Map((data.staff || []).map(s => [s.id, s]));
   const otherAssignments = (data.assignments || []).filter(a => a.task_instance_id !== instId);
   const oldAssignsForInst = (data.assignments || []).filter(a => a.task_instance_id === instId);
   const newAssignsForInst = newUserIds.map(uid => {
     const existing = oldAssignsForInst.find(a => a.user_id === uid);
-    if (existing) return existing; // preserve status/done/notes
+    if (existing) return existing;
     const s = staffById.get(uid);
     return {
-      id: -Date.now() - uid,  // id temporaire negatif
+      id: -Date.now() - uid,
       task_instance_id: instId,
       user_id: uid,
       status: 'pending',
@@ -1592,7 +1761,7 @@ async function tasksHandleDrop(ev, col) {
   data.assignments = [...otherAssignments, ...newAssignsForInst];
   render();
 
-  // Appel API en arriere-plan
+  // Appel API
   try {
     const res = await api(`/tasks/instances/${instId}/assign`, {
       method: 'POST',
@@ -1602,98 +1771,19 @@ async function tasksHandleDrop(ev, col) {
     showToast(
       targetUserId === -1
         ? 'Tâche désattribuée'
-        : ev.shiftKey
+        : shiftHeld
           ? `Ajouté à ${staffById.get(targetUserId)?.name || 'l\'équipier'}`
           : `Transférée à ${staffById.get(targetUserId)?.name || 'l\'équipier'}`,
       'success'
     );
-    // Re-sync propre (pour recuperer les vrais IDs d'assignments)
     await loadTasksForDate(state.tasksDate);
     refreshTaskBadge();
     render();
   } catch (e) {
     showToast('Erreur lors de l\'attribution', 'error');
-    // Rollback : on recharge depuis l'API
     await loadTasksForDate(state.tasksDate);
     render();
   }
-}
-
-// ===== Auto-scroll horizontal pendant le drag =====
-// Quand la souris est dans la zone gauche/droite du scroller kanban,
-// on lance un RAF qui translate scrollLeft. Vitesse proportionnelle a la
-// proximite du bord (max 18 px/frame ~ 60fps = 1080 px/s).
-const TASKS_DND_EDGE_ZONE = 160;   // px : zone "magnetique" pres du bord
-const TASKS_DND_MAX_SPEED = 30;    // px par frame (~1800 px/s a 60fps)
-
-// V18.6 : la detection s'appuie sur le VIEWPORT (window) et non plus sur
-// le boundingClientRect du scroller. Raison : le scroller a un padding
-// horizontal (p-4/md:p-6/lg:p-8 = jusqu'a 32px) donc son bord droit
-// s'arrete avant le bord droit de la fenetre. Quand on colle la souris
-// au bord droit de l'ecran, on est HORS du scroller -> distRight negatif
-// -> aucune detection. En utilisant window.innerWidth comme reference,
-// "colle au bord droit" = vitesse max, ce qui est le comportement attendu.
-function tasksMaybeAutoScroll(clientX) {
-  const scroller = document.getElementById('tasks-day-kanban-scroller');
-  if (!scroller) return;
-
-  // clientX peut etre 0 sur certains dragover natifs (Chrome) -> ignore
-  if (!Number.isFinite(clientX) || clientX <= 0) return;
-
-  const vw = window.innerWidth || document.documentElement.clientWidth;
-  const distLeft = clientX;              // distance au bord gauche du viewport
-  const distRight = vw - clientX;        // distance au bord droit du viewport
-
-  let dir = 0;
-  let speed = 0;
-  if (distLeft < TASKS_DND_EDGE_ZONE) {
-    dir = -1;
-    // distLeft peut etre <= 0 si souris a gauche : on clamp -> vitesse max
-    const ratio = Math.max(0, distLeft) / TASKS_DND_EDGE_ZONE;
-    speed = TASKS_DND_MAX_SPEED * (1 - ratio);
-  } else if (distRight < TASKS_DND_EDGE_ZONE) {
-    dir = 1;
-    const ratio = Math.max(0, distRight) / TASKS_DND_EDGE_ZONE;
-    speed = TASKS_DND_MAX_SPEED * (1 - ratio);
-  }
-
-  tasksDnd.scrollDir = dir;
-  tasksDnd.scrollSpeed = dir === 0 ? 0 : Math.max(3, Math.round(speed));
-
-  // Toggle visuel des zones edge
-  const leftEdge = document.querySelector('.tasks-day-kanban-edge-left');
-  const rightEdge = document.querySelector('.tasks-day-kanban-edge-right');
-  if (leftEdge) leftEdge.classList.toggle('is-active', dir === -1);
-  if (rightEdge) rightEdge.classList.toggle('is-active', dir === 1);
-
-  if (dir !== 0 && tasksDnd.scrollRafId === null) {
-    tasksDnd.scrollRafId = requestAnimationFrame(tasksAutoScrollTick);
-  } else if (dir === 0 && tasksDnd.scrollRafId !== null) {
-    tasksStopAutoScroll();
-  }
-}
-
-function tasksAutoScrollTick() {
-  const scroller = document.getElementById('tasks-day-kanban-scroller');
-  if (!scroller || tasksDnd.scrollDir === 0) {
-    tasksStopAutoScroll();
-    return;
-  }
-  scroller.scrollLeft += tasksDnd.scrollDir * tasksDnd.scrollSpeed;
-  tasksDnd.scrollRafId = requestAnimationFrame(tasksAutoScrollTick);
-}
-
-function tasksStopAutoScroll() {
-  if (tasksDnd.scrollRafId !== null) {
-    cancelAnimationFrame(tasksDnd.scrollRafId);
-    tasksDnd.scrollRafId = null;
-  }
-  tasksDnd.scrollDir = 0;
-  tasksDnd.scrollSpeed = 0;
-  const leftEdge = document.querySelector('.tasks-day-kanban-edge-left');
-  const rightEdge = document.querySelector('.tasks-day-kanban-edge-right');
-  if (leftEdge) leftEdge.classList.remove('is-active');
-  if (rightEdge) rightEdge.classList.remove('is-active');
 }
 
 // Indicateur "il y a du contenu hors-ecran" : on highlight les bords meme
@@ -1709,11 +1799,8 @@ function tasksKanbanUpdateEdges(scroller) {
   rightEdge.classList.toggle('has-overflow', canRight);
 }
 
-// Expose explicitement les handlers (utilises depuis onload="...")
-window.tasksHandleDragStart  = tasksHandleDragStart;
-window.tasksHandleDragEnd    = tasksHandleDragEnd;
-window.tasksHandleDragOver   = tasksHandleDragOver;
-window.tasksHandleDragEnter  = tasksHandleDragEnter;
-window.tasksHandleDragLeave  = tasksHandleDragLeave;
-window.tasksHandleDrop       = tasksHandleDrop;
+// Expose explicitement les handlers utilises depuis le HTML inline
+// V18.7 : un seul handler attache (pointerdown sur les cartes). Le reste
+// est gere par des listeners globaux installes dynamiquement.
+window.tasksPointerDown       = tasksPointerDown;
 window.tasksKanbanUpdateEdges = tasksKanbanUpdateEdges;

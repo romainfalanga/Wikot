@@ -1623,28 +1623,42 @@ async function tasksHandleDrop(ev, col) {
 // Quand la souris est dans la zone gauche/droite du scroller kanban,
 // on lance un RAF qui translate scrollLeft. Vitesse proportionnelle a la
 // proximite du bord (max 18 px/frame ~ 60fps = 1080 px/s).
-const TASKS_DND_EDGE_ZONE = 140;   // px : zone "magnetique" pres du bord
-const TASKS_DND_MAX_SPEED = 26;    // px par frame (~1560 px/s a 60fps)
+const TASKS_DND_EDGE_ZONE = 160;   // px : zone "magnetique" pres du bord
+const TASKS_DND_MAX_SPEED = 30;    // px par frame (~1800 px/s a 60fps)
 
+// V18.6 : la detection s'appuie sur le VIEWPORT (window) et non plus sur
+// le boundingClientRect du scroller. Raison : le scroller a un padding
+// horizontal (p-4/md:p-6/lg:p-8 = jusqu'a 32px) donc son bord droit
+// s'arrete avant le bord droit de la fenetre. Quand on colle la souris
+// au bord droit de l'ecran, on est HORS du scroller -> distRight negatif
+// -> aucune detection. En utilisant window.innerWidth comme reference,
+// "colle au bord droit" = vitesse max, ce qui est le comportement attendu.
 function tasksMaybeAutoScroll(clientX) {
   const scroller = document.getElementById('tasks-day-kanban-scroller');
   if (!scroller) return;
-  const rect = scroller.getBoundingClientRect();
-  const distLeft = clientX - rect.left;
-  const distRight = rect.right - clientX;
+
+  // clientX peut etre 0 sur certains dragover natifs (Chrome) -> ignore
+  if (!Number.isFinite(clientX) || clientX <= 0) return;
+
+  const vw = window.innerWidth || document.documentElement.clientWidth;
+  const distLeft = clientX;              // distance au bord gauche du viewport
+  const distRight = vw - clientX;        // distance au bord droit du viewport
 
   let dir = 0;
   let speed = 0;
-  if (distLeft >= 0 && distLeft < TASKS_DND_EDGE_ZONE) {
+  if (distLeft < TASKS_DND_EDGE_ZONE) {
     dir = -1;
-    speed = TASKS_DND_MAX_SPEED * (1 - distLeft / TASKS_DND_EDGE_ZONE);
-  } else if (distRight >= 0 && distRight < TASKS_DND_EDGE_ZONE) {
+    // distLeft peut etre <= 0 si souris a gauche : on clamp -> vitesse max
+    const ratio = Math.max(0, distLeft) / TASKS_DND_EDGE_ZONE;
+    speed = TASKS_DND_MAX_SPEED * (1 - ratio);
+  } else if (distRight < TASKS_DND_EDGE_ZONE) {
     dir = 1;
-    speed = TASKS_DND_MAX_SPEED * (1 - distRight / TASKS_DND_EDGE_ZONE);
+    const ratio = Math.max(0, distRight) / TASKS_DND_EDGE_ZONE;
+    speed = TASKS_DND_MAX_SPEED * (1 - ratio);
   }
 
   tasksDnd.scrollDir = dir;
-  tasksDnd.scrollSpeed = Math.max(2, Math.round(speed));
+  tasksDnd.scrollSpeed = dir === 0 ? 0 : Math.max(3, Math.round(speed));
 
   // Toggle visuel des zones edge
   const leftEdge = document.querySelector('.tasks-day-kanban-edge-left');

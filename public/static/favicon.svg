@@ -1,25 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Wikot favicon (V18.11)
-  Reproduit le logo header : carré doré arrondi + cloche de reception
-  hoteliere (concierge bell) en navy. Couleurs identiques aux variables CSS
-  --c-gold (#C9A961) et --c-navy (#0A1628).
+  Wikot favicon (V18.12)
+  Reproduit le logo header : carre dore arrondi + cloche de reception en navy.
+  Couleurs identiques aux variables CSS de l'app :
+    --c-gold : #C9A961
+    --c-navy : #0A1628
+  Design optimise pour la lisibilite a 16x16 / 32x32 px (onglet navigateur) :
+  formes massives, contraste eleve, aucun detail fin.
 -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <!-- Fond : carre dore arrondi (rounded-xl) -->
-  <rect width="64" height="64" rx="14" ry="14" fill="#C9A961"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="geometricPrecision">
+  <!-- Fond : carre dore arrondi (equivalent rounded-xl) -->
+  <rect width="64" height="64" rx="12" ry="12" fill="#C9A961"/>
 
-  <!-- Cloche de reception (fa-concierge-bell stylisee), couleur navy -->
+  <!-- Cloche de reception, navy, design simplifie et massif pour rester lisible petit -->
   <g fill="#0A1628">
+    <!-- Bouton au sommet -->
+    <circle cx="32" cy="14" r="4"/>
+    <!-- Dome de la cloche (forme pleine arrondie) -->
+    <path d="M14 44
+             C 14 22, 50 22, 50 44 Z"/>
     <!-- Plateau / base -->
-    <rect x="10" y="46" width="44" height="5" rx="2.5"/>
-    <!-- Pieds -->
-    <rect x="14" y="42" width="4" height="4" rx="1"/>
-    <rect x="46" y="42" width="4" height="4" rx="1"/>
-    <!-- Dome de la cloche -->
-    <path d="M16 42 C 16 24, 48 24, 48 42 Z"/>
-    <!-- Tige + bouton sur le sommet -->
-    <rect x="30.5" y="14" width="3" height="6" rx="1"/>
-    <circle cx="32" cy="13" r="3"/>
+    <rect x="10" y="45" width="44" height="6" rx="3"/>
   </g>
 </svg>

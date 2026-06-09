@@ -168,19 +168,20 @@ function userCanUseVeleda() {
 // dans la SPA au lieu de quitter le site.
 //
 // Convention pour state object stocké dans history :
-//   { view: 'dashboard' | 'procedures' | 'info' | 'wikot' | 'wikot-max'
+//   { view: 'dashboard' | 'procedures' | 'info' | 'wikot'
 //        | 'conversations' | 'changelog' | 'templates' | 'users' | 'hotels'
 //        | 'procedure-detail' | 'tasks' ...,
 //     procedureId: number | null }
 
 let _historyPopping = false; // garde anti-boucle
 
-// V18.11 — Normalise les anciens noms de vue : 'wikot-max' -> 'back-wikot'.
-// Tous les pushState / replaceState passent par ce filtre pour que l'URL
-// affichee dans la barre soit toujours le nouveau nom canonique, meme si
-// du code legacy appelle encore navigate('wikot-max').
+// V18.12 — Normalise les anciens noms de vue Wikot vers 'wikot' (nom unique).
+// L'historique 'wikot-max' (V18.10 et avant) puis 'back-wikot' (V18.11)
+// sont tous deux redirig\u00e9s vers 'wikot' afin que l'URL affich\u00e9e dans la
+// barre du navigateur soit toujours #wikot, m\u00eame si du code legacy ou un
+// vieux lien appelle navigate('wikot-max') ou navigate('back-wikot').
 function _canonicalView(view) {
-  if (view === 'wikot-max') return 'back-wikot';
+  if (view === 'wikot-max' || view === 'back-wikot') return 'wikot';
   return view;
 }
 

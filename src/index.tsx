@@ -7016,10 +7016,14 @@ app.get('*', (c) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Wikot - Gestion des procédures hôtelières</title>
 
-  <!-- === FAVICON (V18.11) — SVG reproduisant le logo header (carre dore + cloche).
-       Cache-bust via ?v=BUILD_ID pour que le navigateur recharge a chaque deploiement. -->
+  <!-- === FAVICON (V18.12) — SVG reproduisant le logo header (carre dore + cloche).
+       Cache-bust via ?v=BUILD_ID pour que le navigateur recharge a chaque deploiement.
+       Fallback "any" pour les vieux navigateurs qui n'aiment pas type=image/svg+xml. -->
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=${v}">
+  <link rel="alternate icon" href="/static/favicon.svg?v=${v}">
+  <link rel="shortcut icon" href="/static/favicon.svg?v=${v}">
   <link rel="apple-touch-icon" href="/static/favicon.svg?v=${v}">
+  <meta name="theme-color" content="#0A1628">
 
   <!-- === PERF : preconnect aux CDN restants (Font Awesome + Google Fonts) === -->
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
@@ -7601,12 +7605,14 @@ app.get('*', (c) => {
           }
         } catch(e) { console.warn('[boot] signup return detect failed', e); }
 
-        // V18.11 — Normalisation du hash : #wikot-max -> #back-wikot.
-        // Conserve la retro-compatibilite : les vieux favoris/liens ouvrent
-        // la bonne page, mais l'URL affichee est mise a jour silencieusement.
+        // V18.12 — Normalisation du hash : #wikot-max / #back-wikot -> #wikot.
+        // Conserve la retro-compatibilite : les vieux favoris/liens (V18.10
+        // et V18.11) ouvrent toujours la bonne page, mais l'URL affichee
+        // dans la barre est silencieusement remplacee par le nom canonique.
         try {
-          if (window.location.hash === '#wikot-max') {
-            window.history.replaceState({ view: 'back-wikot' }, '', '#back-wikot');
+          const h = window.location.hash;
+          if (h === '#wikot-max' || h === '#back-wikot') {
+            window.history.replaceState({ view: 'wikot' }, '', '#wikot');
           }
         } catch(e) { /* noop */ }
 

@@ -29,9 +29,13 @@ function wikotState(mode) {
 }
 
 // Determine le mode actif selon la vue courante
-// V18.11 — 'back-wikot' (nouveau nom canonique) ET 'wikot-max' (alias retro-compat).
+// V18.12 — Un seul agent Wikot (ex-Back Wikot = mode 'max' en interne).
+// L'ancien mode 'standard' (Wikot lecture) n'est plus expose dans l'UI :
+// quelle que soit la vue Wikot atteinte (wikot / back-wikot / wikot-max),
+// on rend toujours le mode 'max'. Le code 'standard' c\u00f4t\u00e9 backend reste
+// pr\u00e9sent (mort) au cas o\u00f9 on voudrait le ressusciter.
 function activeWikotMode() {
-  return (state.currentView === 'back-wikot' || state.currentView === 'wikot-max') ? 'max' : 'standard';
+  return 'max';
 }
 
 // L'utilisateur a-t-il accès à Back Wikot ?

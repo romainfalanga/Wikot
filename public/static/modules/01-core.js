@@ -19,6 +19,7 @@ let state = {
   stats: {},
   selectedProcedure: null,
   filterCategory: '',
+  procedureSearchQuery: '', // V18.10 — recherche par mot-cle sur la page Procedures
   // Chat
   chatGroups: [],
   chatChannels: [],

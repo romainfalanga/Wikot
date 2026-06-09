@@ -6,18 +6,25 @@
 // ============================================
 // PROCEDURES LIST (Tree View)
 // ============================================
+// V18.10 — Recherche par mot-cle alignee avec Informations :
+//  - state.procedureSearchQuery porte la requete (live, sans appel API)
+//  - filtre sur title + trigger_event + category_name (champs deja en list view)
+//  - mode recherche = liste a plat avec badge categorie
+//  - mode normal = arborescence par categorie inchangee
+//  - le filtre par categorie existant reste compatible (les deux se cumulent)
 function renderProceduresList() {
   const canEdit = userCanEditProcedures();
   let filtered = state.procedures;
   if (state.filterCategory) filtered = filtered.filter(p => p.category_id == state.filterCategory);
 
-  // Group by category
-  const grouped = {};
-  filtered.forEach(p => {
-    const catName = p.category_name || 'Sans catégorie';
-    if (!grouped[catName]) grouped[catName] = { icon: p.category_icon || 'fa-folder', color: p.category_color || '#6B7280', procedures: [] };
-    grouped[catName].procedures.push(p);
-  });
+  const q = (state.procedureSearchQuery || '').trim().toLowerCase();
+  const filteredFinal = q
+    ? filtered.filter(p =>
+        (p.title || '').toLowerCase().includes(q)
+        || (p.trigger_event || '').toLowerCase().includes(q)
+        || (p.category_name || '').toLowerCase().includes(q)
+      )
+    : filtered;
 
   return `
   <div class="fade-in">
@@ -26,7 +33,7 @@ function renderProceduresList() {
       <div>
         <p class="section-eyebrow mb-2">Savoir-faire</p>
         <h2 class="section-title-premium text-2xl sm:text-3xl">Procédures</h2>
-        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">${filtered.length} procédure${filtered.length > 1 ? 's' : ''} référencée${filtered.length > 1 ? 's' : ''}</p>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">${filteredFinal.length} procédure${filteredFinal.length > 1 ? 's' : ''} référencée${filteredFinal.length > 1 ? 's' : ''}${q ? ` pour « ${escapeHtml(q)} »` : ''}</p>
       </div>
       ${canEdit ? `
       <button onclick="showProcedureForm()" class="btn-premium self-start sm:self-auto px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;">
@@ -34,7 +41,19 @@ function renderProceduresList() {
       </button>` : ''}
     </div>
 
-    <!-- Filters premium -->
+    <!-- Barre de recherche premium sticky (V18.10) -->
+    <div class="sticky top-0 z-10 -mx-4 md:-mx-6 lg:-mx-8 px-4 md:px-6 lg:px-8 py-3 mb-5" style="background: var(--c-cream); border-bottom: 1px solid var(--c-line);">
+      <div class="relative max-w-2xl">
+        <i class="fas fa-magnifying-glass absolute left-3.5 top-1/2 -translate-y-1/2 text-sm" style="color: var(--c-gold);"></i>
+        <input id="procedures-search" type="text" value="${escapeHtml(state.procedureSearchQuery || '')}"
+          oninput="state.procedureSearchQuery = this.value; renderProceduresBody()"
+          placeholder="Rechercher une procédure (check-in, plainte, ménage…)"
+          class="input-premium form-input-mobile w-full pl-10 pr-10 py-3 rounded-xl outline-none">
+        ${q ? `<button onclick="state.procedureSearchQuery=''; document.getElementById('procedures-search').value=''; renderProceduresBody()" class="absolute right-3 top-1/2 -translate-y-1/2" style="color: rgba(15,27,40,0.4);"><i class="fas fa-xmark"></i></button>` : ''}
+      </div>
+    </div>
+
+    <!-- Filtre catégorie (conservé, se cumule avec la recherche) -->
     <div class="card-premium p-3 sm:p-4 mb-6">
       <div class="flex flex-col sm:flex-row gap-2 sm:gap-3">
         <select onchange="state.filterCategory=this.value; render()" class="input-premium flex-1 text-sm rounded-lg px-3 py-2.5 outline-none">
@@ -48,34 +67,95 @@ function renderProceduresList() {
       </div>
     </div>
 
-    <!-- Tree View premium -->
-    <div class="space-y-5">
-      ${Object.keys(grouped).length === 0 ? `
-        <div class="card-premium empty-state-premium">
-          <div class="empty-icon"><i class="fas fa-sitemap"></i></div>
-          <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucune procédure trouvée</p>
-          ${canEdit ? `<p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Créez votre première procédure pour commencer.</p>` : ''}
-        </div>
-      ` : Object.entries(grouped).map(([catName, catData]) => `
-        <div class="card-premium">
-          <div class="px-5 py-4 flex items-center gap-3" style="border-bottom: 1px solid var(--c-line); background: linear-gradient(180deg, #fff 0%, var(--c-cream) 100%); position: relative;">
-            <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(201,169,97,0.12);">
-              <i class="fas ${catData.icon} text-sm" style="color: var(--c-gold-deep);"></i>
-            </div>
-            <h3 class="font-display font-semibold truncate" style="color: var(--c-navy);">${catName}</h3>
-            <span class="pill-gold ml-auto shrink-0">${catData.procedures.length}</span>
-          </div>
-          <div>
-            ${catData.procedures.map(proc => renderProcedureCard(proc, canEdit)).join('')}
-          </div>
-        </div>
-      `).join('')}
+    <!-- Corps (extrait pour refresh live sans tout re-rendre) -->
+    <div id="procedures-body">
+      ${renderProceduresBodyHTML(filteredFinal, q, canEdit)}
     </div>
   </div>`;
 }
 
-function renderProcedureCard(proc, canEdit) {
+// V18.10 — Refresh local du corps des procedures sans re-render global.
+// Pareil que renderHotelInfoBody : ca evite que la barre de recherche perde
+// le focus a chaque frappe (l'input n'est pas detruit/recree).
+function renderProceduresBody() {
+  const body = document.getElementById('procedures-body');
+  if (!body) { render(); return; }
+  const canEdit = userCanEditProcedures();
+  let filtered = state.procedures;
+  if (state.filterCategory) filtered = filtered.filter(p => p.category_id == state.filterCategory);
+  const q = (state.procedureSearchQuery || '').trim().toLowerCase();
+  const filteredFinal = q
+    ? filtered.filter(p =>
+        (p.title || '').toLowerCase().includes(q)
+        || (p.trigger_event || '').toLowerCase().includes(q)
+        || (p.category_name || '').toLowerCase().includes(q)
+      )
+    : filtered;
+  body.innerHTML = renderProceduresBodyHTML(filteredFinal, q, canEdit);
+}
+
+// V18.10 — Corps des procedures : 2 modes selon la presence d'une recherche.
+function renderProceduresBodyHTML(filteredFinal, q, canEdit) {
+  if (filteredFinal.length === 0 && q) {
+    return `
+    <div class="card-premium empty-state-premium">
+      <div class="empty-icon"><i class="fas fa-magnifying-glass"></i></div>
+      <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucun résultat pour « ${escapeHtml(q)} »</p>
+      <p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Essayez avec un autre terme ou retirez le filtre par catégorie.</p>
+    </div>`;
+  }
+
+  if (filteredFinal.length === 0) {
+    return `
+    <div class="card-premium empty-state-premium">
+      <div class="empty-icon"><i class="fas fa-sitemap"></i></div>
+      <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Aucune procédure trouvée</p>
+      ${canEdit ? `<p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Créez votre première procédure pour commencer.</p>` : ''}
+    </div>`;
+  }
+
+  // Mode recherche : liste a plat avec badge categorie sur chaque carte
+  if (q) {
+    return `
+    <div class="card-premium overflow-hidden">
+      ${filteredFinal.map(proc => renderProcedureCard(proc, canEdit, true)).join('')}
+    </div>`;
+  }
+
+  // Mode normal : groupe par categorie (arborescence existante)
+  const grouped = {};
+  filteredFinal.forEach(p => {
+    const catName = p.category_name || 'Sans catégorie';
+    if (!grouped[catName]) grouped[catName] = { icon: p.category_icon || 'fa-folder', color: p.category_color || '#6B7280', procedures: [] };
+    grouped[catName].procedures.push(p);
+  });
+
+  return `
+  <div class="space-y-5">
+    ${Object.entries(grouped).map(([catName, catData]) => `
+      <div class="card-premium">
+        <div class="px-5 py-4 flex items-center gap-3" style="border-bottom: 1px solid var(--c-line); background: linear-gradient(180deg, #fff 0%, var(--c-cream) 100%); position: relative;">
+          <div class="w-9 h-9 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(201,169,97,0.12);">
+            <i class="fas ${catData.icon} text-sm" style="color: var(--c-gold-deep);"></i>
+          </div>
+          <h3 class="font-display font-semibold truncate" style="color: var(--c-navy);">${catName}</h3>
+          <span class="pill-gold ml-auto shrink-0">${catData.procedures.length}</span>
+        </div>
+        <div>
+          ${catData.procedures.map(proc => renderProcedureCard(proc, canEdit)).join('')}
+        </div>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+// V18.10 — showCategoryBadge=true en mode recherche : affiche le nom de la
+// categorie en petit badge sous le titre (puisqu'on a perdu le contexte de
+// la categorie qui groupe normalement les cartes).
+function renderProcedureCard(proc, canEdit, showCategoryBadge = false) {
   const trigger = proc.trigger_event || '';
+  const catName = proc.category_name || 'Sans catégorie';
+  const catIcon = proc.category_icon || 'fa-folder';
 
   return `
   <div class="card-row-premium px-4 sm:px-5 py-3.5 sm:py-4 cursor-pointer" onclick="viewProcedure(${proc.id})">
@@ -84,6 +164,11 @@ function renderProcedureCard(proc, canEdit) {
         <div class="flex flex-wrap items-center gap-1.5 mb-1">
           <h4 class="font-display font-semibold text-sm sm:text-base truncate max-w-full" style="color: var(--c-navy);">${escapeHtml(proc.title)}</h4>
         </div>
+        ${showCategoryBadge ? `
+          <div class="inline-flex items-center gap-1.5 mb-1.5 px-2 py-0.5 rounded-md text-[11px]" style="background: rgba(201,169,97,0.12); color: var(--c-gold-deep);">
+            <i class="fas ${catIcon} text-[10px]"></i><span>${escapeHtml(catName)}</span>
+          </div>
+        ` : ''}
         ${trigger ? `<p class="text-xs sm:text-sm mb-1.5 line-clamp-2" style="color: rgba(15,27,40,0.65);"><i class="fas fa-bolt mr-1 text-[10px]" style="color: var(--c-gold);"></i>${escapeHtml(trigger)}</p>` : ''}
         <div class="flex flex-wrap items-center gap-2 sm:gap-4 text-[11px]" style="color: rgba(15,27,40,0.45);">
           <span><i class="fas fa-list-ol mr-1" style="color: var(--c-gold);"></i>${proc.step_count || 0} étape${(proc.step_count || 0) > 1 ? 's' : ''}</span>

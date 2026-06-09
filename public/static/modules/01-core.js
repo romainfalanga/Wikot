@@ -34,17 +34,18 @@ let state = {
   hotelInfoSearchQuery: '',
   hotelInfoActiveCategory: null,
   hotelInfoLoaded: false,
-  // Wikot AI Agent — état séparé par mode (standard / max)
-  // Wikot classique (lecture / sourcing)
-  wikotConversations: [],
-  wikotCurrentConvId: null,
-  wikotMessages: [],
-  wikotActions: [],
-  wikotLoading: false,
-  wikotSending: false,
-  wikotSidebarOpen: false,
-  _wikotInitialLoad: false,
-  // Wikot Max (rédaction / création / modification)
+  // ============================================
+  // WIKOT AI AGENT (unique depuis V18.12 — ex "Back Wikot")
+  // ============================================
+  // NOTE INTERNE : les variables ci-dessous sont prefixees "wikotMax" / "backWikot"
+  // pour des raisons historiques (l'agent s'appelait "Back Wikot" en V18.11 et le
+  // mode interne 'max' designait l'agent d'edition). Le nom externe a ete simplifie
+  // en V18.12 : il n'y a plus qu'un seul Wikot. Les variables internes ont ete
+  // conservees telles quelles pour eviter un renommage massif (350+ occurrences)
+  // sans valeur fonctionnelle. C'est purement cosmetique : `wikotMaxMessages`,
+  // c'est juste "les messages de Wikot".
+  //
+  // Etat chat (conversations, messages, actions exec)
   wikotMaxConversations: [],
   wikotMaxCurrentConvId: null,
   wikotMaxMessages: [],
@@ -53,12 +54,12 @@ let state = {
   wikotMaxSending: false,
   wikotMaxSidebarOpen: false,
   _wikotMaxInitialLoad: false,
-  // Back Wikot - workflow atelier
+  // Workflow atelier (etapes de redaction guidee)
   // step : 'home' | 'select-target' | 'workshop'
   // workflowMode : 'create_procedure' | 'update_procedure' | 'create_info' | 'update_info'
   // targetKind : 'procedure' | 'info_item'
   // targetId : id de la cible en mode update
-  // form : payload du formulaire vivant édité par Back Wikot
+  // form : payload du formulaire vivant edite par l'agent
   backWikotStep: 'home',
   backWikotWorkflowMode: null,
   backWikotTargetKind: null,
@@ -67,13 +68,13 @@ let state = {
   backWikotFormDirty: false,
   backWikotSelectSearch: '',
   backWikotSaving: false,
-  // cache pour la liste des cibles à modifier
+  // Cache pour la liste des cibles a modifier
   backWikotProceduresCache: null,
   backWikotInfoCache: null,
-  // Back Wikot ROOT — conversation persistante avec l'orchestrateur (panneau latéral / drawer)
-  // L'utilisateur peut écrire en permanence à Back Wikot qui pilote l'UI en autonomie :
-  //  - exécute une SÉQUENCE d'actions (respond, enter_workflow, start_create, select_*, prefill_form, ask_followup, back_to_home)
-  //  - réutilise toutes les fonctions UI existantes (zéro régression)
+  // Conversation persistante avec l'orchestrateur (panneau lateral / drawer)
+  // L'utilisateur peut ecrire en permanence a l'agent qui pilote l'UI en autonomie :
+  //  - execute une SEQUENCE d'actions (respond, enter_workflow, start_create, select_*, prefill_form, ask_followup, back_to_home)
+  //  - reutilise toutes les fonctions UI existantes (zero regression)
   backWikotRootMessages: [],         // [{role:'user'|'assistant', content, ts, _system?}]
   backWikotRootSending: false
 };

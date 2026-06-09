@@ -4,41 +4,44 @@
 // ============================================
 
 // ============================================
-// WIKOT — AGENTS IA (vue chat) — Wikot (standard) + Back Wikot (max)
+// WIKOT — AGENT IA (vue chat)
 // ============================================
-// Helper : récupère/écrit l'état chat correspondant au mode (state.wikot* ou state.wikotMax*)
-function wikotState(mode) {
-  // mode = 'standard' | 'max'
-  const prefix = mode === 'max' ? 'wikotMax' : 'wikot';
+// Un seul agent depuis V18.13. Les noms internes 'max' / 'wikotMax*' / 'backWikot*'
+// sont conserves pour eviter un renommage massif sans valeur fonctionnelle.
+//
+// Helper : recupere/ecrit l'etat chat de l'agent (state.wikotMax*).
+// L'objet retourne expose des accesseurs proprement nommes (conversations, messages...)
+// pour decoupler le code appelant des noms historiques des cles d'etat.
+// Le parametre _mode est ignore (vestige de l'ancien dispatch standard/max).
+function wikotState(_mode) {
   return {
-    get conversations() { return state[prefix + 'Conversations']; },
-    set conversations(v) { state[prefix + 'Conversations'] = v; },
-    get currentConvId() { return state[prefix + 'CurrentConvId']; },
-    set currentConvId(v) { state[prefix + 'CurrentConvId'] = v; },
-    get messages() { return state[prefix + 'Messages']; },
-    set messages(v) { state[prefix + 'Messages'] = v; },
-    get actions() { return state[prefix + 'Actions']; },
-    set actions(v) { state[prefix + 'Actions'] = v; },
-    get loading() { return state[prefix + 'Loading']; },
-    set loading(v) { state[prefix + 'Loading'] = v; },
-    get sending() { return state[prefix + 'Sending']; },
-    set sending(v) { state[prefix + 'Sending'] = v; },
-    get sidebarOpen() { return state[prefix + 'SidebarOpen']; },
-    set sidebarOpen(v) { state[prefix + 'SidebarOpen'] = v; }
+    get conversations() { return state.wikotMaxConversations; },
+    set conversations(v) { state.wikotMaxConversations = v; },
+    get currentConvId() { return state.wikotMaxCurrentConvId; },
+    set currentConvId(v) { state.wikotMaxCurrentConvId = v; },
+    get messages() { return state.wikotMaxMessages; },
+    set messages(v) { state.wikotMaxMessages = v; },
+    get actions() { return state.wikotMaxActions; },
+    set actions(v) { state.wikotMaxActions = v; },
+    get loading() { return state.wikotMaxLoading; },
+    set loading(v) { state.wikotMaxLoading = v; },
+    get sending() { return state.wikotMaxSending; },
+    set sending(v) { state.wikotMaxSending = v; },
+    get sidebarOpen() { return state.wikotMaxSidebarOpen; },
+    set sidebarOpen(v) { state.wikotMaxSidebarOpen = v; }
   };
 }
 
-// Determine le mode actif selon la vue courante
-// V18.12 — Un seul agent Wikot (ex-Back Wikot = mode 'max' en interne).
-// L'ancien mode 'standard' (Wikot lecture) n'est plus expose dans l'UI :
-// quelle que soit la vue Wikot atteinte (wikot / back-wikot / wikot-max),
-// on rend toujours le mode 'max'. Le code 'standard' c\u00f4t\u00e9 backend reste
-// pr\u00e9sent (mort) au cas o\u00f9 on voudrait le ressusciter.
+// Mode interne unique depuis V18.13 (avant : 'standard' | 'max').
+// La fonction est conservee pour ne pas casser les ~10 appels existants ;
+// elle retourne toujours 'max' (seul mode encore implemente).
 function activeWikotMode() {
   return 'max';
 }
 
-// L'utilisateur a-t-il accès à Back Wikot ?
+// L'utilisateur a-t-il accès à Wikot ? (admin ou employe avec droit d'edition)
+// NOTE : la fonction garde son ancien nom userCanUseWikotMax pour ne pas casser
+// les nombreux call sites (compatibilite). Elle ne reflete plus une notion de "max".
 function userCanUseWikotMax() {
   if (!state.user) return false;
   if (state.user.role === 'admin' || state.user.role === 'super_admin') return true;
@@ -540,66 +543,12 @@ function renderWikotMessage(msg, mode) {
       </div>
     `;
   }
-  // Assistant
+  // Assistant — bulle texte + références + actions
   const refs = msg.references || [];
-  // Multi-blocs : on supporte answer_cards (nouveau) avec fallback answer_card (rétro-compat)
-  const answerCards = Array.isArray(msg.answer_cards) && msg.answer_cards.length > 0
-    ? msg.answer_cards
-    : (msg.answer_card ? [msg.answer_card] : []);
-  const actionsArr = mode === 'max' ? (state.wikotMaxActions || []) : (state.wikotActions || []);
+  const actionsArr = state.wikotMaxActions || [];
   const actionsForMsg = actionsArr.filter(a => a.message_id === msg.id);
-  const cfg = WIKOT_MODE_CONFIG[mode] || WIKOT_MODE_CONFIG.standard;
+  const cfg = WIKOT_MODE_CONFIG[mode] || WIKOT_MODE_CONFIG.max;
 
-  // MODE STANDARD (Wikot) — bulle texte courte (reply_text) + 0..N cartes
-  // Garanties anti-bulle-vide :
-  //   1. Si reply_text + cartes utiles → on affiche les deux
-  //   2. Si reply_text seul → on affiche le texte
-  //   3. Si cartes utiles seules → on affiche les cartes (rare, fallback de transition)
-  //   4. Si RIEN → on affiche un message par défaut pour ne jamais avoir de bulle vide
-  if (mode === 'standard') {
-    const replyText = (msg.content || '').trim();
-    // Cartes "visibles" : on filtre les none (texte fait le job) tout en gardant tout le reste
-    const visibleCards = answerCards.filter(c => c && c.kind && c.kind !== 'none');
-    const hasReply = replyText.length > 0;
-    const hasVisibleCards = visibleCards.length > 0;
-
-    // Construction du contenu visible
-    let bubbleHtml = '';
-    if (hasReply) {
-      bubbleHtml = `
-        <div class="rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm leading-relaxed" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04); color: var(--c-navy);">
-          ${formatWikotContent(replyText)}
-        </div>
-      `;
-    } else if (!hasVisibleCards) {
-      // Filet ultime côté front : aucune donnée → on affiche un message lisible
-      bubbleHtml = `
-        <div class="rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm leading-relaxed" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04); color: var(--c-navy);">
-          Je n'ai pas trouvé de réponse précise. Peux-tu reformuler ta question ?
-        </div>
-      `;
-    }
-
-    const cardsHtml = hasVisibleCards
-      ? visibleCards.map(c => renderWikotAnswerCard(c)).join('')
-      : '';
-
-    return `
-      <div class="flex justify-start mb-4">
-        <div class="flex gap-2 max-w-[95%] sm:max-w-[85%] w-full">
-          <div class="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-xs" style="background: var(--c-navy); color: var(--c-gold);">
-            <i class="fas ${cfg.icon}"></i>
-          </div>
-          <div class="flex-1 min-w-0 space-y-2">
-            ${bubbleHtml}
-            ${cardsHtml}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  // MODE MAX (Back Wikot) — bulle texte + références + actions
   return `
     <div class="flex justify-start mb-4">
       <div class="flex gap-2 max-w-[90%] sm:max-w-[80%]">
@@ -627,336 +576,6 @@ function renderWikotMessage(msg, mode) {
   `;
 }
 
-// Carte de réponse Wikot (mode standard) : 5 types possibles
-//   - procedure        : procédure entière (titre + déclencheur + toutes les étapes)
-//   - procedure_step   : UNE étape précise (avec sous-procédure complète si liée)
-//   - info_item        : UNE information précise (titre + contenu complet)
-//   - info_category    : TOUTES les infos d'une catégorie (ex: "Loisirs et activités")
-//   - not_found        : message préfait "aucune information ni procédure ne correspond"
-function renderWikotAnswerCard(card) {
-  if (!card || card.kind === 'not_found') {
-    // Bloc 4 : not_found typé. Si le serveur a fourni title/subtitle, on les utilise (carte spécifique
-    // au type de bloc disparu : message supprimé, tâche introuvable, etc.). Sinon, fallback générique.
-    const title = (card && card.title) || "Aucune information ni procédure ne correspond à ta demande.";
-    const subtitle = (card && card.subtitle) || "Essaie de reformuler ta question, ou contacte un responsable si le sujet n'est pas encore documenté.";
-    const icon = (card && card.requested_type === 'chat_message') ? 'fa-comment-slash'
-               : (card && card.requested_type === 'task') ? 'fa-square-xmark'
-               : (card && (card.requested_type === 'procedure' || card.requested_type === 'procedure_step')) ? 'fa-sitemap'
-               : (card && (card.requested_type === 'info_item' || card.requested_type === 'info_category')) ? 'fa-circle-info'
-               : 'fa-circle-question';
-    return `
-      <div class="bg-gray-50 border-2 border-dashed border-gray-300 rounded-2xl px-4 py-5 text-center">
-        <i class="fas ${icon} text-3xl text-gray-400 mb-2"></i>
-        <p class="text-sm font-semibold text-navy-700">${escapeHtml(title)}</p>
-        <p class="text-xs text-navy-500 mt-1.5">${escapeHtml(subtitle)}</p>
-      </div>
-    `;
-  }
-
-  if (card.kind === 'procedure') {
-    const steps = Array.isArray(card.steps) ? card.steps : [];
-    return `
-      <div class="bg-white border-2 border-brand-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
-        <!-- Header coloré -->
-        <div class="px-4 py-2.5 bg-gradient-to-r from-brand-500 to-purple-500 text-white flex items-center gap-2">
-          <i class="fas fa-sitemap text-sm"></i>
-          <span class="text-xs font-semibold uppercase tracking-wide">Procédure</span>
-          ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
-        </div>
-        <!-- Header procédure -->
-        <div class="px-4 py-3 space-y-2 border-b border-gray-100">
-          <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.title)}</h3>
-          ${card.trigger_event ? `<div class="text-xs text-navy-600 flex items-start gap-1.5"><i class="fas fa-bolt text-amber-500 mt-0.5"></i><span>${escapeHtml(card.trigger_event)}</span></div>` : ''}
-          ${card.description ? `<p class="text-sm text-navy-700 whitespace-pre-wrap leading-relaxed">${formatHotelInfoContent(card.description)}</p>` : ''}
-        </div>
-        <!-- Étapes COMPLÈTES (titre + contenu + sous-procédures dépliées) -->
-        ${steps.length > 0 ? `
-          <ol class="px-3 sm:px-4 py-3 space-y-2.5">
-            ${steps.map(s => renderWikotStep(s)).join('')}
-          </ol>
-        ` : '<p class="px-4 py-3 text-sm text-navy-400 italic">Aucune étape renseignée.</p>'}
-      </div>
-    `;
-  }
-
-  // Carte d'UNE étape précise dans une procédure (granularité étape)
-  // Si l'étape est liée à une sous-procédure : on affiche la sous-procédure entière en bloc principal
-  if (card.kind === 'procedure_step' && card.step) {
-    const st = card.step;
-    const linkedSteps = Array.isArray(st.linked_steps) ? st.linked_steps : [];
-    const hasLinked = st.linked_procedure_id && (linkedSteps.length > 0 || st.linked_title);
-
-    // Cas 1 : l'étape pointe vers une sous-procédure → on déploie la sous-procédure entière
-    if (hasLinked) {
-      return `
-        <div class="bg-white border-2 border-brand-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
-          <div class="px-4 py-2.5 bg-gradient-to-r from-brand-500 to-purple-500 text-white flex items-center gap-2">
-            <i class="fas fa-diagram-project text-sm"></i>
-            <span class="text-xs font-semibold uppercase tracking-wide">Sous-procédure</span>
-            ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
-          </div>
-          <div class="px-4 py-3 space-y-2 border-b border-gray-100">
-            <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(st.linked_title || st.title)}</h3>
-            ${st.linked_trigger_event ? `<div class="text-xs text-navy-600 flex items-start gap-1.5"><i class="fas fa-bolt text-amber-500 mt-0.5"></i><span>${escapeHtml(st.linked_trigger_event)}</span></div>` : ''}
-            ${st.linked_description ? `<p class="text-sm text-navy-700 whitespace-pre-wrap leading-relaxed">${formatHotelInfoContent(st.linked_description)}</p>` : ''}
-            <p class="text-[11px] text-navy-500 italic">Étape ${st.step_number} de la procédure « ${escapeHtml(card.parent_title || '')} »</p>
-          </div>
-          ${linkedSteps.length > 0 ? `
-            <ol class="px-3 sm:px-4 py-3 space-y-2.5">
-              ${linkedSteps.map(ls => `
-                <li class="bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
-                  <div class="flex items-start gap-3">
-                    <div class="flex-shrink-0 w-7 h-7 rounded-full bg-gradient-to-br from-brand-400 to-purple-500 text-white text-xs font-bold flex items-center justify-center">${ls.step_number || ''}</div>
-                    <div class="min-w-0 flex-1">
-                      <h4 class="font-semibold text-navy-900 text-sm leading-snug">${escapeHtml(ls.title || '')}</h4>
-                      ${ls.content ? `<div class="text-xs text-navy-700 mt-1.5 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(ls.content)}</div>` : ''}
-                    </div>
-                  </div>
-                </li>
-              `).join('')}
-            </ol>
-          ` : ''}
-        </div>
-      `;
-    }
-
-    // Cas 2 : étape simple → on affiche juste cette étape, dans son contexte
-    return `
-      <div class="bg-white border-2 border-brand-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
-        <div class="px-4 py-2.5 bg-gradient-to-r from-brand-500 to-purple-500 text-white flex items-center gap-2">
-          <i class="fas fa-list-check text-sm"></i>
-          <span class="text-xs font-semibold uppercase tracking-wide">Étape de procédure</span>
-          ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
-        </div>
-        <div class="px-4 py-3 space-y-1 border-b border-gray-100 bg-gray-50">
-          <p class="text-[11px] text-navy-500 uppercase tracking-wide font-semibold">Procédure parente</p>
-          <p class="text-sm font-semibold text-navy-800">${escapeHtml(card.parent_title || '')}</p>
-          ${card.parent_trigger_event ? `<p class="text-xs text-navy-600"><i class="fas fa-bolt text-amber-500 mr-1"></i>${escapeHtml(card.parent_trigger_event)}</p>` : ''}
-        </div>
-        <div class="px-3 sm:px-4 py-3">
-          <div class="bg-white border-2 border-brand-100 rounded-xl p-3 shadow-sm">
-            <div class="flex items-start gap-3">
-              <div class="flex-shrink-0 w-9 h-9 rounded-full bg-gradient-to-br from-brand-500 to-purple-500 text-white text-sm font-bold flex items-center justify-center">${st.step_number || ''}</div>
-              <div class="min-w-0 flex-1">
-                <h4 class="font-bold text-navy-900 text-sm leading-snug">${escapeHtml(st.title || '')}</h4>
-                ${st.content ? `<div class="text-sm text-navy-700 mt-1.5 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(st.content)}</div>` : '<p class="text-xs text-navy-400 italic mt-1">Pas de contenu détaillé pour cette étape.</p>'}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  if (card.kind === 'info_item') {
-    const catColor = card.category_color || '#3B82F6';
-    return `
-      <div class="bg-white border-2 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden" style="border-color:${catColor}40">
-        <!-- Header coloré -->
-        <div class="px-4 py-2.5 text-white flex items-center gap-2" style="background:${catColor}">
-          <i class="fas ${card.category_icon || 'fa-circle-info'} text-sm"></i>
-          <span class="text-xs font-semibold uppercase tracking-wide">Information</span>
-          ${card.category_name ? `<span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${escapeHtml(card.category_name)}</span>` : ''}
-        </div>
-        <!-- Body : contenu COMPLET de l'info, autosuffisant -->
-        <div class="px-4 py-3 space-y-2">
-          <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.title)}</h3>
-          ${card.content ? `<div class="text-sm text-navy-700 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(card.content)}</div>` : '<p class="text-sm text-navy-400 italic">Aucun contenu.</p>'}
-        </div>
-      </div>
-    `;
-  }
-
-  // Carte de catégorie d'infos : TOUTES les infos du thème, dépliées
-  if (card.kind === 'info_category') {
-    const catColor = card.color || '#3B82F6';
-    const items = Array.isArray(card.items) ? card.items : [];
-    return `
-      <div class="bg-white border-2 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden" style="border-color:${catColor}40">
-        <div class="px-4 py-2.5 text-white flex items-center gap-2" style="background:${catColor}">
-          <i class="fas ${card.icon || 'fa-folder-open'} text-sm"></i>
-          <span class="text-xs font-semibold uppercase tracking-wide">Catégorie d'informations</span>
-          <span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full">${items.length} info${items.length > 1 ? 's' : ''}</span>
-        </div>
-        <div class="px-4 py-3 border-b border-gray-100">
-          <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.name || '')}</h3>
-        </div>
-        ${items.length > 0 ? `
-          <div class="px-3 sm:px-4 py-3 space-y-2.5">
-            ${items.map(it => `
-              <div class="bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
-                <h4 class="font-semibold text-navy-900 text-sm leading-snug mb-1.5 flex items-center gap-2">
-                  <span class="inline-block w-2 h-2 rounded-full" style="background:${catColor}"></span>
-                  ${escapeHtml(it.title || '')}
-                </h4>
-                ${it.content ? `<div class="text-sm text-navy-700 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(it.content)}</div>` : '<p class="text-xs text-navy-400 italic">Aucun contenu.</p>'}
-              </div>
-            `).join('')}
-          </div>
-        ` : '<p class="px-4 py-3 text-sm text-navy-400 italic">Aucune information dans cette catégorie.</p>'}
-      </div>
-    `;
-  }
-
-  // Carte d'UN message de chat : on cite tel quel (Wikot ne reformule pas)
-  if (card.kind === 'chat_message') {
-    const groupColor = card.group_color || '#4F46E5';
-    const authorInitial = (card.author_name || '?').trim().charAt(0).toUpperCase();
-    // Formatage date message (best-effort, fallback brut)
-    let when = card.created_at || '';
-    try {
-      const d = new Date(card.created_at);
-      if (!isNaN(d.getTime())) {
-        const today = new Date(); today.setHours(0,0,0,0);
-        const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
-        const dDay = new Date(d); dDay.setHours(0,0,0,0);
-        const hm = d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-        if (dDay.getTime() === today.getTime()) when = `Aujourd'hui à ${hm}`;
-        else if (dDay.getTime() === yesterday.getTime()) when = `Hier à ${hm}`;
-        else when = d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }) + ` à ${hm}`;
-      }
-    } catch (_) {}
-    return `
-      <div class="bg-white border-2 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden" style="border-color:${groupColor}40">
-        <div class="px-4 py-2.5 text-white flex items-center gap-2" style="background:${groupColor}">
-          <i class="fas fa-comment-dots text-sm"></i>
-          <span class="text-xs font-semibold uppercase tracking-wide">Message</span>
-          <span class="ml-auto text-[10px] bg-white/20 px-2 py-0.5 rounded-full flex items-center gap-1">
-            <i class="fas ${card.group_icon || 'fa-comments'} text-[9px]"></i>
-            ${escapeHtml(card.group_name || '')} · #${escapeHtml(card.channel_name || '')}
-          </span>
-        </div>
-        <div class="px-4 py-3">
-          <div class="flex items-start gap-3">
-            <div class="flex-shrink-0 w-9 h-9 rounded-full text-white text-sm font-bold flex items-center justify-center" style="background:${groupColor}">${escapeHtml(authorInitial)}</div>
-            <div class="min-w-0 flex-1">
-              <div class="flex items-baseline gap-2 flex-wrap">
-                <span class="font-semibold text-navy-900 text-sm">${escapeHtml(card.author_name || 'Auteur inconnu')}</span>
-                <span class="text-[11px] text-navy-500">${escapeHtml(when || '')}</span>
-              </div>
-              <div class="text-sm text-navy-700 mt-1 whitespace-pre-wrap break-words leading-relaxed">${formatWikotContent(card.content || '')}</div>
-            </div>
-          </div>
-          <button onclick="openWikotChatMessage(${card.channel_id}, ${card.id})" class="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full" style="background:${groupColor}15;color:${groupColor}">
-            <i class="fas fa-arrow-up-right-from-square"></i>
-            Voir dans la conversation
-          </button>
-        </div>
-      </div>
-    `;
-  }
-
-  // Carte d'UNE tâche (template récurrent ou instance ponctuelle)
-  if (card.kind === 'task') {
-    const isTemplate = card.task_kind === 'template';
-    const priorityColor = { urgent: '#DC2626', high: '#F59E0B', normal: '#3B82F6', low: '#6B7280' }[card.priority] || '#3B82F6';
-    const statusBadge = (() => {
-      if (isTemplate) return `<span class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">Récurrente</span>`;
-      if (card.status === 'done') return `<span class="text-[10px] bg-green-500 px-2 py-0.5 rounded-full"><i class="fas fa-check mr-1"></i>Faite</span>`;
-      return `<span class="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">À faire</span>`;
-    })();
-    const assignees = Array.isArray(card.assignees) ? card.assignees : [];
-    const dateLine = !isTemplate && card.task_date
-      ? `<div class="text-xs text-navy-600 flex items-center gap-1.5"><i class="fas fa-calendar text-amber-500"></i><span>${escapeHtml(card.task_date)}${card.suggested_time ? ` · ${escapeHtml(card.suggested_time)}` : ''}</span></div>`
-      : (card.suggested_time ? `<div class="text-xs text-navy-600 flex items-center gap-1.5"><i class="fas fa-clock text-amber-500"></i><span>${escapeHtml(card.suggested_time)}</span></div>` : '');
-    return `
-      <div class="bg-white border-2 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden" style="border-color:${priorityColor}40">
-        <div class="px-4 py-2.5 text-white flex items-center gap-2" style="background:${priorityColor}">
-          <i class="fas ${isTemplate ? 'fa-repeat' : 'fa-list-check'} text-sm"></i>
-          <span class="text-xs font-semibold uppercase tracking-wide">Tâche</span>
-          ${statusBadge}
-        </div>
-        <div class="px-4 py-3 space-y-2">
-          <h3 class="font-bold text-navy-900 text-base leading-tight">${escapeHtml(card.title || '')}</h3>
-          ${dateLine}
-          ${card.description ? `<div class="text-sm text-navy-700 whitespace-pre-wrap break-words leading-relaxed">${formatWikotContent(card.description)}</div>` : ''}
-          ${assignees.length > 0 ? `
-            <div class="flex items-center gap-2 flex-wrap pt-1">
-              <span class="text-[11px] text-navy-500 uppercase tracking-wide font-semibold">Attribuée à</span>
-              ${assignees.map(a => `<span class="text-xs px-2 py-0.5 rounded-full" style="background:${priorityColor}15;color:${priorityColor}"><i class="fas fa-user mr-1"></i>${escapeHtml(a.name || '')}</span>`).join('')}
-            </div>
-          ` : (!isTemplate ? `<p class="text-[11px] text-navy-400 italic">Tâche non attribuée</p>` : '')}
-        </div>
-      </div>
-    `;
-  }
-
-  // Cas "none" : rien à afficher (par exemple "bonjour" ou demande hors-sujet) → on n'affiche RIEN
-  if (card.kind === 'none') {
-    return '';
-  }
-
-  // Type inconnu : fallback not_found
-  return renderWikotAnswerCard({ kind: 'not_found' });
-}
-
-// Ouvrir un message de chat depuis une carte Wikot : navigation directe + scroll/highlight
-async function openWikotChatMessage(channelId, messageId) {
-  try {
-    // Aller dans la vue chat (si on n'y est pas déjà)
-    if (state.currentView !== 'chat') {
-      state.currentView = 'chat';
-    }
-    if (typeof openChannel === 'function') {
-      await openChannel(channelId);
-    } else {
-      state.selectedChannelId = channelId;
-      render();
-    }
-    setTimeout(() => {
-      const el = document.getElementById('chat-msg-' + messageId)
-        || document.querySelector(`[data-message-id="${messageId}"]`);
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        el.classList.add('ring-2', 'ring-brand-400', 'shadow-md');
-        setTimeout(() => el.classList.remove('ring-2', 'ring-brand-400', 'shadow-md'), 2500);
-      }
-    }, 400);
-  } catch (e) {
-    console.warn('openWikotChatMessage', e);
-  }
-}
-
-// Helper : rend UNE étape de la answer_card procédure (mode standard Wikot)
-// - Titre + contenu en clair
-// - Si linked_procedure_id → on affiche aussi les étapes de la sous-procédure dépliées
-function renderWikotStep(s) {
-  const num = s.step_number || '';
-  const linkedSteps = Array.isArray(s.linked_steps) ? s.linked_steps : [];
-  const hasLinked = s.linked_procedure_id && (linkedSteps.length > 0 || s.linked_title);
-  return `
-    <li class="bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
-      <div class="flex items-start gap-3">
-        <span class="flex-shrink-0 w-7 h-7 rounded-full bg-brand-100 text-brand-700 text-xs font-bold flex items-center justify-center">${num}</span>
-        <div class="min-w-0 flex-1">
-          <div class="font-semibold text-navy-900 text-sm leading-snug">${escapeHtml(s.title || '(sans titre)')}</div>
-          ${s.content ? `<div class="text-[13px] text-navy-700 mt-1.5 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(s.content)}</div>` : ''}
-          ${hasLinked ? `
-            <div class="mt-2.5 border-l-2 border-brand-300 pl-3 bg-brand-50/40 rounded-r-lg py-2 pr-2">
-              <div class="text-[11px] uppercase tracking-wide font-semibold text-brand-700 flex items-center gap-1.5 mb-1.5">
-                <i class="fas fa-diagram-project"></i>
-                Sous-procédure : ${escapeHtml(s.linked_title || '')}
-              </div>
-              ${linkedSteps.length > 0 ? `
-                <ol class="space-y-1.5">
-                  ${linkedSteps.map(ls => `
-                    <li class="flex items-start gap-2">
-                      <span class="flex-shrink-0 w-5 h-5 rounded-full bg-white border border-brand-200 text-brand-700 text-[10px] font-bold flex items-center justify-center mt-0.5">${ls.step_number || ''}</span>
-                      <div class="min-w-0 flex-1">
-                        <div class="font-semibold text-navy-800 text-xs">${escapeHtml(ls.title || '(sans titre)')}</div>
-                        ${ls.content ? `<div class="text-[11px] text-navy-600 mt-0.5 whitespace-pre-wrap break-words leading-relaxed">${formatHotelInfoContent(ls.content)}</div>` : ''}
-                      </div>
-                    </li>
-                  `).join('')}
-                </ol>
-              ` : '<div class="text-[11px] text-navy-400 italic">(aucune étape dans la sous-procédure)</div>'}
-            </div>
-          ` : ''}
-        </div>
-      </div>
-    </li>
-  `;
-}
 
 // Helper : formate un bloc d'étapes pour affichage complet (titre + contenu, sans troncature)
 function renderActionCardSteps(steps, colorClass) {
@@ -1070,33 +689,14 @@ function renderWikotActionCard(action) {
   `;
 }
 
-// Configuration visuelle/textuelle de chaque mode (Wikot vs Back Wikot)
+// Configuration visuelle/textuelle de l'agent Wikot.
+// V18.13 : un seul mode actif ('max') depuis la fusion. La cle 'max' est
+// conservee car referenced par cfg = WIKOT_MODE_CONFIG[mode] dans plusieurs
+// endroits ; les ids DOM 'wikot-max-input'/'wikot-max-messages' restent
+// pour les memes raisons (zero impact utilisateur).
 const WIKOT_MODE_CONFIG = {
-  standard: {
-    title: 'Wikot',
-    subtitle: 'Ton assistant de consultation',
-    icon: 'fa-robot',
-    avatarGradient: 'from-brand-400 to-purple-500',
-    sendButton: 'bg-brand-500 hover:bg-brand-600',
-    newButton: 'bg-brand-500 hover:bg-brand-600',
-    focusRing: 'focus:ring-brand-400',
-    selectedConv: 'bg-brand-50 border-l-2 border-l-brand-400',
-    bouncingDots: 'bg-brand-400',
-    placeholder: 'Pose ta question à Wikot…',
-    inputId: 'wikot-input',
-    messagesId: 'wikot-messages',
-    emptyTitle: 'Bonjour, je suis Wikot',
-    emptyText: "Je connais toutes les procédures, informations, conversations et tâches de l'hôtel. Pose-moi une question — je cherche dans les quatre univers et je te renvoie directement la ou les cartes qui répondent.",
-    quickButtons: [
-      { label: 'Comment faire un check-in ?', q: 'Comment je fais un check-in ?' },
-      { label: 'Horaires de la piscine ?', q: 'Quelles sont les horaires de la piscine ?' },
-      { label: 'Ma prochaine tâche ?', q: 'Quelle est ma prochaine tâche à réaliser ?' },
-      { label: 'Dernier message qui m\'est destiné ?', q: 'Quel est le dernier message qui m\'a été destiné ?' }
-    ],
-    footer: 'Wikot peut faire des erreurs — vérifie les informations importantes.'
-  },
   max: {
-    title: 'Back Wikot',
+    title: 'Wikot',
     subtitle: 'Ton assistant de rédaction et création',
     icon: 'fa-pen-ruler',
     avatarGradient: 'from-orange-400 to-rose-500',
@@ -1108,7 +708,7 @@ const WIKOT_MODE_CONFIG = {
     placeholder: 'Décris la procédure ou l\'information à créer / modifier…',
     inputId: 'wikot-max-input',
     messagesId: 'wikot-max-messages',
-    emptyTitle: 'Bonjour, je suis Back Wikot',
+    emptyTitle: 'Bonjour, je suis Wikot',
     emptyText: "Je suis spécialisé dans la rédaction et la modification des procédures et informations. Décris-moi ce que tu veux créer ou modifier — je rédige, je structure, et tu valides via une carte avant/après.",
     quickButtons: [
       { label: 'Créer une procédure check-out', q: 'Crée-moi une procédure de check-out à la réception, du moment où le client se présente jusqu\'à son départ.' },
@@ -1116,7 +716,7 @@ const WIKOT_MODE_CONFIG = {
       { label: 'Modifier les horaires piscine', q: 'Je veux modifier les horaires d\'ouverture de la piscine.' },
       { label: 'Créer une procédure réclamation', q: 'Crée une procédure pour gérer une réclamation client à la réception.' }
     ],
-    footer: 'Back Wikot propose les modifications — rien n\'est appliqué tant que tu n\'as pas validé la carte avant/après.'
+    footer: 'Wikot propose les modifications — rien n\'est appliqué tant que tu n\'as pas validé la carte avant/après.'
   }
 };
 
@@ -1902,114 +1502,11 @@ async function saveBackWikotForm() {
   showToast('Type de formulaire inconnu.', 'error');
 }
 
-function renderWikotView(mode) {
-  mode = mode || activeWikotMode();
-
-  // Mode max → router vers le workflow atelier (home / select-target / workshop)
-  if (mode === 'max') {
-    return renderBackWikotView();
-  }
-
-  const cfg = WIKOT_MODE_CONFIG[mode];
-  const s = wikotState(mode);
-
-  // STATELESS : pas d'historique des conversations.
-  // Chaque session est éphémère ; on initialise simplement les messages en mémoire.
-  if (!s.messages) s.messages = [];
-  if (!s.actions) s.actions = [];
-
-  const messages = s.messages || [];
-  const isSending = s.sending;
-
-  const quickButtonsHtml = cfg.quickButtons.map(btn => `
-    <button onclick="quickWikot('${btn.q.replace(/'/g, "\\'")}', '${mode}')" class="text-xs text-left rounded-lg px-3.5 py-2.5 transition-all" style="background: #fff; border: 1px solid var(--c-line-strong); color: var(--c-navy);" onmouseover="this.style.borderColor='var(--c-gold)'; this.style.background='var(--c-cream-deep)';" onmouseout="this.style.borderColor='var(--c-line-strong)'; this.style.background='#fff';">
-      <i class="fas fa-question-circle mr-1.5" style="color: var(--c-gold);"></i>${escapeHtml(btn.label)}
-    </button>
-  `).join('');
-
-  const emptyState = `
-    <div class="flex flex-col items-center justify-center h-full p-6 text-center">
-      <div class="w-16 h-16 rounded-full flex items-center justify-center text-2xl mb-4" style="background: var(--c-navy); color: var(--c-gold); box-shadow: 0 4px 12px rgba(10,22,40,0.15);">
-        <i class="fas ${cfg.icon}"></i>
-      </div>
-      <p class="section-eyebrow mb-2">Majordome digital</p>
-      <h3 class="font-display text-2xl font-semibold mb-2" style="color: var(--c-navy);">${cfg.emptyTitle}</h3>
-      <p class="text-sm max-w-md mb-6" style="color: rgba(15,27,40,0.55);">${cfg.emptyText}</p>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-md w-full">
-        ${quickButtonsHtml}
-      </div>
-    </div>
-  `;
-
-  return `
-  <div class="fade-in flex flex-col mobile-fullh">
-    <!-- Header Wikot premium DESKTOP UNIQUEMENT (le titre est déjà dans la barre mobile globale) -->
-    <div class="hidden lg:flex items-center justify-between mb-4 shrink-0">
-      <div class="flex items-center gap-3 min-w-0">
-        <div class="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);">
-          <i class="fas ${cfg.icon}"></i>
-        </div>
-        <div class="min-w-0">
-          <h1 class="font-display text-xl sm:text-2xl font-semibold truncate" style="color: var(--c-navy);">${cfg.title}</h1>
-          <p class="text-xs truncate uppercase tracking-wider" style="color: var(--c-gold-deep);">${cfg.subtitle}</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Layout chat sans sidebar (stateless) -->
-    <div class="flex-1 flex gap-4 min-h-0 overflow-hidden">
-      <!-- Zone chat principale premium -->
-      <div class="flex-1 flex flex-col rounded-xl overflow-hidden min-w-0" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 2px 4px rgba(10,22,40,0.05), 0 8px 20px rgba(10,22,40,0.04);">
-        <div id="${cfg.messagesId}" class="flex-1 overflow-y-auto p-3 sm:p-5" style="background: var(--c-cream);">
-          ${messages.length === 0 ? emptyState : ''}
-          ${messages.map(m => renderWikotMessage(m, mode)).join('')}
-          ${isSending ? `
-            <div class="flex justify-start mb-4">
-              <div class="flex gap-2">
-                <div class="w-9 h-9 rounded-full flex items-center justify-center text-xs" style="background: var(--c-navy); color: var(--c-gold);">
-                  <i class="fas ${cfg.icon}"></i>
-                </div>
-                <div class="rounded-2xl rounded-tl-sm px-4 py-3" style="background: #fff; border: 1px solid var(--c-line); box-shadow: 0 1px 2px rgba(10,22,40,0.04);">
-                  <div class="flex gap-1">
-                    <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--c-gold); animation-delay: 0ms"></div>
-                    <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--c-gold); animation-delay: 150ms"></div>
-                    <div class="w-2 h-2 rounded-full animate-bounce" style="background: var(--c-gold); animation-delay: 300ms"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ` : ''}
-        </div>
-
-        <!-- Zone de saisie premium -->
-        <div class="p-3 sm:p-4 shrink-0" style="background: #fff; border-top: 1px solid var(--c-line);">
-          <div class="flex items-end gap-2">
-            <textarea id="${cfg.inputId}" rows="1"
-              placeholder="${cfg.placeholder}"
-              oninput="autoResizeTextarea(this)"
-              onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendWikotMessage('${mode}');}"
-              ${isSending ? 'disabled' : ''}
-              class="input-premium form-input-mobile flex-1 rounded-xl px-3.5 py-2.5 outline-none resize-none max-h-32 text-sm"></textarea>
-            <button onclick="sendWikotMessage('${mode}')" ${isSending ? 'disabled' : ''} class="btn-premium w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style="background: var(--c-navy); color: var(--c-gold);" title="Envoyer">
-              <i class="fas ${isSending ? 'fa-spinner fa-spin' : 'fa-paper-plane'}"></i>
-            </button>
-          </div>
-          <p class="text-[10px] mt-2 text-center uppercase tracking-wider" style="color: rgba(15,27,40,0.4);">${cfg.footer}</p>
-        </div>
-      </div>
-    </div>
-  </div>
-  `;
-}
-
-function quickWikot(text, mode) {
-  mode = mode || activeWikotMode();
-  const cfg = WIKOT_MODE_CONFIG[mode];
-  const input = document.getElementById(cfg.inputId);
-  if (input) {
-    input.value = text;
-    sendWikotMessage(mode);
-  }
+// Point d'entree de la vue Wikot. Depuis V18.13 il n'existe plus qu'un seul
+// agent : on delegue directement au workflow atelier (renderBackWikotView).
+// Le parametre _mode est conserve pour la signature historique mais ignore.
+function renderWikotView(_mode) {
+  return renderBackWikotView();
 }
 
 // ============================================

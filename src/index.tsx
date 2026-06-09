@@ -2590,90 +2590,17 @@ async function buildHotelArborescence(db: D1Database, hotelId: number): Promise<
   return tree
 }
 
-// Helper : construit le system prompt de Wikot, selon le mode
-// mode = 'standard' → Wikot classique : recherche + sourcing, AUCUNE modification
-// mode = 'max'      → Back Wikot : rédaction/création/modification optimisée
-// workflowMode (max uniquement) : 'gerer_procedures' | 'gerer_infos' | 'gerer_conversations' | 'gerer_taches' | null
-// formContext (max uniquement) : état actuel du formulaire visible côté UI (titre/contenu/étapes)
-async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName: string, mode: 'standard' | 'max', workflowMode?: string | null, formContext?: any): Promise<string> {
+// Helper : construit le system prompt de Wikot.
+// V18.13 : un seul agent (ex-Back Wikot). Le parametre `mode` etait historiquement
+// 'standard' (lecture) | 'max' (redaction) ; il vaut maintenant toujours 'max' mais
+// la signature est conservee pour ne pas casser les call sites internes.
+// workflowMode : 'gerer_procedures' | 'gerer_infos' | 'gerer_conversations' | 'gerer_taches' | null
+// formContext  : etat actuel du formulaire visible cote UI (titre/contenu/etapes)
+async function buildWikotSystemPrompt(db: D1Database, user: WikotUser, hotelName: string, _mode: 'standard' | 'max', workflowMode?: string | null, formContext?: any): Promise<string> {
   const arborescence = await buildHotelArborescence(db, user.hotel_id!)
 
-  if (mode === 'standard') {
-    // ============================================
-    // WIKOT CLASSIQUE — SÉLECTEUR DE CARTES (zéro texte libre)
-    // ============================================
-    // Date du jour (pour les questions « ma prochaine tâche », « aujourd'hui », etc.)
-    const todayISO = new Date().toISOString().slice(0, 10)
-    return `Tu es **Wikot**, le moteur de recherche conversationnel du **${hotelName}**.
-
-## Ta mission UNIQUE
-Tu reçois une question d'employé. Tu cherches la réponse dans les **4 univers** de l'hôtel :
-1. **Procédures** (manuels opérationnels, étapes)
-2. **Informations** (données de l'hôtel : horaires, codes, contacts, etc.)
-3. **Conversations** (messages du chat interne)
-4. **Tâches** (récurrentes ou ponctuelles, assignées ou non)
-
-Tu retournes 0 à 5 blocs pertinents via \`select_answer\`, accompagnés d'un \`reply_text\` court (1-2 phrases max) qui oriente l'employé. Le \`reply_text\` est **obligatoire** quand aucune carte ne correspond, **optionnel** quand les cartes parlent d'elles-mêmes.
-
-## Contexte utilisateur
-- ID utilisateur courant : **${user.id}** (déjà résolu — n'appelle PAS \`list_employees\` pour te trouver)
-- Nom : **${user.name}**
-- Date du jour : **${todayISO}**
-
-## Outils — UTILISE LES SHORTCUTS EN PRIORITÉ
-Les "shortcuts" résolvent les questions perso fréquentes en 1 SEUL appel (identité résolue côté serveur). **Préfère-les systématiquement** quand la question est centrée sur l'utilisateur :
-
-### SHORTCUTS (priorité absolue)
-- **\`get_my_tasks\`** → "ma prochaine tâche", "mes tâches du jour", "qu'est-ce que je dois faire". Param \`when\`: \`next\` (LA prochaine, 1 résultat) / \`today\` / \`tomorrow\` / \`this_week\` / \`overdue\` / \`upcoming\` / \`all\`. Param \`status\`: \`pending\` (défaut) / \`done\` / \`all\`.
-- **\`get_messages_for_me\`** → "dernier message qui m'est destiné", "messages qui me concernent", "qui m'a écrit". Retourne directement les messages avec mention @${user.name.split(' ')[0]} OU début "${user.name.split(' ')[0]}," OU "Pour ${user.name.split(' ')[0]}" OU "À ${user.name.split(' ')[0]}".
-- **\`get_my_recent_messages\`** → "mon dernier message", "qu'est-ce que j'ai dit récemment".
-- **\`get_latest_messages\`** → "derniers messages dans le salon X", "quoi de neuf dans le chat".
-
-### Procédures & Infos
-- \`search_procedures\` / \`search_procedure_steps\` / \`get_procedure\` : procédures et étapes
-- \`search_hotel_info\` / \`list_info_categories\` / \`get_hotel_info_item\` : informations de l'hôtel
-
-### Recherches avancées (si shortcut insuffisant)
-- \`search_messages\` : par mot-clé / auteur / mention d'un AUTRE user. Triés par récent d'abord. Param \`mentions_user_id\` détecte @prénom, "Prénom,", "Pour Prénom", "À Prénom".
-- \`search_tasks\` : pour qui doit faire X, tâches contenant tel mot-clé. Param \`when\` (today/tomorrow/this_week/overdue/upcoming/all) évite de calculer des dates.
-- \`list_groups\` : arborescence salons/channels (uniquement si besoin de filtrer par salon précis)
-- \`list_employees\` : annuaire (uniquement pour résoudre le prénom d'un AUTRE utilisateur en user_id)
-
-## Protocole strict
-1. **Si la question parle de TOI** (mes tâches, mes messages, qui m'a écrit…) → 1 SEUL shortcut, pas de chaînage.
-2. **Si la question parle d'un autre user nommé** → \`list_employees\` → \`search_messages\` / \`search_tasks\`.
-3. **Si la question est procédure/info** → \`search_*\` directs.
-4. Termine TOUJOURS par UN appel à \`select_answer\` avec un tableau \`blocks\` (1 à 5 blocs).
-
-## Types de blocs disponibles dans \`blocks\`
-- \`{type:"procedure", id}\` → procédure ENTIÈRE (« Comment je fais un check-in ? »)
-- \`{type:"procedure_step", procedure_id, step_number}\` → UNE étape précise (« Comment vérifier la réservation pendant le check-in ? »). Si l'étape pointe vers une sous-procédure, la carte affichera la sous-procédure.
-- \`{type:"info_item", id}\` → UNE information précise (« Code Wi-Fi », « Horaires piscine »)
-- \`{type:"info_category", id}\` → TOUT un thème (« Donne-moi tous les horaires »)
-- \`{type:"chat_message", id}\` → UN message du chat sélectionné comme réponse (« Qui devait faire X ? » → renvoie le message original sans le reformuler)
-- \`{type:"task", task_kind:"template"|"instance", id}\` → UNE tâche
-- \`{type:"none"}\` → SEUL, quand rien ne correspond ou question hors-sujet
-
-## Règles ABSOLUES
-- **TOUJOURS terminer par \`select_answer\`.** Jamais de texte libre en dehors de \`reply_text\`.
-- **\`reply_text\` = 1 à 2 phrases COURTES max.** Pas de salutations, pas de remplissage. Va droit au but. Exemples valides : "Voici la procédure de check-in." / "Aucune procédure ne couvre ce cas, mais cette info s'en rapproche." / "Tu n'as aucun message qui t'est destiné aujourd'hui." / "Je n'ai rien trouvé sur ce sujet, peux-tu reformuler ?"
-- **\`reply_text\` OBLIGATOIRE si \`blocks\` est vide ou \`[{type:"none"}]\`** (sinon la bulle de réponse serait vide).
-- **PLUSIEURS BLOCS si pertinent.** Exemples :
-  - « Quelles sont mes tâches aujourd'hui ? » → 1 bloc \`task\` par tâche assignée (max 5).
-  - « Quels messages m'ont été destinés récemment ? » → 1 bloc \`chat_message\` par message pertinent.
-  - « Qui était responsable de la livraison hier ? » → 1 bloc \`chat_message\` (le message d'origine) — Wikot ne réécrit pas, il cite.
-- **GRANULARITÉ MAXIMALE.** Si l'employé demande UNE action précise, ne renvoie pas la procédure entière → renvoie \`procedure_step\`. Si l'employé demande un thème large, renvoie \`info_category\`.
-- **MAX 5 blocs** par réponse. Trie par pertinence décroissante.
-- Si demande de création/modification : sélectionne \`type:"none"\` (Wikot ne fait que de la lecture).
-
-## Arborescence actuelle de l'hôtel
-${arborescence}
-
-Rappel : tu es un **sélecteur**, pas un rédacteur. \`select_answer\` à chaque tour, jamais de texte libre.`
-  }
-
   // ============================================
-  // WIKOT MAX — Back Wikot ultra-spécialisé en 4 workflows
+  // WIKOT — agent ultra-spécialisé en 4 workflows (procédures, infos, conversations, tâches)
   // ============================================
   const canEditProc = wikotUserCanEditProcedures(user)
   const canEditInf = wikotUserCanEditInfo(user)
@@ -3681,9 +3608,12 @@ function userCanUseMaxMode(user: WikotUser): boolean {
   return wikotUserCanEditProcedures(user) || wikotUserCanEditInfo(user)
 }
 
-// Normalise le mode envoyé par le client (sécurité : valeurs autorisées seulement)
+// Normalise le mode envoye par le client.
+// V18.13 : il n'existe plus qu'un seul agent Wikot (ex-Back Wikot = mode 'max').
+// Toute valeur autre que 'standard' explicitement demande (compatibilite tests
+// internes / sous-agents experts) est normalisee en 'max'.
 function normalizeWikotMode(rawMode: any): 'standard' | 'max' {
-  return rawMode === 'max' ? 'max' : 'standard'
+  return rawMode === 'standard' ? 'standard' : 'max'
 }
 
 // Diagnostic OpenRouter — protégé par authMiddleware + super-admin uniquement
@@ -3748,7 +3678,7 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   const mode = normalizeWikotMode(body.mode)
   // Vérification de permission server-side pour le mode 'max'
   if (mode === 'max' && !userCanUseMaxMode(user)) {
-    return c.json({ error: 'Back Wikot nécessite des droits d\'édition (procédures ou informations)' }, 403)
+    return c.json({ error: 'Wikot nécessite des droits d\'édition (procédures ou informations)' }, 403)
   }
   // Workflow mode (Back Wikot uniquement) : 4 workflows unifiés "Gérer X"
   const allowedWorkflows = [
@@ -3772,7 +3702,7 @@ app.post('/api/wikot/conversations', authMiddleware, async (c) => {
   const targetId = (workflowMode && body.target_id) ? parseInt(body.target_id) : null
 
   // Titre par défaut explicite selon le workflow
-  let defaultTitle = mode === 'max' ? 'Nouvelle session Back Wikot' : 'Nouvelle conversation'
+  let defaultTitle = mode === 'max' ? 'Nouvelle session Wikot' : 'Nouvelle conversation'
   if (workflowMode === 'gerer_procedures') defaultTitle = 'Gérer les procédures'
   else if (workflowMode === 'gerer_infos') defaultTitle = 'Gérer les informations'
   else if (workflowMode === 'gerer_conversations') defaultTitle = 'Gérer les conversations'
@@ -3806,7 +3736,7 @@ app.post('/api/wikot/router', authMiddleware, async (c) => {
   if (!rl.ok) return rateLimitedResponse(c, 60)
   if (!user.hotel_id) return c.json({ error: 'Aucun hôtel' }, 400)
   if (!userCanUseMaxMode(user)) {
-    return c.json({ error: 'Back Wikot nécessite des droits d\'édition' }, 403)
+    return c.json({ error: 'Wikot nécessite des droits d\'édition' }, 403)
   }
   const apiKey = c.env.OPENROUTER_API_KEY
   if (!apiKey) return c.json({ error: 'Wikot indisponible : clé API non configurée' }, 503)
@@ -4344,11 +4274,14 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   // Récupérer infos hôtel
   const hotel = await c.env.DB.prepare('SELECT name FROM hotels WHERE id = ?').bind(user.hotel_id).first() as any
 
-  // Récupérer le mode de la conversation (standard / max)
-  const mode: 'standard' | 'max' = conv.mode === 'max' ? 'max' : 'standard'
-  // Re-vérification permission server-side pour le mode max
-  if (mode === 'max' && !userCanUseMaxMode(user)) {
-    return c.json({ error: 'Back Wikot nécessite des droits d\'édition' }, 403)
+  // Recuperer le mode de la conversation.
+  // V18.13 : un seul agent (mode 'max'). On force a 'max' meme si la conv
+  // est ancienne et stockee en BDD avec mode='standard' : sinon discordance
+  // prompt/tools (prompt max actif depuis V18.13, tools standard restreints).
+  const mode: 'standard' | 'max' = 'max'
+  // Re-verification permission server-side
+  if (!userCanUseMaxMode(user)) {
+    return c.json({ error: 'Wikot nécessite des droits d\'édition' }, 403)
   }
 
   // Récupérer le workflow_mode de la conversation (Back Wikot uniquement)
@@ -4406,149 +4339,21 @@ app.post('/api/wikot/conversations/:id/message', authMiddleware, async (c) => {
   const formPatches: any[] = []
 
   // ============================================
-  // BLOC 2 : ORCHESTRATEUR (mode standard uniquement)
-  // 1er appel LLM ultra-court qui décide :
-  //   - quick_answer(reply_text)        → réponse directe (salutation, hors-sujet, méta-question)
-  //   - dispatch_to_expert(domain, …)   → on entre dans la boucle avec outils filtrés au domaine
-  //   - (rien)                          → fallback : tous les outils (comportement actuel)
-  // Avantages : moins d'outils dans le contexte de l'expert = décisions plus rapides et plus précises,
-  // et un raccourci complet pour les cas "Salut" / "Tu fais quoi" qui ne nécessitent aucune recherche.
+  // BLOC 2 : ORCHESTRATEUR (supprime en V18.13)
+  // Avant V18.13, en mode 'standard' un premier appel LLM dispatchait la question
+  // vers un sous-agent expert (procedures/infos/conversations/tasks) ou repondait
+  // directement (quick_answer). Le mode 'standard' n'etant plus expose dans l'UI,
+  // tout ce dispositif est devenu inatteignable et a ete supprime pour alleger
+  // le bundle Worker. La boucle ReAct ci-dessous utilise donc directement les
+  // outils de l'agent unique avec son prompt 4-workflows.
   // ============================================
-  let scopedTools = tools
-  let orchestratorDomain: 'procedures' | 'infos' | 'conversations' | 'tasks' | 'mixed' | null = null
-  let orchestratorSkipLoop = false
+  const scopedTools = tools
 
-  if (mode === 'standard') {
-    const orchestratorTools = [
-      {
-        type: 'function',
-        function: {
-          name: 'dispatch_to_expert',
-          description: `Achemine la question vers UN expert (ou "mixed" si la question couvre plusieurs domaines). Utilise ceci si la question demande une recherche dans la base de l'hôtel.
-- "procedures" : manuels opérationnels, étapes, comment-faire ("comment je fais un check-in ?")
-- "infos" : données factuelles de l'hôtel (codes, horaires, contacts, lieux, équipements)
-- "conversations" : recherche dans les messages du chat (qui a dit quoi, mentions, messages destinés à moi)
-- "tasks" : tâches récurrentes ou ponctuelles ("ma prochaine tâche", "qui doit faire X ?")
-- "mixed" : la question recoupe plusieurs domaines, l'expert généraliste répondra.`,
-          parameters: {
-            type: 'object',
-            properties: {
-              domain: { type: 'string', enum: ['procedures', 'infos', 'conversations', 'tasks', 'mixed'] },
-              refined_query: { type: 'string', description: 'Reformulation 1 phrase de la question pour l\'expert (facultatif).' }
-            },
-            required: ['domain']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'quick_answer',
-          description: `Réponds directement quand AUCUNE recherche dans la base n'est nécessaire : salutation ("salut", "merci"), méta-question ("tu fais quoi", "qui es-tu"), hors-sujet, question impossible à interpréter. Donne 1 à 2 phrases courtes en français.`,
-          parameters: {
-            type: 'object',
-            properties: {
-              reply_text: { type: 'string', description: '1-2 phrases courtes en français.' }
-            },
-            required: ['reply_text']
-          }
-        }
-      }
-    ]
-    const orchestratorSystem = `Tu es l'**orchestrateur** de Wikot, l'assistant interne du **${hotel?.name || "l'hôtel"}**.
 
-Ta SEULE mission : décider en 1 appel d'outil.
-
-Tu reçois la dernière question de **${user.name}** (id ${user.id}). Choisis :
-
-1) \`quick_answer(reply_text)\` si la question est :
-   - une salutation / remerciement / fin de conversation ("salut", "merci", "bonne journée")
-   - une méta-question sur toi ("qui es-tu", "tu fais quoi", "que peux-tu faire")
-   - clairement hors-sujet (météo, blagues, infos non liées à l'hôtel)
-   - inintelligible (vide, juste de la ponctuation)
-
-2) \`dispatch_to_expert(domain)\` sinon, avec le domaine PRIORITAIRE :
-   - **procedures** : "comment je fais", "procédure de…", "étapes du check-in"
-   - **infos** : "code wifi", "horaire piscine", "adresse de l'hôtel", "qui est le directeur"
-   - **conversations** : "dernier message", "qui m'a écrit", "qu'a dit X", contient "message", "chat"
-   - **tasks** : "mes tâches", "prochaine tâche", "qui doit faire", "à faire aujourd'hui"
-   - **mixed** : si tu hésites entre 2 domaines (ex : "quelle est la procédure ET les infos sur X")
-
-Ne fais aucun autre appel d'outil. Choisis UN seul outil.`
-
-    // On ne donne à l'orchestrateur que les 1-2 derniers messages utilisateur pour minimiser le coût.
-    const lastUserMsgs = oaiMessages.filter(m => m.role === 'user').slice(-1)
-    const orchestratorMessages: any[] = [
-      { role: 'system', content: orchestratorSystem },
-      ...lastUserMsgs.map(m => ({
-        role: 'user',
-        content: typeof m.content === 'string'
-          ? m.content
-          : (Array.isArray(m.content) ? m.content : String(m.content || ''))
-      }))
-    ]
-    try {
-      const orchResp = await callOpenRouter(apiKey, orchestratorMessages, orchestratorTools)
-      const orchChoice = orchResp.choices?.[0]
-      const orchMsg = orchChoice?.message
-      const orchCall = orchMsg?.tool_calls?.[0]
-      if (orchCall?.function?.name === 'quick_answer') {
-        let orchArgs: any = {}
-        try { orchArgs = JSON.parse(orchCall.function?.arguments || '{}') } catch {}
-        const rt = typeof orchArgs.reply_text === 'string' ? orchArgs.reply_text.trim().slice(0, 400) : ''
-        if (rt) {
-          replyText = rt
-          selectedBlocks = [{ type: 'none' }]
-          selectAnswerCalled = true
-          orchestratorSkipLoop = true
-          console.log('[wikot] orchestrator quick_answer reply_text_len=' + rt.length)
-        }
-      } else if (orchCall?.function?.name === 'dispatch_to_expert') {
-        let orchArgs: any = {}
-        try { orchArgs = JSON.parse(orchCall.function?.arguments || '{}') } catch {}
-        const d = String(orchArgs.domain || '').toLowerCase()
-        if (['procedures', 'infos', 'conversations', 'tasks', 'mixed'].includes(d)) {
-          orchestratorDomain = d as any
-          console.log('[wikot] orchestrator dispatch=' + d + ' refined="' + (orchArgs.refined_query || '').slice(0, 80) + '"')
-        }
-      } else {
-        console.log('[wikot] orchestrator no_call content="' + String(orchMsg?.content || '').slice(0, 80) + '"')
-      }
-    } catch (e: any) {
-      // Si l'orchestrateur échoue, on continue avec tous les outils (comportement actuel).
-      console.log('[wikot] orchestrator_error msg=' + (e?.message || 'unknown'))
-    }
-
-    // Si on a un domaine, on filtre les outils donnés à l'expert (mais on garde toujours select_answer).
-    if (orchestratorDomain) {
-      // Mapping domaine → noms de tools autorisés (en plus de select_answer toujours dispo)
-      const allowByDomain: Record<string, string[]> = {
-        procedures: ['search_procedures', 'search_procedure_steps', 'get_procedure', 'list_categories'],
-        infos: ['search_hotel_info', 'list_info_categories', 'get_hotel_info_item'],
-        conversations: ['get_messages_for_me', 'get_my_recent_messages', 'get_latest_messages', 'search_messages', 'list_groups', 'list_employees'],
-        tasks: ['get_my_tasks', 'search_tasks', 'list_employees'],
-        mixed: [] // mixed = tous les outils restent
-      }
-      const allowed = allowByDomain[orchestratorDomain] || []
-      if (orchestratorDomain !== 'mixed' && allowed.length > 0) {
-        scopedTools = tools.filter((t: any) => {
-          const n = t?.function?.name
-          return n === 'select_answer' || allowed.includes(n)
-        })
-        // Mini-prompt expert injecté en message system additionnel
-        const expertHints: Record<string, string> = {
-          procedures: "Tu es l'expert **Procédures**. Cherche dans procedures / steps. Préfère `procedure_step` si la question est très précise, sinon `procedure`. Termine par `select_answer`.",
-          infos: "Tu es l'expert **Informations**. Cherche dans hotel_info_items et hotel_info_categories. Préfère `info_item` (précis) ou `info_category` (thème). Termine par `select_answer`.",
-          conversations: "Tu es l'expert **Conversations**. Préfère les shortcuts (`get_messages_for_me`, `get_my_recent_messages`) avant `search_messages`. Renvoie des `chat_message`. Termine par `select_answer`.",
-          tasks: "Tu es l'expert **Tâches**. Préfère `get_my_tasks` si la question concerne l'utilisateur courant. Sinon `search_tasks`. Renvoie des `task`. Termine par `select_answer`."
-        }
-        oaiMessages.push({ role: 'system', content: expertHints[orchestratorDomain] || '' })
-      }
-    }
-  }
-
-  // Si l'orchestrateur a déjà répondu (quick_answer), on saute toute la boucle.
-  for (let iter = 0; iter < (orchestratorSkipLoop ? 0 : 5); iter++) {
+  // Boucle ReAct standard (5 iterations max).
+  // NOTE : avant V18.13, un orchestrateur pouvait court-circuiter cette boucle
+  // via quick_answer ; ce dispositif a ete supprime en meme temps que le mode standard.
+  for (let iter = 0; iter < 5; iter++) {
     let response
     try {
       response = await callOpenRouter(apiKey, oaiMessages, scopedTools)

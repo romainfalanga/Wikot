@@ -2500,9 +2500,13 @@ function rateLimitedResponse(c: any, retryAfter: number) {
 // WIKOT — AGENT IA (OpenRouter + Gemini 2.0 Flash)
 // ============================================
 
-const WIKOT_MODEL = 'google/gemini-2.0-flash-001'
+// V18.9 — google/gemini-2.0-flash-001 a été déprécié par OpenRouter (n'est plus
+// dans la liste des modèles). Remplacement : gemini-2.5-flash-lite, mêmes
+// tarifs ($0.10/M input vs $0.10 avant, $0.40/M output vs $0.40 avant), API
+// 100% compatible. Le multimodal reste sur gemini-2.5-flash (vision OK).
+const WIKOT_MODEL = 'google/gemini-2.5-flash-lite'
 // Modèle multimodal (vision) — utilisé dès qu'il y a une image dans la requête.
-// Coût input ~$0.30/M tok (vs $0.10 pour 2.0 Flash) → on bascule auto seulement quand nécessaire.
+// Coût input ~$0.30/M tok (vs $0.10 pour 2.5 Flash Lite) → on bascule auto seulement quand nécessaire.
 const WIKOT_MODEL_MULTIMODAL = 'google/gemini-2.5-flash'
 const WIKOT_API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
@@ -3702,7 +3706,7 @@ app.get('/api/_diag/openrouter', authMiddleware, async (c) => {
         'X-Title': 'Wikot Diag'
       },
       body: JSON.stringify({
-        model: 'google/gemini-2.0-flash-001',
+        model: WIKOT_MODEL, // V18.9 : utilise la constante (anciennement hardcodé gemini-2.0-flash-001 deprecie)
         messages: [{ role: 'user', content: 'ping' }],
         max_tokens: 5
       })

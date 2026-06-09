@@ -289,9 +289,11 @@ function renderMainLayout() {
     ];
   } else if (isAdmin) {
     // Admin hôtel : accès complet aux pages opérationnelles équipe
+    // V18.11 — Retrait de l'entree Wikot (assistant lecture) du menu.
+    // L'agent reste accessible via la route #wikot mais n'apparait plus
+    // dans la navigation. Back Wikot devient l'unique agent IA visible.
     menuItems = [
-      { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
-      { id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' },
+      { id: 'back-wikot', icon: 'fa-pen-ruler', label: 'Back Wikot' },
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
@@ -300,11 +302,11 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
-    // Employé : Wikot pour tous + items conditionnels selon permissions granulaires
+    // Employé : Back Wikot conditionnel + items selon permissions granulaires.
+    // V18.11 — Wikot (lecture) retire du menu pour tous les roles.
     const canUseMax = userCanEditProcedures() || userCanEditInfo();
     menuItems = [
-      { id: 'wikot', icon: 'fa-robot', label: 'Wikot' },
-      ...(canUseMax ? [{ id: 'wikot-max', icon: 'fa-pen-ruler', label: 'Back Wikot' }] : []),
+      ...(canUseMax ? [{ id: 'back-wikot', icon: 'fa-pen-ruler', label: 'Back Wikot' }] : []),
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },
       { id: 'info', icon: 'fa-circle-info', label: 'Informations' },
       { id: 'conversations', icon: 'fa-comments', label: 'Conversations', badge: state.unreadChatTotal },
@@ -319,10 +321,14 @@ function renderMainLayout() {
   const roleColors = { super_admin: 'bg-purple-100 text-purple-700', admin: 'bg-blue-100 text-blue-700', employee: canEdit ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700' };
 
   // Titre de la vue active pour le header mobile
+  // V18.11 — Renommage wikot-max -> back-wikot (URL plus parlante).
+  // L'ancienne cle 'wikot-max' est conservee comme alias pour les liens
+  // historiques (favoris, partages) qui seraient encore en circulation.
   const viewTitles = {
     dashboard: 'Tableau de bord',
     wikot: 'Wikot',
-    'wikot-max': 'Back Wikot',
+    'back-wikot': 'Back Wikot',
+    'wikot-max': 'Back Wikot', // alias retro-compat
     procedures: 'Procédures',
     info: 'Informations',
     conversations: 'Conversations',
@@ -334,17 +340,16 @@ function renderMainLayout() {
   };
   const currentTitle = viewTitles[state.currentView] || 'Wikot';
 
-  // Bottom nav mobile : prioriser les items selon l'usage. Conversations DOIT y être pour les employés.
-  // On limite à 5 max, en gardant les plus utilisés.
+  // Bottom nav mobile : prioriser les items selon l'usage. Conversations DOIT y etre pour les employes.
+  // On limite a 5 max, en gardant les plus utilises.
+  // V18.11 : Wikot (lecture) retire de la priorisation -- Back Wikot prend la premiere place.
   let bottomNavItems;
   if (isSuperAdmin) {
     bottomNavItems = menuItems; // 3 items, tous tiennent
   } else {
-    // Admin et employé : on priorise Wikot, Back Wikot (si dispo), Procédures, Infos, Conversations
-    // 5 items max — on garde l'ordre pour rester cohérent avec la sidebar desktop
     const priorityIds = userCanUseWikotMax()
-      ? ['wikot','wikot-max','procedures','info','conversations']
-      : ['wikot','procedures','info','conversations'];
+      ? ['back-wikot','procedures','info','conversations','tasks']
+      : ['procedures','info','conversations','tasks','veleda'];
     bottomNavItems = priorityIds
       .map(id => menuItems.find(i => i.id === id))
       .filter(Boolean)
@@ -538,6 +543,8 @@ function renderCurrentView() {
   switch (state.currentView) {
     case 'dashboard': return renderDashboard();
     case 'wikot': return renderWikotView('standard');
+    // V18.11 — nouveau nom canonique. 'wikot-max' reste un alias retro-compat.
+    case 'back-wikot':
     case 'wikot-max': return renderWikotView('max');
     case 'procedures': return state.selectedProcedure ? renderProcedureDetail() : renderProceduresList();
     case 'info': return renderHotelInfoView();

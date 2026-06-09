@@ -28,9 +28,10 @@ function wikotState(mode) {
   };
 }
 
-// Détermine le mode actif selon la vue courante
+// Determine le mode actif selon la vue courante
+// V18.11 — 'back-wikot' (nouveau nom canonique) ET 'wikot-max' (alias retro-compat).
 function activeWikotMode() {
-  return state.currentView === 'wikot-max' ? 'max' : 'standard';
+  return (state.currentView === 'back-wikot' || state.currentView === 'wikot-max') ? 'max' : 'standard';
 }
 
 // L'utilisateur a-t-il accès à Back Wikot ?

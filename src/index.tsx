@@ -7016,6 +7016,11 @@ app.get('*', (c) => {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Wikot - Gestion des procédures hôtelières</title>
 
+  <!-- === FAVICON (V18.11) — SVG reproduisant le logo header (carre dore + cloche).
+       Cache-bust via ?v=BUILD_ID pour que le navigateur recharge a chaque deploiement. -->
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=${v}">
+  <link rel="apple-touch-icon" href="/static/favicon.svg?v=${v}">
+
   <!-- === PERF : preconnect aux CDN restants (Font Awesome + Google Fonts) === -->
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -7595,6 +7600,15 @@ app.get('*', (c) => {
             window.history.replaceState({}, '', url.pathname + (url.search || ''));
           }
         } catch(e) { console.warn('[boot] signup return detect failed', e); }
+
+        // V18.11 — Normalisation du hash : #wikot-max -> #back-wikot.
+        // Conserve la retro-compatibilite : les vieux favoris/liens ouvrent
+        // la bonne page, mais l'URL affichee est mise a jour silencieusement.
+        try {
+          if (window.location.hash === '#wikot-max') {
+            window.history.replaceState({ view: 'back-wikot' }, '', '#back-wikot');
+          }
+        } catch(e) { /* noop */ }
 
         if (typeof render === 'function') {
           try { render(); } catch(e) { console.error('[boot] render() error', e); }

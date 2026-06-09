@@ -175,18 +175,29 @@ function userCanUseVeleda() {
 
 let _historyPopping = false; // garde anti-boucle
 
+// V18.11 — Normalise les anciens noms de vue : 'wikot-max' -> 'back-wikot'.
+// Tous les pushState / replaceState passent par ce filtre pour que l'URL
+// affichee dans la barre soit toujours le nouveau nom canonique, meme si
+// du code legacy appelle encore navigate('wikot-max').
+function _canonicalView(view) {
+  if (view === 'wikot-max') return 'back-wikot';
+  return view;
+}
+
 function pushHistory(view, params) {
   if (_historyPopping) return; // pas de pushState pendant un popstate
-  const entry = { view, ...(params || {}) };
+  const v = _canonicalView(view);
+  const entry = { view: v, ...(params || {}) };
   try {
-    history.pushState(entry, '', '#' + view);
+    history.pushState(entry, '', '#' + v);
   } catch {}
 }
 
 function replaceHistory(view, params) {
-  const entry = { view, ...(params || {}) };
+  const v = _canonicalView(view);
+  const entry = { view: v, ...(params || {}) };
   try {
-    history.replaceState(entry, '', '#' + view);
+    history.replaceState(entry, '', '#' + v);
   } catch {}
 }
 

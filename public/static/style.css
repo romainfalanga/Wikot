@@ -3670,6 +3670,23 @@ main.app-main:has(.veleda-fullpage) {
   background: #fffaed;
   font-size: 12px;
 }
+/* V19 — bouton "Plus..." dans l'inline edit, ouvre le modal complet */
+.vnote-edit-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid #d4a017;
+  border-radius: 4px;
+  background: #fffaed;
+  color: #7a5b00;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s ease;
+  white-space: nowrap;
+}
+.vnote-edit-more:hover { background: #ffeec2; }
 .vnote-edit-actions {
   display: flex;
   gap: 6px;

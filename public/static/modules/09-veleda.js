@@ -292,6 +292,13 @@ function renderVeledaView() {
     state.veledaWriteModalOpen = false;
     state.veledaCurrentBoardId = state.veledaCurrentBoardId ?? null;
     state.veledaBreadcrumb = state.veledaBreadcrumb || [];
+    // V19 - state pour le modal d'édition
+    state.veledaEditModalNoteId = null;
+    state.veledaEditDraftContent = '';
+    state.veledaEditDraftColor = 'black';
+    state.veledaEditDraftHasExpiry = false;
+    state.veledaEditDraftIsBoard = false;
+    state.veledaEditDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
     loadVeledaNotes().then(() => {
       startVeledaPolling();
       render();
@@ -312,6 +319,15 @@ function renderVeledaView() {
   if (state.veledaCurrentBoardId === undefined) state.veledaCurrentBoardId = null;
   if (state.veledaBreadcrumb === undefined) state.veledaBreadcrumb = [];
   if (state.veledaJustDragged === undefined) state.veledaJustDragged = false;
+  // V19 - state pour le modal d'édition
+  if (state.veledaEditModalNoteId === undefined) state.veledaEditModalNoteId = null;
+  if (state.veledaEditDraftContent === undefined) state.veledaEditDraftContent = '';
+  if (!state.veledaEditDraftColor) state.veledaEditDraftColor = 'black';
+  if (state.veledaEditDraftHasExpiry === undefined) state.veledaEditDraftHasExpiry = false;
+  if (state.veledaEditDraftIsBoard === undefined) state.veledaEditDraftIsBoard = false;
+  if (!state.veledaEditDraftExpiresLocal) {
+    state.veledaEditDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+  }
 
   startVeledaPolling();
   return renderVeledaShell(state.veledaNotes || []);
@@ -324,6 +340,8 @@ function renderVeledaShell(notes) {
   };
   const canEdit = veledaUserCanEdit();
   const writeModalHtml = state.veledaWriteModalOpen ? renderVeledaWriteModal() : '';
+  // V19 — modal d'édition complète d'une note (deadline + sous-tableau)
+  const editModalHtml = state.veledaEditModalNoteId ? renderVeledaEditModal() : '';
 
   // === Breadcrumb / titre du tableau courant en haut a gauche ===
   // - Racine : "Tableau VELEDA"
@@ -422,6 +440,7 @@ function renderVeledaShell(notes) {
       </div>
 
       ${writeModalHtml}
+      ${editModalHtml}
     </div>
   `;
 }
@@ -461,7 +480,12 @@ function renderVeledaNote(note, me, canEdit) {
   const posStyle = `left:${x}px; top:${y}px; font-family: '${font}', cursive;`;
 
   // =========================================
-  // MODE EDIT
+  // MODE EDIT (inline rapide : contenu + couleur)
+  // V19 — On a retiré le sélecteur de police (une seule police restante :
+  // Permanent Marker). Deadline + transformation en sous-tableau se font
+  // désormais via le modal d'édition complet (bouton "Modifier" → fa-pen
+  // ouvre directement le modal), ou en double-cliquant la note pour une
+  // édition rapide du seul contenu + couleur.
   // =========================================
   if (isEditing) {
     const colorBtns = VELEDA_COLORS.map(c => `
@@ -471,11 +495,6 @@ function renderVeledaNote(note, me, canEdit) {
         title="${veledaEscape(VELEDA_COLOR_LABELS[c])}">
         <span style="background:${VELEDA_COLOR_HEX[c]};"></span>
       </button>
-    `).join('');
-
-    const fontOpts = VELEDA_FONTS.map(f => `
-      <option value="${veledaEscape(f)}" ${font === f ? 'selected' : ''}
-        style="font-family: '${f}', cursive;">${veledaEscape(f)}</option>
     `).join('');
 
     return `
@@ -490,12 +509,11 @@ function renderVeledaNote(note, me, canEdit) {
         >${veledaEscape(note.content)}</textarea>
         <div class="vnote-edit-toolbar">
           <div class="vnote-edit-colors">${colorBtns}</div>
-          <select class="vnote-edit-fontselect"
-            onchange="veledaChangeNoteFont(${note.id}, this.value)"
-            onclick="event.stopPropagation();"
-            style="font-family: '${font}', cursive;">
-            ${fontOpts}
-          </select>
+          <button type="button" class="vnote-edit-more"
+            onclick="event.stopPropagation(); openVeledaEditModal(${note.id})"
+            title="Plus d'options (deadline, sous-tableau)">
+            <i class="fas fa-sliders"></i> <span>Plus…</span>
+          </button>
         </div>
         <div class="vnote-edit-actions">
           <button class="vnote-edit-btn vnote-edit-cancel"
@@ -545,8 +563,8 @@ function renderVeledaNote(note, me, canEdit) {
             </button>
           ` : ''}
           <button class="vnote-bar-btn vnote-bar-btn--edit"
-            onclick="event.stopPropagation(); veledaStartEdit(${note.id})"
-            title="Modifier">
+            onclick="event.stopPropagation(); openVeledaEditModal(${note.id})"
+            title="Modifier (contenu, deadline, sous-tableau)">
             <i class="fas fa-pen"></i>
           </button>
           <button class="vnote-bar-btn vnote-bar-btn--delete"
@@ -769,6 +787,309 @@ function veledaSetDraftHasExpiry(checked) {
     state.veledaDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
   }
   render();
+}
+
+// ============================================
+// V19 — MODAL D'EDITION COMPLET D'UNE NOTE
+// (réutilise le même look que le modal de création :
+//  contenu + couleur + deadline + sous-tableau)
+// ============================================
+function openVeledaEditModal(noteId) {
+  if (!veledaUserCanEdit()) return;
+  const note = (state.veledaNotes || []).find(n => n.id === noteId);
+  if (!note) return;
+  // Pré-remplir le brouillon d'édition à partir de la note
+  state.veledaEditModalNoteId = noteId;
+  state.veledaEditDraftContent = note.content || '';
+  state.veledaEditDraftColor = note.color || 'black';
+  state.veledaEditDraftHasExpiry = !!note.expires_at;
+  if (note.expires_at) {
+    const d = new Date(note.expires_at);
+    state.veledaEditDraftExpiresLocal = veledaToDatetimeLocal(d.getTime() > Date.now() ? d : new Date(Date.now() + 24 * 3600 * 1000));
+  } else {
+    state.veledaEditDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+  }
+  state.veledaEditDraftIsBoard = note.is_board === 1 || note.is_board === true;
+  // Si la note était en mode inline-edit, on bascule sur le modal
+  state.veledaEditingId = null;
+  state.veledaInspectingId = null;
+  render();
+  setTimeout(() => {
+    const inp = document.getElementById('veleda-edit-input');
+    if (inp) inp.focus();
+  }, 50);
+}
+
+function closeVeledaEditModal() {
+  state.veledaEditModalNoteId = null;
+  render();
+}
+
+function closeVeledaEditModalIfBackdrop(event) {
+  if (event.target.classList && event.target.classList.contains('veleda-modal-overlay')) {
+    closeVeledaEditModal();
+  }
+}
+
+function veledaSetEditDraftContent(value) {
+  state.veledaEditDraftContent = value;
+}
+
+function veledaSetEditDraftColor(color) {
+  if (VELEDA_COLORS.indexOf(color) === -1) return;
+  state.veledaEditDraftColor = color;
+  render();
+  setTimeout(() => {
+    const inp = document.getElementById('veleda-edit-input');
+    if (inp) inp.focus();
+  }, 30);
+}
+
+function veledaSetEditDraftHasExpiry(checked) {
+  state.veledaEditDraftHasExpiry = !!checked;
+  if (checked && !state.veledaEditDraftExpiresLocal) {
+    state.veledaEditDraftExpiresLocal = veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+  }
+  render();
+}
+
+function veledaSetEditDraftIsBoard(checked) {
+  state.veledaEditDraftIsBoard = !!checked;
+  render();
+}
+
+function veledaSetEditExpires(localStr) {
+  state.veledaEditDraftExpiresLocal = localStr;
+}
+
+function veledaSyncEditExpiresFromPicker(localStr /*, id */) {
+  if (typeof localStr === 'string' && localStr.length >= 16) {
+    state.veledaEditDraftExpiresLocal = localStr;
+  }
+}
+
+function veledaOnEditModalKeyDown(event) {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeVeledaEditModal();
+  } else if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+    event.preventDefault();
+    submitVeledaEdit();
+  }
+}
+
+function renderVeledaEditModal() {
+  const noteId = state.veledaEditModalNoteId;
+  const note = (state.veledaNotes || []).find(n => n.id === noteId);
+  if (!note) return '';
+  const draft = state.veledaEditDraftContent ?? note.content ?? '';
+  const expiresLocal = state.veledaEditDraftExpiresLocal || veledaToDatetimeLocal(new Date(Date.now() + 24 * 3600 * 1000));
+  const minLocal = veledaToDatetimeLocal(new Date(Date.now() + 60 * 1000));
+  const selectedColor = state.veledaEditDraftColor || note.color || 'black';
+  const selectedFont = VELEDA_DEFAULT_FONT;
+  const isBoardChecked = !!state.veledaEditDraftIsBoard;
+  const hasExpiry = !!state.veledaEditDraftHasExpiry;
+
+  // Si la note est un sous-tableau et a des enfants, on désactive le toggle (cohérence avec backend)
+  const childCount = (state.veledaNotes || []).filter(n => n.parent_note_id === noteId).length;
+  const isBoardLocked = (note.is_board === 1 || note.is_board === true) && childCount > 0;
+
+  const colorButtons = VELEDA_COLORS.map(c => `
+    <button type="button"
+      class="veleda-color-pick veleda-color-${c} ${selectedColor === c ? 'active' : ''}"
+      onclick="veledaSetEditDraftColor('${c}')"
+      title="${veledaEscape(VELEDA_COLOR_LABELS[c])}">
+      <span class="veleda-color-dot" style="background:${VELEDA_COLOR_HEX[c]};"></span>
+      <span class="veleda-color-label">${veledaEscape(VELEDA_COLOR_LABELS[c])}</span>
+      ${selectedColor === c ? '<i class="fas fa-check"></i>' : ''}
+    </button>
+  `).join('');
+
+  const expirySection = hasExpiry
+    ? `
+      <div class="veleda-expiry-picker-wrap">
+        ${window.wkDtp ? window.wkDtp.renderDateTime({
+          id: 'veleda-edit-expires',
+          valueDate: expiresLocal.slice(0, 10),
+          valueTime: expiresLocal.slice(11, 16),
+          minDate: minLocal.slice(0, 10),
+          onChange: 'veledaSyncEditExpiresFromPicker'
+        }) : `<input id="veleda-edit-expires-input" type="datetime-local" min="${minLocal}" value="${expiresLocal}" onchange="veledaSetEditExpires(this.value)">`}
+      </div>
+    `
+    : '';
+
+  return `
+    <div class="veleda-modal-overlay" onclick="closeVeledaEditModalIfBackdrop(event)">
+      <div class="veleda-modal" onclick="event.stopPropagation()">
+        <div class="veleda-modal-header">
+          <h3>
+            <i class="fas fa-pen" style="color:#C9A961;"></i>
+            Modifier la note
+          </h3>
+          <button class="veleda-modal-close" onclick="closeVeledaEditModal()">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+
+        <div class="veleda-modal-body">
+          <label class="veleda-field-label">Information a partager</label>
+          <textarea id="veleda-edit-input"
+            class="veleda-write-input-modal veleda-ink-${selectedColor}"
+            maxlength="${VELEDA_MAX_CONTENT_LEN}"
+            rows="3"
+            placeholder="Ex: ch.204 check-out 14h, livraison mardi, plombier 9h..."
+            style="font-family: '${selectedFont}', cursive;"
+            oninput="veledaSetEditDraftContent(this.value)"
+            onkeydown="veledaOnEditModalKeyDown(event)"
+          >${veledaEscape(draft)}</textarea>
+
+          <label class="veleda-field-label">
+            Importance
+            <span class="veleda-field-hint">— couleur du feutre</span>
+          </label>
+          <div class="veleda-color-row">${colorButtons}</div>
+
+          <label class="veleda-isexpiry-row ${hasExpiry ? 'is-checked' : ''}">
+            <input type="checkbox"
+              class="veleda-isexpiry-checkbox"
+              ${hasExpiry ? 'checked' : ''}
+              onchange="veledaSetEditDraftHasExpiry(this.checked)">
+            <span class="veleda-isexpiry-content">
+              <span class="veleda-isexpiry-title">
+                <i class="fas fa-calendar-day"></i>
+                Definir une date et heure de disparition
+              </span>
+            </span>
+          </label>
+          ${expirySection}
+
+          <label class="veleda-isboard-row ${isBoardChecked ? 'is-checked' : ''} ${isBoardLocked ? 'is-locked' : ''}"
+            ${isBoardLocked ? 'title="Cette note contient des éléments — vide-la d\\'abord pour retirer le statut de sous-tableau"' : ''}>
+            <input type="checkbox"
+              class="veleda-isboard-checkbox"
+              ${isBoardChecked ? 'checked' : ''}
+              ${isBoardLocked ? 'disabled' : ''}
+              onchange="veledaSetEditDraftIsBoard(this.checked)">
+            <span class="veleda-isboard-content">
+              <span class="veleda-isboard-title">
+                <i class="fas fa-chalkboard"></i>
+                Faire de cette note un sous-tableau
+                ${isBoardLocked ? `<span style="margin-left:6px; font-size:11px; opacity:.7;">(verrouillé : ${childCount} note${childCount > 1 ? 's' : ''} à l'intérieur)</span>` : ''}
+              </span>
+            </span>
+          </label>
+        </div>
+
+        <div class="veleda-modal-footer">
+          <button class="veleda-modal-btn veleda-modal-cancel" onclick="closeVeledaEditModal()">
+            Annuler
+          </button>
+          <button class="veleda-modal-btn veleda-modal-submit" id="veleda-edit-submit-btn" onclick="submitVeledaEdit()">
+            <i class="fas fa-check"></i> Enregistrer
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function submitVeledaEdit() {
+  const noteId = state.veledaEditModalNoteId;
+  if (!noteId) return;
+  const note = (state.veledaNotes || []).find(n => n.id === noteId);
+  if (!note) return;
+
+  const content = (state.veledaEditDraftContent || '').trim();
+  if (!content) {
+    const inputEl = document.getElementById('veleda-edit-input');
+    if (inputEl) {
+      inputEl.focus();
+      inputEl.style.borderBottomColor = '#DC2626';
+      setTimeout(() => { inputEl.style.borderBottomColor = ''; }, 1500);
+    }
+    return;
+  }
+
+  const color = state.veledaEditDraftColor || 'black';
+  if (VELEDA_COLORS.indexOf(color) === -1) {
+    alert('Couleur invalide.');
+    return;
+  }
+
+  // Deadline
+  const hasExpiry = !!state.veledaEditDraftHasExpiry;
+  let expiresIso = null;
+  if (hasExpiry) {
+    let expiresLocal = state.veledaEditDraftExpiresLocal;
+    if (window.wkDtp) {
+      const fromPicker = window.wkDtp.getDateTimeLocal('veleda-edit-expires');
+      if (fromPicker) expiresLocal = fromPicker;
+    }
+    if (!expiresLocal) {
+      alert('Choisis une date et une heure de disparition (ou decoche la case).');
+      return;
+    }
+    const expiresDate = new Date(expiresLocal);
+    if (isNaN(expiresDate.getTime()) || expiresDate.getTime() <= Date.now()) {
+      alert('La date de disparition doit etre dans le futur.');
+      return;
+    }
+    expiresIso = expiresDate.toISOString();
+  }
+
+  const isBoard = !!state.veledaEditDraftIsBoard;
+
+  // Construction du body : on envoie uniquement les champs qui changent (économise des UPDATE inutiles)
+  const body = {};
+  if (content !== note.content) body.content = content;
+  if (color !== note.color) body.color = color;
+  // Deadline : null si décochée, ISO si cochée
+  const prevIso = note.expires_at || null;
+  const newIso = hasExpiry ? expiresIso : null;
+  if (newIso !== prevIso) {
+    body.expires_at = newIso; // null OU ISO string
+  }
+  const prevIsBoard = (note.is_board === 1 || note.is_board === true);
+  if (isBoard !== prevIsBoard) {
+    body.is_board = isBoard;
+  }
+
+  if (Object.keys(body).length === 0) {
+    closeVeledaEditModal();
+    return;
+  }
+
+  const btn = document.getElementById('veleda-edit-submit-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Enregistrement...';
+  }
+
+  try {
+    const res = await fetch('/api/veleda-notes/' + noteId, {
+      method: 'PUT',
+      headers: { 'Authorization': 'Bearer ' + state.token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Erreur de modification');
+
+    // Apply optimistically to local state
+    if (body.content !== undefined) note.content = body.content;
+    if (body.color !== undefined) note.color = body.color;
+    if (body.expires_at !== undefined) note.expires_at = body.expires_at;
+    if (body.is_board !== undefined) note.is_board = body.is_board ? 1 : 0;
+
+    closeVeledaEditModal();
+    if (typeof showToast === 'function') showToast('Note modifiée', 'success');
+  } catch (e) {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fas fa-check"></i> Enregistrer';
+    }
+    alert(e.message || 'Erreur inconnue');
+  }
 }
 
 // ============================================
@@ -1311,3 +1632,15 @@ window.veledaOnNoteDblClick = veledaOnNoteDblClick;
 window.veledaOpenBoard = veledaOpenBoard;
 window.veledaTryOpenBoard = veledaTryOpenBoard;
 window.veledaNavigateTo = veledaNavigateTo;
+// Modal d'édition Veleda
+window.openVeledaEditModal = openVeledaEditModal;
+window.closeVeledaEditModal = closeVeledaEditModal;
+window.closeVeledaEditModalIfBackdrop = closeVeledaEditModalIfBackdrop;
+window.veledaSetEditDraftContent = veledaSetEditDraftContent;
+window.veledaSetEditDraftColor = veledaSetEditDraftColor;
+window.veledaSetEditDraftHasExpiry = veledaSetEditDraftHasExpiry;
+window.veledaSetEditDraftIsBoard = veledaSetEditDraftIsBoard;
+window.veledaSetEditExpires = veledaSetEditExpires;
+window.veledaSyncEditExpiresFromPicker = veledaSyncEditExpiresFromPicker;
+window.veledaOnEditModalKeyDown = veledaOnEditModalKeyDown;
+window.submitVeledaEdit = submitVeledaEdit;

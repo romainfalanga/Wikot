@@ -13,6 +13,10 @@ let state = {
   procedures: [],
   subprocedures: [],
   categories: [],
+  // V19 — flag de chargement : sert à différencier "pas encore chargé"
+  // (afficher un placeholder neutre) de "chargé mais vide" (afficher
+  // "Aucune procédure trouvée"). Évite le flash sur reload.
+  proceduresLoaded: false,
   templates: [],
   users: [],
   hotels: [],

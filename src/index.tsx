@@ -7496,8 +7496,36 @@ app.get('*', (c) => {
           }
         } catch(e) { /* noop */ }
 
-        if (typeof render === 'function') {
-          try { render(); } catch(e) { console.error('[boot] render() error', e); }
+        // V19 — Si l'utilisateur a un token en localStorage, on charge d'abord
+        // les données (procédures, catégories, users, etc.) AVANT de render(),
+        // afin que la première vue (Wikot/Procédures) ne s'affiche pas vide.
+        // Sans ça, on voyait un flash "Aucune procédure trouvée" pendant ~1s
+        // au reload, parce que loadData() n'était jamais relancé.
+        var hasToken = false;
+        try {
+          hasToken = !!(localStorage.getItem('wikot_token') && localStorage.getItem('wikot_user'));
+        } catch(e) {}
+
+        function bootRender() {
+          if (typeof render === 'function') {
+            try { render(); } catch(e) { console.error('[boot] render() error', e); }
+          }
+        }
+
+        if (hasToken && typeof loadData === 'function') {
+          // Rend tout de suite un état "chargement" (header + skeleton) pour
+          // que l'utilisateur voie immédiatement la coque de l'app.
+          bootRender();
+          // Puis charge les données et relance render() pour remplir.
+          loadData()
+            .catch(function(e) { console.warn('[boot] loadData() failed', e); })
+            .finally(function() {
+              bootRender();
+              try { if (typeof ensureChatGlobalPolling === 'function') ensureChatGlobalPolling(); } catch(e) {}
+              try { if (typeof ensureProfilePolling === 'function') ensureProfilePolling(); } catch(e) {}
+            });
+        } else {
+          bootRender();
         }
       });
     })();

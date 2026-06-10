@@ -33,7 +33,7 @@ function renderProceduresList() {
       <div>
         <p class="section-eyebrow mb-2">Savoir-faire</p>
         <h2 class="section-title-premium text-2xl sm:text-3xl">Procédures</h2>
-        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">${filteredFinal.length} procédure${filteredFinal.length > 1 ? 's' : ''} référencée${filteredFinal.length > 1 ? 's' : ''}${q ? ` pour « ${escapeHtml(q)} »` : ''}</p>
+        <p class="text-sm mt-1.5" style="color: rgba(15,27,40,0.5);">${!state.proceduresLoaded ? 'Chargement…' : `${filteredFinal.length} procédure${filteredFinal.length > 1 ? 's' : ''} référencée${filteredFinal.length > 1 ? 's' : ''}${q ? ` pour « ${escapeHtml(q)} »` : ''}`}</p>
       </div>
       ${canEdit ? `
       <button onclick="showProcedureForm()" class="btn-premium self-start sm:self-auto px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2" style="background: var(--c-navy); color: #fff;">
@@ -96,6 +96,18 @@ function renderProceduresBody() {
 
 // V18.10 — Corps des procedures : 2 modes selon la presence d'une recherche.
 function renderProceduresBodyHTML(filteredFinal, q, canEdit) {
+  // V19 — Si les procédures ne sont pas encore chargées (boot avec token),
+  // on affiche un placeholder "Chargement" neutre plutôt que "Aucune
+  // procédure trouvée" (qui faisait flasher un faux message d'état vide).
+  if (!state.proceduresLoaded && filteredFinal.length === 0 && !q) {
+    return `
+    <div class="card-premium empty-state-premium">
+      <div class="empty-icon"><i class="fas fa-spinner fa-spin" style="color: var(--c-gold);"></i></div>
+      <p class="font-display text-lg font-semibold" style="color: var(--c-navy);">Chargement des procédures…</p>
+      <p class="text-sm mt-1" style="color: rgba(15,27,40,0.5);">Un instant, on récupère ton savoir-faire.</p>
+    </div>`;
+  }
+
   if (filteredFinal.length === 0 && q) {
     return `
     <div class="card-premium empty-state-premium">

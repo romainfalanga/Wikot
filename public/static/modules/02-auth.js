@@ -239,6 +239,9 @@ async function loadData() {
   if (statsData) state.stats = statsData;
   if (categoriesData) state.categories = categoriesData.categories || [];
   if (proceduresData) state.procedures = proceduresData.procedures || [];
+  // V19 — marquer comme chargé même si la liste est vide ; ça débloque
+  // l'affichage "Aucune procédure trouvée" (vs placeholder loading).
+  state.proceduresLoaded = true;
   // state.subprocedures contient uniquement les procédures marquées is_subprocedure=1
   if (allProcsData) {
     const all = allProcsData.procedures || [];

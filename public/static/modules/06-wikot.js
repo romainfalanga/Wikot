@@ -401,7 +401,7 @@ async function acceptWikotAction(actionId) {
   const all = [...(state.wikotActions || []), ...(state.wikotMaxActions || [])];
   const a = all.find(x => x.id === actionId);
   if (a) a.status = 'accepted';
-  showToast('Modification appliquée par Back Wikot', 'success');
+  showToast('Modification appliquée par Wikot', 'success');
   await loadData();
   render();
 }
@@ -738,7 +738,7 @@ const BACK_WIKOT_WORKFLOWS = {
     color: 'orange',
     targetKind: 'procedure',
     permissionKey: 'can_edit_procedures',
-    description: 'Crée, modifie ou supprime tes procédures avec Back Wikot.',
+    description: 'Crée, modifie ou supprime tes procédures avec Wikot.',
     createLabel: 'Créer une procédure'
   },
   gerer_infos: {
@@ -756,7 +756,7 @@ const BACK_WIKOT_WORKFLOWS = {
     color: 'sky',
     targetKind: 'chat_tree',
     permissionKey: null,
-    description: "Crée, renomme, déplace ou supprime tes groupes et salons avec Back Wikot.",
+    description: "Crée, renomme, déplace ou supprime tes groupes et salons avec Wikot.",
     createLabel: 'Créer un groupe ou un salon'
   },
   gerer_taches: {
@@ -1595,7 +1595,7 @@ function renderBackWikotChatPanel({ inDrawer }) {
             Copilote
             ${contextBadge}
           </div>
-          <div class="text-sm font-semibold" style="color: #fff;">Back Wikot</div>
+          <div class="text-sm font-semibold" style="color: #fff;">Wikot</div>
         </div>
         ${rootMessages.length > 0 ? `
           <button onclick="resetBackWikotRootChat()" class="text-[11px] px-2 py-1 rounded-md hover:bg-white/10 transition-colors" style="color: rgba(255,255,255,0.7);" title="Effacer la conversation">
@@ -1663,7 +1663,7 @@ function renderBackWikotChatPanel({ inDrawer }) {
           ${isSending ? 'disabled' : ''}
           oninput="autoResizeTextarea(this)"
           onkeydown="handleBackWikotRootInputKey(event)"
-          placeholder="Écris ta demande à Back Wikot…"
+          placeholder="Écris ta demande à Wikot…"
           class="flex-1 resize-none px-3 py-2 text-sm rounded-xl border focus:outline-none focus:ring-2 transition-all"
           style="border-color: rgba(15,27,40,0.12); background: var(--c-cream); color: var(--c-navy); max-height: 120px;"
         ></textarea>
@@ -1726,14 +1726,14 @@ function renderBackWikotHome() {
         </div>
         <div class="min-w-0">
           <p class="section-eyebrow">Atelier de rédaction et pilotage</p>
-          <h1 class="font-display text-xl sm:text-2xl font-semibold" style="color: var(--c-navy);">Back Wikot</h1>
+          <h1 class="font-display text-xl sm:text-2xl font-semibold" style="color: var(--c-navy);">Wikot</h1>
         </div>
       </div>
 
       <p class="text-sm" style="color: rgba(15,27,40,0.6);">
         ${canChat
-          ? "Demande directement à Back Wikot ou choisis un atelier ci-dessous. Il pilote pour toi."
-          : "Choisis ce que tu veux gérer. Back Wikot t'aide à créer ou modifier les éléments puis tu enregistres."}
+          ? "Demande directement à Wikot ou choisis un atelier ci-dessous. Il pilote pour toi."
+          : "Choisis ce que tu veux gérer. Wikot t'aide à créer ou modifier les éléments puis tu enregistres."}
       </p>
 
       <!-- Grille 4 boutons "Gérer X" (conv injectée par renderBackWikotView en panneau persistant) -->
@@ -1935,7 +1935,7 @@ function renderBackWikotSelectTarget() {
           ${tree.length === 0 ? `
             <div class="text-center py-10 text-sm text-navy-400">
               <i class="fas fa-comments text-2xl text-navy-200 mb-2 block"></i>
-              Aucun groupe pour le moment. Crées-en un avec Back Wikot.
+              Aucun groupe pour le moment. Crées-en un avec Wikot.
             </div>
           ` : tree.map(g => `
             <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -2066,7 +2066,7 @@ function renderBackWikotSelectTarget() {
         </div>
         <div class="flex-1 min-w-0">
           <div class="font-semibold text-navy-900 text-sm">${escapeHtml(wf.createLabel || 'Créer un nouvel élément')}</div>
-          <div class="text-[11px] text-navy-500 truncate">Démarre un nouvel atelier avec Back Wikot.</div>
+          <div class="text-[11px] text-navy-500 truncate">Démarre un nouvel atelier avec Wikot.</div>
         </div>
         <i class="fas fa-arrow-right text-orange-500 text-sm shrink-0 group-hover:translate-x-0.5 transition-transform"></i>
       </div>
@@ -2094,7 +2094,7 @@ function renderBackWikotSelectTarget() {
         <div class="bg-white border border-gray-200 rounded-xl p-2 flex items-center gap-2">
           <i class="fas fa-magnifying-glass text-navy-300 ml-2"></i>
           <input type="text" value="${escapeHtml(state.backWikotSelectSearch || '')}"
-            oninput="state.backWikotSelectSearch = this.value; render(); document.getElementById('back-wikot-select-search').focus();"
+            oninput="state.backWikotSelectSearch = this.value; renderNow(); document.getElementById('back-wikot-select-search').focus();"
             id="back-wikot-select-search"
             placeholder="${escapeHtml(searchPlaceholder)}"
             class="flex-1 outline-none text-sm bg-transparent" />
@@ -2179,7 +2179,7 @@ function renderBackWikotWorkshop() {
               class="${state.backWikotManualEdit
                 ? 'bg-gradient-to-r from-orange-500 to-amber-500 text-white border-orange-500 hover:from-orange-600 hover:to-amber-600'
                 : 'bg-white border-gray-200 text-navy-700 hover:bg-gray-50'} border px-3 py-2 rounded-lg text-sm font-semibold inline-flex items-center gap-1.5 transition-all shadow-sm"
-              title="${state.backWikotManualEdit ? 'Revenir à la vue Back Wikot' : 'Modifier les champs à la main'}">
+              title="${state.backWikotManualEdit ? 'Revenir à la vue Wikot' : 'Modifier les champs à la main'}">
               <i class="fas ${state.backWikotManualEdit ? 'fa-check' : 'fa-pen-to-square'}"></i>
               <span class="hidden sm:inline">${state.backWikotManualEdit ? 'Édition manuelle' : 'Modifier manuellement'}</span>
             </button>
@@ -2212,7 +2212,7 @@ function renderBackWikotWorkshop() {
             <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-orange-400 to-rose-500 flex items-center justify-center text-white text-xs">
               <i class="fas fa-pen-ruler"></i>
             </div>
-            <span class="text-sm font-semibold text-navy-800">Back Wikot</span>
+            <span class="text-sm font-semibold text-navy-800">Wikot</span>
           </div>
           <div id="wikot-max-messages" class="flex-1 overflow-y-auto p-3">
             ${messages.length === 0 && !isLoading ? `
@@ -2221,7 +2221,7 @@ function renderBackWikotWorkshop() {
                   <i class="fas fa-pen-ruler"></i>
                 </div>
                 <p class="text-sm font-semibold text-navy-800 mb-1">Décris ton besoin</p>
-                <p class="text-[11px] text-navy-500 leading-snug">Back Wikot va remplir le formulaire pour toi. Tu peux ensuite ajuster, demander des modifs, ou enregistrer.</p>
+                <p class="text-[11px] text-navy-500 leading-snug">Wikot va remplir le formulaire pour toi. Tu peux ensuite ajuster, demander des modifs, ou enregistrer.</p>
               </div>
             ` : ''}
             ${isLoading ? '<div class="flex justify-center items-center h-full text-navy-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>Chargement…</div>' : ''}
@@ -2390,7 +2390,7 @@ function renderBackWikotProcedureForm(f) {
         <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 text-[11px] text-orange-800 flex items-start gap-2">
           <i class="fas fa-pen-to-square mt-0.5"></i>
           <div>
-            <strong>Édition manuelle activée.</strong> Tu modifies les champs directement. Pour rendre la main à Back Wikot, clique sur le bouton orange en haut.
+            <strong>Édition manuelle activée.</strong> Tu modifies les champs directement. Pour rendre la main à Wikot, clique sur le bouton orange en haut.
           </div>
         </div>
       </div>
@@ -2404,19 +2404,19 @@ function renderBackWikotProcedureForm(f) {
           Titre <span class="text-red-500">*</span>
         </label>
         <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] ${fieldHighlightClass('title')}">
-          ${f.title ? escapeHtml(f.title) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+          ${f.title ? escapeHtml(f.title) : '<span class="italic text-navy-300">(à remplir par Wikot)</span>'}
         </div>
       </div>
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Déclencheur <span class="text-red-500">*</span></label>
         <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] ${fieldHighlightClass('trigger_event')}">
-          ${f.trigger_event ? escapeHtml(f.trigger_event) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+          ${f.trigger_event ? escapeHtml(f.trigger_event) : '<span class="italic text-navy-300">(à remplir par Wikot)</span>'}
         </div>
       </div>
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Description</label>
         <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] whitespace-pre-wrap ${fieldHighlightClass('description')}">
-          ${f.description ? escapeHtml(f.description) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+          ${f.description ? escapeHtml(f.description) : '<span class="italic text-navy-300">(à remplir par Wikot)</span>'}
         </div>
       </div>
       <div>
@@ -2431,14 +2431,14 @@ function renderBackWikotProcedureForm(f) {
           Étapes <span class="text-red-500">*</span> <span class="text-navy-400 font-normal">(${(f.steps || []).length})</span>
         </label>
         <div class="space-y-2">
-          ${stepsHtml || '<div class="text-center py-6 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">Aucune étape pour le moment. Demande à Back Wikot d\'ajouter ou de modifier les étapes, ou clique sur <strong>Modifier manuellement</strong> en haut.</div>'}
+          ${stepsHtml || '<div class="text-center py-6 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">Aucune étape pour le moment. Demande à Wikot d’ajouter ou de modifier les étapes, ou clique sur <strong>Modifier manuellement</strong> en haut.</div>'}
         </div>
       </div>
 
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
         <i class="fas fa-circle-info mt-0.5"></i>
         <div>
-          <strong>Formulaire en lecture seule.</strong> Back Wikot écrit dedans. Tu peux aussi cliquer sur <strong>Modifier manuellement</strong> en haut pour éditer directement.
+          <strong>Formulaire en lecture seule.</strong> Wikot écrit dedans. Tu peux aussi cliquer sur <strong>Modifier manuellement</strong> en haut pour éditer directement.
         </div>
       </div>
     </div>
@@ -2480,7 +2480,7 @@ function renderBackWikotInfoForm(f) {
         <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 text-[11px] text-orange-800 flex items-start gap-2">
           <i class="fas fa-pen-to-square mt-0.5"></i>
           <div>
-            <strong>Édition manuelle activée.</strong> Tu modifies les champs directement. Pour rendre la main à Back Wikot, clique sur le bouton orange en haut.
+            <strong>Édition manuelle activée.</strong> Tu modifies les champs directement. Pour rendre la main à Wikot, clique sur le bouton orange en haut.
           </div>
         </div>
       </div>
@@ -2492,7 +2492,7 @@ function renderBackWikotInfoForm(f) {
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Titre <span class="text-red-500">*</span></label>
         <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] ${fieldHighlightClass('title')}">
-          ${f.title ? escapeHtml(f.title) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+          ${f.title ? escapeHtml(f.title) : '<span class="italic text-navy-300">(à remplir par Wikot)</span>'}
         </div>
       </div>
       <div>
@@ -2504,14 +2504,14 @@ function renderBackWikotInfoForm(f) {
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Contenu <span class="text-red-500">*</span></label>
         <div class="w-full px-3 py-3 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[10rem] whitespace-pre-wrap leading-relaxed ${fieldHighlightClass('content')}">
-          ${f.content ? formatHotelInfoContent(f.content) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+          ${f.content ? formatHotelInfoContent(f.content) : '<span class="italic text-navy-300">(à remplir par Wikot)</span>'}
         </div>
       </div>
 
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
         <i class="fas fa-circle-info mt-0.5"></i>
         <div>
-          <strong>Formulaire en lecture seule.</strong> Back Wikot écrit dedans. Tu peux aussi cliquer sur <strong>Modifier manuellement</strong> en haut pour éditer directement.
+          <strong>Formulaire en lecture seule.</strong> Wikot écrit dedans. Tu peux aussi cliquer sur <strong>Modifier manuellement</strong> en haut pour éditer directement.
         </div>
       </div>
     </div>
@@ -2535,7 +2535,7 @@ function renderBackWikotChatTreeForm(f) {
         </div>
         <div class="flex-1 min-w-0">
           <div class="text-xs font-semibold text-navy-800">${groups.length} groupe${groups.length > 1 ? 's' : ''} · ${totalChannels} salon${totalChannels > 1 ? 's' : ''}</div>
-          <div class="text-[11px] text-navy-500">Back Wikot peut créer, renommer, déplacer ou supprimer.</div>
+          <div class="text-[11px] text-navy-500">Wikot peut créer, renommer, déplacer ou supprimer.</div>
         </div>
       </div>
 
@@ -2547,7 +2547,7 @@ function renderBackWikotChatTreeForm(f) {
 
       ${groups.length === 0 ? `
         <div class="text-center py-8 text-xs text-navy-400 italic bg-gray-50 rounded-lg border border-dashed border-gray-300">
-          Aucun groupe. Demande à Back Wikot de créer ton premier groupe et tes salons.
+          Aucun groupe. Demande à Wikot de créer ton premier groupe et tes salons.
         </div>
       ` : groups.map(g => `
         <div class="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -2574,7 +2574,7 @@ function renderBackWikotChatTreeForm(f) {
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
         <i class="fas fa-circle-info mt-0.5"></i>
         <div>
-          <strong>Mutations live.</strong> Chaque action de Back Wikot s'applique immédiatement. Le bouton <strong>Enregistrer</strong> ferme le workshop et rafraîchit la page Discussion.
+          <strong>Mutations live.</strong> Chaque action de Wikot s'applique immédiatement. Le bouton <strong>Enregistrer</strong> ferme le workshop et rafraîchit la page Discussion.
         </div>
       </div>
     </div>
@@ -2590,7 +2590,7 @@ function renderBackWikotChatSearchForm(f) {
     <div class="space-y-3 ${fieldHighlightClass('results')}">
       <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
         <div class="text-[10px] uppercase tracking-wider font-semibold text-navy-500 mb-1">Requête</div>
-        <div class="text-sm text-navy-800 ${fieldHighlightClass('query')}">${f.query ? escapeHtml(f.query) : '<span class="italic text-navy-300">(à formuler par Back Wikot)</span>'}</div>
+        <div class="text-sm text-navy-800 ${fieldHighlightClass('query')}">${f.query ? escapeHtml(f.query) : '<span class="italic text-navy-300">(à formuler par Wikot)</span>'}</div>
         ${f.lastSearchedAt ? `<div class="text-[10px] text-navy-400 mt-1.5">${results.length} résultat${results.length > 1 ? 's' : ''}${f.total > results.length ? ` · ${f.total} au total` : ''} · recherche effectuée</div>` : ''}
       </div>
 
@@ -2620,7 +2620,7 @@ function renderBackWikotChatSearchForm(f) {
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
         <i class="fas fa-circle-info mt-0.5"></i>
         <div>
-          <strong>Recherche pilotée par Back Wikot.</strong> Décris ce que tu cherches dans le chat. Clique sur un résultat pour ouvrir le salon. <strong>Enregistrer</strong> ferme simplement le workshop.
+          <strong>Recherche pilotée par Wikot.</strong> Décris ce que tu cherches dans le chat. Clique sur un résultat pour ouvrir le salon. <strong>Enregistrer</strong> ferme simplement le workshop.
         </div>
       </div>
     </div>
@@ -2662,7 +2662,7 @@ function renderBackWikotTaskForm(f) {
       <div>
         <label class="text-xs font-semibold text-navy-700 mb-1 block">Titre <span class="text-red-500">*</span></label>
         <div class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-navy-800 min-h-[2.5rem] ${fieldHighlightClass('title')}">
-          ${f.title ? escapeHtml(f.title) : '<span class="italic text-navy-300">(à remplir par Back Wikot)</span>'}
+          ${f.title ? escapeHtml(f.title) : '<span class="italic text-navy-300">(à remplir par Wikot)</span>'}
         </div>
       </div>
 
@@ -2754,7 +2754,7 @@ function renderBackWikotTaskForm(f) {
       <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-[11px] text-blue-800 flex items-start gap-2">
         <i class="fas fa-circle-info mt-0.5"></i>
         <div>
-          <strong>Formulaire en lecture seule.</strong> Demande à Back Wikot dans le chat à droite. Clique <strong>Enregistrer</strong> pour persister.
+          <strong>Formulaire en lecture seule.</strong> Demande à Wikot dans le chat à droite. Clique <strong>Enregistrer</strong> pour persister.
         </div>
       </div>
     </div>

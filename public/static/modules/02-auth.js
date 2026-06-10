@@ -369,16 +369,50 @@ function updateSidebarBadges() {
 // ============================================
 // RENDER ENGINE
 // ============================================
-// V19.2 — Flag de suppression temporaire des render() en cascade
-// pendant le boot. Posé à true par le bootstrap, libéré après le
-// render final. Permet d'éviter le "battement de cils" quand
-// refreshTaskBadge() / loadData() etc. déclenchent des renders
-// intermédiaires avant le render final avec les données complètes.
+// V19.3 — Anti-flicker DÉFINITIF : double protection
+//
+// 1) Verrou _suppressRender : posé pendant le boot ou des opérations
+//    "batch" qui font plusieurs setState consécutifs. Tous les render()
+//    sont ignorés tant que le verrou est actif. Le code qui pose le
+//    verrou est responsable de faire UN render final après.
+//
+// 2) Coalescing via requestAnimationFrame : si plusieurs render() sont
+//    appelés dans la MÊME frame de rendu navigateur (~16ms), on n'en
+//    exécute QU'UN SEUL au prochain rAF. Élimine totalement le
+//    "battement de cils" causé par pollings + refreshTaskBadge() +
+//    syncUserProfile() qui se résolvent à des moments aléatoires.
+//
+// Sécurité : pour les rares endroits qui ont besoin d'un render
+// synchrone (ex: faire focus() sur un input qu'on vient de créer),
+// utiliser renderNow() — sinon utiliser render() qui est asynchrone.
 let _suppressRender = false;
-function setSuppressRender(v) { _suppressRender = !!v; }
+let _renderScheduled = false;
+function setSuppressRender(v) {
+  _suppressRender = !!v;
+}
 
 function render() {
-  if (_suppressRender) return; // boot : on accumule, on rendra UNE fois
+  if (_suppressRender) return;
+  if (_renderScheduled) return;
+  _renderScheduled = true;
+  // rAF garantit qu'on ne fait qu'UN seul paint par frame, même si
+  // render() est appelé 10 fois en 5ms (cas typique : loadData() ->
+  // refreshTaskBadge() -> chat polling tick).
+  requestAnimationFrame(function() {
+    _renderScheduled = false;
+    _renderNow();
+  });
+}
+
+// Force un render synchrone immédiat. À utiliser uniquement quand on
+// a IMPÉRATIVEMENT besoin que le DOM soit à jour AVANT la ligne
+// suivante (ex: input.focus() juste après render()).
+function renderNow() {
+  _renderScheduled = false; // annule un éventuel rAF en attente
+  _renderNow();
+}
+
+function _renderNow() {
   const app = document.getElementById('app');
   if (!app) return;
   // V18 — Si user connecté mais abonnement non actif, on affiche la page de relance paiement

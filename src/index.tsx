@@ -2671,7 +2671,8 @@ Tu ÉCRIS DIRECTEMENT dans ce formulaire via l'outil \`update_form\`. L'utilisat
   // ============================================
 
   if (workflowMode === 'gerer_procedures') {
-    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **GESTION DES PROCÉDURES** pour le **${hotelName}**.
+    return `Tu es **Wikot**, agent ultra-spécialisé dans la **GESTION DES PROCÉDURES** pour l'hôtel **${hotelName}**.
+Tu es un agent générique pensé pour fonctionner sur n'importe quel hôtel : tu adaptes ton ton, tes exemples et tes propositions à l'hôtel courant sans jamais présupposer un autre établissement, ni un type d'hôtel particulier (chaîne, indépendant, balneéaire, montagne, urbain, etc.).
 
 ## Ta mission UNIQUE pour cette session
 Aider l'utilisateur à **créer OU modifier** une procédure. Selon le contexte :
@@ -2716,7 +2717,8 @@ Rappel : tu remplis le formulaire en temps réel via update_form. L'utilisateur 
   }
 
   if (workflowMode === 'gerer_infos') {
-    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **GESTION DES INFORMATIONS** pour le **${hotelName}**.
+    return `Tu es **Wikot**, agent ultra-spécialisé dans la **GESTION DES INFORMATIONS** pour l'hôtel **${hotelName}**.
+Tu es un agent générique pensé pour fonctionner sur n'importe quel hôtel : tu adaptes ton ton, tes exemples et tes propositions à l'hôtel courant sans jamais présupposer un autre établissement, ni un type d'hôtel particulier (chaîne, indépendant, balneéaire, montagne, urbain, etc.).
 
 ## Ta mission UNIQUE pour cette session
 Aider l'utilisateur à **créer OU modifier** une information de l'hôtel (horaires, services, équipements, contacts, etc.). Selon le contexte :
@@ -2766,7 +2768,8 @@ Rappel : tu remplis le formulaire en temps réel via update_form. L'utilisateur 
   // L'IA exécute live via tools. L'arborescence est aussi rendue dans le formulaire.
   // ============================================
   if (workflowMode === 'gerer_conversations') {
-    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **gestion des espaces de discussion** du **${hotelName}**.
+    return `Tu es **Wikot**, agent ultra-spécialisé dans la **gestion des espaces de discussion** de l'hôtel **${hotelName}**.
+Tu es un agent générique pensé pour fonctionner sur n'importe quel hôtel : tu adaptes ton ton, tes exemples et tes propositions à l'hôtel courant sans jamais présupposer un autre établissement, ni un type d'hôtel particulier (chaîne, indépendant, balneéaire, montagne, urbain, etc.).
 
 ## Ta mission UNIQUE pour cette session
 Modifier directement (en base) l'arborescence des salons et channels de l'application Wikot :
@@ -2802,7 +2805,8 @@ Rappel : tes appels de tools écrivent **directement en base**. Confirme toujour
   // WORKFLOW : GÉRER LES TÂCHES (CRUD live templates + instances)
   // ============================================
   if (workflowMode === 'gerer_taches') {
-    return `Tu es **Back Wikot**, agent ultra-spécialisé dans la **gestion des tâches** du **${hotelName}**.
+    return `Tu es **Wikot**, agent ultra-spécialisé dans la **gestion des tâches** de l'hôtel **${hotelName}**.
+Tu es un agent générique pensé pour fonctionner sur n'importe quel hôtel : tu adaptes ton ton, tes exemples et tes propositions à l'hôtel courant sans jamais présupposer un autre établissement, ni un type d'hôtel particulier (chaîne, indépendant, balneéaire, montagne, urbain, etc.).
 
 ## Ta mission UNIQUE pour cette session
 Créer / modifier des tâches dans l'application Wikot. Deux types de tâches :
@@ -2836,7 +2840,8 @@ Rappel : tes \`update_form\` remplissent le formulaire. L'utilisateur clique "En
   // FALLBACK : pas de workflow_mode (entrée Back Wikot sans workflow choisi)
   // → Demander à l'utilisateur de choisir un des boutons d'entonnoir
   // ============================================
-  return `Tu es **Back Wikot**, agent de rédaction et d'édition pour le **${hotelName}**.
+  return `Tu es **Wikot**, agent de rédaction et d'édition pour l'hôtel **${hotelName}**.
+Tu es un agent générique pensé pour fonctionner sur n'importe quel hôtel : tu adaptes ton ton, tes exemples et tes propositions à l'hôtel courant sans jamais présupposer un autre établissement, ni un type d'hôtel particulier (chaîne, indépendant, balneéaire, montagne, urbain, etc.).
 
 Tu fais EXACTEMENT ces choses, et rien d'autre :
 1. Créer une procédure
@@ -3431,7 +3436,7 @@ RÈGLE DE GRANULARITÉ : choisis toujours le type le plus précis. Max 5 blocs.`
       type: 'function',
       function: {
         name: 'return_to_root',
-        description: `Rends la main à l'orchestrateur Back Wikot. À utiliser UNIQUEMENT si la demande utilisateur sort clairement du domaine de ce sous-agent (ex : tu es dans 'gerer_procedures' mais l'utilisateur demande maintenant de modifier une information ou de créer une tâche). Tu transmets le message d'origine reformulé pour que l'orchestrateur puisse rediriger vers le bon sous-agent.`,
+        description: `Rends la main à l'orchestrateur Wikot. À utiliser UNIQUEMENT si la demande utilisateur sort clairement du domaine de ce sous-agent (ex : tu es dans 'gerer_procedures' mais l'utilisateur demande maintenant de modifier une information ou de créer une tâche). Tu transmets le message d'origine reformulé pour que l'orchestrateur puisse rediriger vers le bon sous-agent.`,
         parameters: {
           type: 'object',
           properties: {
@@ -3820,7 +3825,8 @@ app.post('/api/wikot/router', authMiddleware, async (c) => {
     return arr.slice(0, max).map(x => fields.map(f => `${f}=${JSON.stringify(x[f])}`).join(' ')).join('\n')
   }
 
-  const systemPrompt = `Tu es **Back Wikot**, copilote autonome d'édition du **${hotelName}** (utilisateur : ${user.name}).
+  const systemPrompt = `Tu es **Wikot**, copilote autonome d'édition pour l'hôtel **${hotelName}** (utilisateur : ${user.name}).
+Tu es un agent générique dédié à la gestion de n'importe quel hôtel : tu adaptes toujours tes réponses, exemples et suggestions à l'hôtel courant, sans jamais supposer un autre établissement.
 
 # MISSION
 Tu PILOTES l'interface utilisateur. Tu ne te contentes pas de rediriger : tu enchaînes les actions pour faire avancer la demande au maximum en UN SEUL TOUR, puis tu poses une question de raffinage si besoin.
@@ -3868,7 +3874,7 @@ ${fmtList(taskInstances, ['id', 'title', 'task_date'])}
    - info_item : { title, content, category_id }
    - task : { title, description, category, priority, mode, recurrence_type, recurrence_days, monthly_day, suggested_time, duration_min, active_from, active_to, task_date, assignee_ids }
 8. \`ask_followup(text)\` — pose UNE question claire de raffinage à l'user. 1-3 phrases max.
-9. \`back_to_home()\` — revient au menu Back Wikot.
+9. \`back_to_home()\` — revient au menu Wikot.
 
 # PLAYBOOKS (séquences canoniques à appliquer agressivement)
 
@@ -3995,7 +4001,7 @@ Le content doit être structuré et complet (codes, horaires précis, contacts f
       type: 'function',
       function: {
         name: 'back_to_home',
-        description: 'Revient au menu Back Wikot (ferme l\'atelier en cours).',
+        description: 'Revient au menu Wikot (ferme l\'atelier en cours).',
         parameters: { type: 'object', properties: {} }
       }
     }
@@ -4063,7 +4069,7 @@ Continue d'exécuter la demande utilisateur jusqu'au bout. Si tu viens d'ouvrir 
       console.error('[wikot:router] openrouter_error iter=' + iter + ' msg=' + e.message)
       // Si on a déjà des actions, on les renvoie ; sinon erreur
       if (actions.length > 0) break
-      return c.json({ error: 'Erreur Back Wikot : ' + e.message }, 500)
+      return c.json({ error: 'Erreur Wikot : ' + e.message }, 500)
     }
 
     const choice = resp.choices?.[0]
@@ -7496,38 +7502,47 @@ app.get('*', (c) => {
           }
         } catch(e) { /* noop */ }
 
-        // V19.2 — Boot intelligent :
-        //  - PAS de token : render() direct (page de login).
-        //  - Avec token : on render UNE coque tout de suite (sidebar + main vide),
-        //    puis on charge les données en arrière-plan en SUSPENDANT tous les
-        //    render() intermédiaires (setSuppressRender), et on fait UN seul
-        //    render final quand tout est chargé. Évite le "battement de cils"
-        //    causé par refreshTaskBadge()/loadChatData() qui appellent render().
+        // V19.3 — Boot anti-flicker :
+        //  Avec token, on charge TOUTES les données AVANT le premier render.
+        //  Pendant le chargement, on suspend tous les render() en cascade
+        //  (via setSuppressRender) pour qu'aucun loader interne ne déclenche
+        //  un flash intermédiaire. Une fois tout chargé : UN SEUL render final.
+        //  Le combo verrou + rAF coalescing dans render() = 0 flicker garanti.
         var hasToken = false;
         try {
           hasToken = !!(localStorage.getItem('wikot_token') && localStorage.getItem('wikot_user'));
         } catch(e) {}
 
         function bootRender() {
-          if (typeof render === 'function') {
+          // renderNow() pour ne pas dépendre du timing rAF au boot
+          if (typeof renderNow === 'function') {
+            try { renderNow(); } catch(e) { console.error('[boot] renderNow() error', e); }
+          } else if (typeof render === 'function') {
             try { render(); } catch(e) { console.error('[boot] render() error', e); }
           }
         }
 
         if (hasToken && typeof loadData === 'function') {
-          // 1) Render initial : coque avec placeholder "Chargement…" sur procédures
-          //    (state.proceduresLoaded est encore false → placeholder spinner)
-          bootRender();
-          // 2) Suspendre tous les render() en cascade pendant le chargement
+          // 1) Verrou ANTI-FLICKER : on bloque tous les render() pendant le chargement.
+          //    Comme ça, refreshTaskBadge / pollings / loadChatData / etc. ne peuvent
+          //    PAS déclencher de re-render avant qu'on ait toutes les données.
           if (typeof setSuppressRender === 'function') setSuppressRender(true);
-          // 3) Charger toutes les données
+          // 2) Render initial : coque avec placeholder "Chargement…" — UN seul render
+          //    visible avant les données. On force le render même avec le verrou
+          //    en bypass temporaire :
+          if (typeof setSuppressRender === 'function') setSuppressRender(false);
+          bootRender();
+          if (typeof setSuppressRender === 'function') setSuppressRender(true);
+          // 3) Charger toutes les données (en silence visuel total)
           loadData()
             .catch(function(e) { console.warn('[boot] loadData() failed', e); })
             .finally(function() {
-              // 4) Libérer le verrou et faire UN SEUL render final
+              // 4) Libérer le verrou et faire UN SEUL render final avec toutes les data
               if (typeof setSuppressRender === 'function') setSuppressRender(false);
               bootRender();
-              // 5) Démarrer les pollings (ne déclenchent pas de render immédiat)
+              // 5) Démarrer les pollings APRÈS le render final. Eux-mêmes peuvent
+              //    déclencher des render() ultérieurs mais ils seront coalescés
+              //    via requestAnimationFrame (un seul render par frame).
               try { if (typeof ensureChatGlobalPolling === 'function') ensureChatGlobalPolling(); } catch(e) {}
               try { if (typeof ensureProfilePolling === 'function') ensureProfilePolling(); } catch(e) {}
             });

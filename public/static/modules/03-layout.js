@@ -512,7 +512,8 @@ function navigate(view) {
 // Placeholder de chargement minimal pour la vue conversations (évite le flash visible)
 function showChatLoadingPlaceholder() {
   // Render normal du layout, mais avec un état de chargement discret dans le contenu
-  render();
+  // renderNow() (et non render()) car on lit le DOM immédiatement après
+  renderNow();
   const container = document.getElementById('main-content-container');
   if (container && state.currentView === 'conversations' && (!state.chatGroups || state.chatGroups.length === 0)) {
     // Le render a déjà affiché "Aucun salon" — on remplace par un loader subtil

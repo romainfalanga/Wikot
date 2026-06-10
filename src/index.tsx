@@ -6911,6 +6911,56 @@ app.get('*', (c) => {
   <link rel="apple-touch-icon" href="/static/favicon.svg?v=${v}">
   <meta name="theme-color" content="#0A1628">
 
+  <!-- === V19.4 ANTI-FLASH BOOT ===
+       Tout premier script (inline, synchrone, AVANT le body).
+       Si l'utilisateur a un token, on marque <html> avec data-booting="1"
+       pour que le CSS cache le SSR login ET masque le body jusqu'à ce
+       que le JS soit prêt. Évite TOUT flash visible au boot, peu importe
+       la page sur laquelle on atterrit. -->
+  <script>
+    (function() {
+      try {
+        if (localStorage.getItem('wikot_token') && localStorage.getItem('wikot_user')) {
+          document.documentElement.setAttribute('data-booting', '1');
+        }
+      } catch(e) { /* localStorage indisponible : on laisse le SSR login s'afficher */ }
+    })();
+  </script>
+  <style>
+    /* V19.4 — Anti-flash boot : tant que data-booting="1", on cache le SSR
+       login (évite "flash login → vue connectée") et on affiche un fond
+       neutre. Le JS retire l'attribut une fois la vue connectée prête. */
+    html[data-booting="1"] #ssr-login { display: none !important; }
+    html[data-booting="1"] #app { opacity: 0; }
+    html[data-booting="1"] #boot-loader { display: flex; }
+    #boot-loader {
+      display: none;
+      position: fixed;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      background: #FAF8F5;
+      z-index: 9999;
+      opacity: 1;
+      transition: opacity 0.18s ease-out;
+      pointer-events: none;
+    }
+    #boot-loader.boot-loader--hidden {
+      opacity: 0;
+    }
+    .boot-loader-spinner {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 2.5px solid rgba(201,169,97,0.18);
+      border-top-color: #C9A961;
+      animation: bootSpin 0.8s linear infinite;
+    }
+    @keyframes bootSpin { to { transform: rotate(360deg); } }
+    /* Une fois qu'on retire data-booting, on fade-in le body en douceur. */
+    #app { transition: opacity 0.18s ease-out; }
+  </style>
+
   <!-- === PERF : preconnect aux CDN restants (Font Awesome + Google Fonts) === -->
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -7341,6 +7391,13 @@ app.get('*', (c) => {
   </style>
 </head>
 <body class="min-h-screen" style="background-color: #FAF8F5; color: #0A1628;">
+  <!-- V19.4 Anti-flash : overlay neutre affiché pendant le boot quand
+       l'utilisateur a déjà un token (évite le flash login → vue connectée).
+       Caché automatiquement par défaut, révélé uniquement si <html data-booting="1">. -->
+  <div id="boot-loader" aria-hidden="true">
+    <div class="boot-loader-spinner"></div>
+  </div>
+
   <!--
     ECRAN MOBILE BLOQUANT — affiche un message unique sur < 1024px.
     Position fixed inset-0 + z-index max -> recouvre absolument tout
@@ -7460,15 +7517,9 @@ app.get('*', (c) => {
   -->
   <script>
     (function() {
-      var app = document.getElementById('app');
-      // Si on a un token en localStorage, on retire le SSR login dès maintenant
-      // pour éviter le flash login → vue connectée
-      try {
-        if (localStorage.getItem('wikot_token') && localStorage.getItem('wikot_user')) {
-          var ssr = document.getElementById('ssr-login');
-          if (ssr) ssr.style.opacity = '0';
-        }
-      } catch(e) {}
+      // V19.4 — l'attribut data-booting="1" sur <html> est déjà géré par le
+      // script anti-flash dans le <head>. Plus rien à faire ici pour le SSR
+      // login : le CSS s'en occupe.
 
       // Quand les modules sont prêts (DOMContentLoaded déclenché APRÈS exécution
       // des scripts defer, dans l'ordre), on lance render() qui remplace le SSR
@@ -7502,16 +7553,43 @@ app.get('*', (c) => {
           }
         } catch(e) { /* noop */ }
 
-        // V19.3 — Boot anti-flicker :
-        //  Avec token, on charge TOUTES les données AVANT le premier render.
-        //  Pendant le chargement, on suspend tous les render() en cascade
-        //  (via setSuppressRender) pour qu'aucun loader interne ne déclenche
-        //  un flash intermédiaire. Une fois tout chargé : UN SEUL render final.
-        //  Le combo verrou + rAF coalescing dans render() = 0 flicker garanti.
+        // V19.4 — Boot anti-flash global :
+        //  Pendant tout le boot, <html data-booting="1"> cache le SSR login,
+        //  affiche le boot-loader (spinner doré sur fond crème) et garde
+        //  #app à opacity:0. L'utilisateur ne voit AUCUN flash, juste un
+        //  fond uni avec un spinner discret pendant ~300-800ms.
+        //
+        //  Stratégie :
+        //   - Connecté : on charge toutes les données EN SILENCE puis on
+        //     révèle le contenu d'un coup avec une transition douce.
+        //   - Non connecté : on render la page de login puis on révèle
+        //     immédiatement (pas de chargement à attendre).
+        //   - Aucun render intermédiaire visible. Aucune cascade de paints.
         var hasToken = false;
         try {
           hasToken = !!(localStorage.getItem('wikot_token') && localStorage.getItem('wikot_user'));
         } catch(e) {}
+
+        // Révèle l'app : retire data-booting, fade-out du boot-loader,
+        // fade-in de #app. Une seule transition douce de 180ms. À appeler
+        // UNE seule fois, après que le render final ait peuplé le DOM.
+        function revealApp() {
+          // requestAnimationFrame double pour s'assurer que le DOM est peint
+          // avant de déclencher la transition (sinon la transition saute).
+          requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+              document.documentElement.removeAttribute('data-booting');
+              var loader = document.getElementById('boot-loader');
+              if (loader) {
+                loader.classList.add('boot-loader--hidden');
+                // Retirer du DOM après la transition pour libérer la mémoire
+                setTimeout(function() {
+                  if (loader && loader.parentNode) loader.parentNode.removeChild(loader);
+                }, 250);
+              }
+            });
+          });
+        }
 
         function bootRender() {
           // renderNow() pour ne pas dépendre du timing rAF au boot
@@ -7523,31 +7601,40 @@ app.get('*', (c) => {
         }
 
         if (hasToken && typeof loadData === 'function') {
-          // 1) Verrou ANTI-FLICKER : on bloque tous les render() pendant le chargement.
-          //    Comme ça, refreshTaskBadge / pollings / loadChatData / etc. ne peuvent
-          //    PAS déclencher de re-render avant qu'on ait toutes les données.
+          // Connecté : on garde le boot-loader visible PENDANT loadData(),
+          // puis on render UNE seule fois avec toutes les données, puis on
+          // révèle. L'utilisateur voit uniquement le spinner puis la vue
+          // complète apparaître en fondu (jamais un état intermédiaire).
           if (typeof setSuppressRender === 'function') setSuppressRender(true);
-          // 2) Render initial : coque avec placeholder "Chargement…" — UN seul render
-          //    visible avant les données. On force le render même avec le verrou
-          //    en bypass temporaire :
-          if (typeof setSuppressRender === 'function') setSuppressRender(false);
-          bootRender();
-          if (typeof setSuppressRender === 'function') setSuppressRender(true);
-          // 3) Charger toutes les données (en silence visuel total)
+
+          // Sécurité : si loadData() met > 5s (réseau très lent), on révèle
+          // quand même avec ce qu'on a, pour ne pas bloquer l'utilisateur
+          // sur le spinner. Le placeholder "Chargement…" dans renderProcedures
+          // prendra le relais visuellement.
+          var revealed = false;
+          var safeReveal = function() {
+            if (revealed) return;
+            revealed = true;
+            if (typeof setSuppressRender === 'function') setSuppressRender(false);
+            bootRender();
+            try { if (typeof ensureChatGlobalPolling === 'function') ensureChatGlobalPolling(); } catch(e) {}
+            try { if (typeof ensureProfilePolling === 'function') ensureProfilePolling(); } catch(e) {}
+            revealApp();
+          };
+          var safetyTimer = setTimeout(safeReveal, 5000);
+
           loadData()
             .catch(function(e) { console.warn('[boot] loadData() failed', e); })
             .finally(function() {
-              // 4) Libérer le verrou et faire UN SEUL render final avec toutes les data
-              if (typeof setSuppressRender === 'function') setSuppressRender(false);
-              bootRender();
-              // 5) Démarrer les pollings APRÈS le render final. Eux-mêmes peuvent
-              //    déclencher des render() ultérieurs mais ils seront coalescés
-              //    via requestAnimationFrame (un seul render par frame).
-              try { if (typeof ensureChatGlobalPolling === 'function') ensureChatGlobalPolling(); } catch(e) {}
-              try { if (typeof ensureProfilePolling === 'function') ensureProfilePolling(); } catch(e) {}
+              clearTimeout(safetyTimer);
+              safeReveal();
             });
         } else {
+          // Pas de token : on render la page de login puis on révèle
+          // (même si l'utilisateur la voit déjà via le SSR HTML pré-rendu,
+          // le data-booting est de toute façon absent dans ce cas).
           bootRender();
+          revealApp();
         }
       });
     })();

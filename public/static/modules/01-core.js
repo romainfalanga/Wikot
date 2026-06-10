@@ -87,10 +87,20 @@ async function api(path, options = {}) {
   if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
   try {
     const res = await fetch(`${API}${path}`, { ...options, headers });
-    const data = await res.json();
+    // V19 — parse robuste : 204/empty body ne doit pas lever d'exception
+    // (sinon DELETE renvoyait null et l'UI ne se rafraîchissait pas).
+    let data = null;
+    if (res.status !== 204) {
+      const text = await res.text();
+      if (text) {
+        try { data = JSON.parse(text); } catch (_) { data = { _raw: text }; }
+      }
+    }
     if (res.status === 401) { logout(); return null; }
-    if (!res.ok) { showToast(data.error || 'Erreur', 'error'); return null; }
-    return data;
+    if (!res.ok) { showToast((data && data.error) || 'Erreur', 'error'); return null; }
+    // Renvoie un objet vide plutôt que null quand la réponse est vide mais OK
+    // → permet aux callers de faire `if (res) {...}` sans souci.
+    return data || { success: true };
   } catch (e) {
     showToast('Erreur de connexion', 'error');
     return null;
@@ -121,40 +131,47 @@ function showToast(message, type = 'info') {
   setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.3s'; setTimeout(() => toast.remove(), 300); }, 3000);
 }
 
+// V19 — Helper "umbrella" : l'utilisateur a-t-il can_use_wikot ?
+// (Cette permission implique automatiquement toutes les autres permissions granulaires.)
+function userHasWikotUmbrella() {
+  if (!state.user) return false;
+  return state.user.role === 'admin' || Number(state.user.can_use_wikot) === 1;
+}
+
 // Helper: can current user edit/create procedures?
 function userCanEditProcedures() {
   if (!state.user) return false;
-  return state.user.role === 'super_admin' || state.user.role === 'admin' || state.user.can_edit_procedures === 1;
+  return state.user.role === 'super_admin' || state.user.role === 'admin' || state.user.can_edit_procedures === 1 || Number(state.user.can_use_wikot) === 1;
 }
 
 // Helper: can current user edit/create hotel info (catégories + items) ?
 function userCanEditInfo() {
   if (!state.user) return false;
-  return state.user.role === 'super_admin' || state.user.role === 'admin' || state.user.can_edit_info === 1;
+  return state.user.role === 'super_admin' || state.user.role === 'admin' || state.user.can_edit_info === 1 || Number(state.user.can_use_wikot) === 1;
 }
 
 // Helper: can current user manage chat channels (créer / modifier / organiser les salons) ?
 function userCanManageChat() {
   if (!state.user) return false;
-  return state.user.role === 'admin' || state.user.can_manage_chat === 1;
+  return state.user.role === 'admin' || state.user.can_manage_chat === 1 || Number(state.user.can_use_wikot) === 1;
 }
 
 function userCanCreateTasks() {
   if (!state.user) return false;
-  return state.user.role === 'admin' || Number(state.user.can_create_tasks) === 1;
+  return state.user.role === 'admin' || Number(state.user.can_create_tasks) === 1 || Number(state.user.can_use_wikot) === 1;
 }
 
 function userCanAssignTasks() {
   if (!state.user) return false;
-  return state.user.role === 'admin' || Number(state.user.can_assign_tasks) === 1;
+  return state.user.role === 'admin' || Number(state.user.can_assign_tasks) === 1 || Number(state.user.can_use_wikot) === 1;
 }
 
 // Permission "peut tout faire sur le tableau Veleda" :
-// = admin OU super_admin OU employee avec can_use_veleda = 1
+// = admin OU super_admin OU employee avec can_use_veleda = 1 (ou can_use_wikot via umbrella)
 // Tous les autres peuvent voir le tableau (lecture seule).
 function userCanUseVeleda() {
   if (!state.user) return false;
-  return state.user.role === 'admin' || state.user.role === 'super_admin' || Number(state.user.can_use_veleda) === 1;
+  return state.user.role === 'admin' || state.user.role === 'super_admin' || Number(state.user.can_use_veleda) === 1 || Number(state.user.can_use_wikot) === 1;
 }
 
 // Note: la permission can_edit_settings est conservée en DB pour compat,

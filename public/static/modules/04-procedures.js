@@ -467,31 +467,51 @@ async function toggleEditPermission(userId, newValue) {
 
 // Bascule une permission granulaire pour un employé.
 // Mutation LOCALE de state.users + re-render ciblé (zéro refresh / zéro reload).
+// V19 : can_use_wikot est une permission "ombrelle" → cocher Wikot coche aussi
+// automatiquement TOUTES les autres permissions (côté front et back).
 async function togglePermission(userId, permKey, newValue) {
   const labels = {
     can_edit_procedures: 'modifier les procédures',
     can_edit_info: 'modifier les informations',
     can_manage_chat: 'gérer les salons et conversations',
+    can_edit_settings: 'modifier les réglages de l\'hôtel',
     can_create_tasks: 'créer et modifier des tâches',
     can_assign_tasks: 'attribuer des tâches aux employés',
-    can_use_veleda: 'écrire sur le tableau Véléda'
+    can_use_veleda: 'écrire sur le tableau Véléda',
+    can_use_wikot: 'accéder à Wikot (l\'agent IA)'
   };
+  // Liste des permissions "filles" couvertes par l'umbrella Wikot
+  const umbrellaKeys = ['can_edit_procedures', 'can_edit_info', 'can_manage_chat', 'can_edit_settings', 'can_create_tasks', 'can_assign_tasks', 'can_use_veleda'];
+
   // Optimistic update : on met à jour le state local immédiatement
   const list = state.users || [];
   const idx = list.findIndex(u => u.id === userId);
-  const previousValue = idx >= 0 ? Number(list[idx][permKey]) : 0;
+  const previous = idx >= 0 ? { ...list[idx] } : null;
   if (idx >= 0) {
-    list[idx] = { ...list[idx], [permKey]: newValue };
+    const patch = { [permKey]: newValue };
+    // Si on coche Wikot → on coche TOUTES les autres permissions localement aussi
+    if (permKey === 'can_use_wikot' && newValue === 1) {
+      for (const k of umbrellaKeys) patch[k] = 1;
+    }
+    list[idx] = { ...list[idx], ...patch };
   }
+
   const body = {};
   body[permKey] = newValue;
   const result = await api(`/users/${userId}/permissions`, { method: 'PUT', body: JSON.stringify(body) });
   if (result) {
-    // Pas de loadData() ni de render() complet : la case est déjà cochée localement.
-    showToast(newValue === 1 ? `Droit accordé : ${labels[permKey] || permKey}` : `Droit retiré : ${labels[permKey] || permKey}`, 'success');
-  } else if (idx >= 0) {
+    let msg = newValue === 1
+      ? `Droit accordé : ${labels[permKey] || permKey}`
+      : `Droit retiré : ${labels[permKey] || permKey}`;
+    if (permKey === 'can_use_wikot' && newValue === 1) {
+      msg = 'Accès Wikot accordé · toutes les permissions ont été activées';
+    }
+    showToast(msg, 'success');
+    // Re-render pour refléter le cochage en cascade des autres cases
+    if (permKey === 'can_use_wikot') render();
+  } else if (idx >= 0 && previous) {
     // Échec serveur : on annule l'optimistic update et on re-render
-    list[idx] = { ...list[idx], [permKey]: previousValue };
+    list[idx] = previous;
     render();
   }
 }
@@ -499,6 +519,8 @@ async function togglePermission(userId, permKey, newValue) {
 // Composant : cases à cocher des permissions employé (versions desktop/mobile)
 // Couvre : procédures, infos, chat, tâches (créer/attribuer)
 function permissionCheckboxes(u, compact = false) {
+  // V19 — can_use_wikot est la permission "ombrelle" : cochée = accès Wikot
+  // + active automatiquement TOUTES les autres permissions.
   const perms = [
     { key: 'can_edit_procedures',  label: 'Procédures',          icon: 'fa-sitemap' },
     { key: 'can_edit_info',        label: 'Informations',        icon: 'fa-circle-info' },
@@ -507,17 +529,31 @@ function permissionCheckboxes(u, compact = false) {
     { key: 'can_assign_tasks',     label: 'Attribuer des tâches',icon: 'fa-user-tag' },
     { key: 'can_use_veleda',       label: 'Tableau Véléda',       icon: 'fa-clipboard' }
   ];
+  const wikotChecked = Number(u.can_use_wikot) === 1;
   return `
     <div class="flex flex-col gap-1.5">
+      <!-- Permission Wikot (ombrelle) — mise en valeur visuellement -->
+      <label class="flex items-center gap-2 cursor-pointer text-xs rounded px-1.5 py-1 transition-colors"
+             style="background: ${wikotChecked ? 'rgba(184,106,31,0.10)' : 'rgba(184,106,31,0.04)'}; border: 1px solid rgba(184,106,31,0.25);"
+             title="Donne accès à Wikot et active automatiquement TOUTES les autres permissions">
+        <input type="checkbox" ${wikotChecked ? 'checked' : ''}
+          onchange="togglePermission(${u.id}, 'can_use_wikot', this.checked ? 1 : 0)"
+          class="w-3.5 h-3.5 rounded border-gray-300 text-brand-500 focus:ring-brand-400">
+        <i class="fas fa-pen-ruler text-[10px] w-3 text-center" style="color: #B86A1F;"></i>
+        <span class="${compact ? 'text-[11px]' : ''} font-semibold" style="color: #B86A1F;">Wikot (toutes permissions)</span>
+      </label>
       ${perms.map(p => {
         const checked = Number(u[p.key]) === 1;
+        // Si Wikot est coché, les autres permissions sont actives mais désactivées (lock visuel)
+        const disabled = wikotChecked;
         return `
-          <label class="flex items-center gap-2 cursor-pointer text-xs text-navy-700 hover:bg-gray-50 rounded px-1 py-0.5 transition-colors">
-            <input type="checkbox" ${checked ? 'checked' : ''}
+          <label class="flex items-center gap-2 ${disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'} text-xs text-navy-700 hover:bg-gray-50 rounded px-1 py-0.5 transition-colors">
+            <input type="checkbox" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}
               onchange="togglePermission(${u.id}, '${p.key}', this.checked ? 1 : 0)"
               class="w-3.5 h-3.5 rounded border-gray-300 text-brand-500 focus:ring-brand-400">
             <i class="fas ${p.icon} text-navy-400 text-[10px] w-3 text-center"></i>
             <span class="${compact ? 'text-[11px]' : ''}">${p.label}</span>
+            ${disabled ? '<i class="fas fa-link text-[9px] ml-auto" style="color: #B86A1F;" title="Couvert par Wikot"></i>' : ''}
           </label>
         `;
       }).join('')}

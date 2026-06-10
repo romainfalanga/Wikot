@@ -39,12 +39,16 @@ function activeWikotMode() {
   return 'max';
 }
 
-// L'utilisateur a-t-il accès à Wikot ? (admin ou employe avec droit d'edition)
+// L'utilisateur a-t-il accès à Wikot ? (admin OU permission can_use_wikot)
+// V19 — Depuis l'ajout de can_use_wikot, c'est cette permission qui décide.
+// On garde le fallback historique (procedures/info) pour les comptes qui
+// n'auraient pas encore eu leur can_use_wikot activé après la migration.
 // NOTE : la fonction garde son ancien nom userCanUseWikotMax pour ne pas casser
 // les nombreux call sites (compatibilite). Elle ne reflete plus une notion de "max".
 function userCanUseWikotMax() {
   if (!state.user) return false;
   if (state.user.role === 'admin' || state.user.role === 'super_admin') return true;
+  if (Number(state.user.can_use_wikot) === 1) return true;
   return state.user.can_edit_procedures === 1 || state.user.can_edit_info === 1;
 }
 

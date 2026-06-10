@@ -1,5 +1,13 @@
 # Wikot - Gestion intelligente des procédures hôtelières
 
+## Changelog récent
+
+### V19 — Suppressions de tâches & permission Wikot (2026-06-10)
+- **Fix suppression des tâches** : quand un employé supprime une instance issue d'un template récurrent, elle ne réapparaissait pas immédiatement au prochain refresh. Ajout d'une table `task_skips` qui marque les paires `(template_id, task_date)` à ne pas re-matérialiser.
+- **Suppression d'un modèle récurrent** : nouveau modal avec 3 choix — "tout supprimer (passé + futur)", "modèle + occurrences futures" (par défaut), ou "seulement le modèle" (occurrences conservées comme tâches ponctuelles). Backend supporte `?delete_all=1` / `?delete_future=0|1`.
+- **Permission `can_use_wikot`** (ombrelle) : nouvelle case à cocher dans la page Utilisateurs. Cocher Wikot active automatiquement TOUTES les autres permissions (procédures, info, chat, settings, tâches, véléda). Tous les admins existants l'ont reçue automatiquement via la migration `0039`.
+- **Fix `api()` côté front** : gère désormais correctement les réponses `204 No Content` ou vides (avant : `res.json()` plantait et l'UI n'était pas rafraîchie).
+
 ## Concept
 Wikot fonctionne comme un système d'automatisation IF/THEN appliqué aux procédures hôtelières :
 - **TRIGGER** : "Qu'est-ce qu'il se passe ?" (le déclencheur)

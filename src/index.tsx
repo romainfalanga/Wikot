@@ -25,6 +25,7 @@ type WikotUser = {
   can_create_tasks: number
   can_assign_tasks: number
   can_use_veleda: number
+  can_use_wikot: number
   emoji: string | null
   subscription_status?: string | null  // V18
 }
@@ -301,6 +302,7 @@ const authMiddleware = async (c: any, next: any) => {
            u.can_edit_settings,
            u.can_create_tasks, u.can_assign_tasks,
            u.can_use_veleda,
+           u.can_use_wikot,
            u.emoji,
            u.is_active,
            h.subscription_status
@@ -354,6 +356,7 @@ const authMiddleware = async (c: any, next: any) => {
     can_manage_chat: row.can_manage_chat, can_edit_settings: row.can_edit_settings,
     can_create_tasks: row.can_create_tasks, can_assign_tasks: row.can_assign_tasks,
     can_use_veleda: row.can_use_veleda,
+    can_use_wikot: row.can_use_wikot,
     emoji: row.emoji,
     is_active: row.is_active,
     subscription_status: subStatus,
@@ -386,6 +389,7 @@ app.post('/api/auth/login', async (c) => {
            u.can_edit_settings,
            u.can_create_tasks, u.can_assign_tasks,
            u.can_use_veleda,
+           u.can_use_wikot,
            u.emoji,
            u.password_hash, u.password_hash_v2, u.password_salt, u.password_algo,
            h.subscription_status
@@ -443,6 +447,7 @@ app.post('/api/auth/login', async (c) => {
       can_manage_chat: user.can_manage_chat, can_edit_settings: user.can_edit_settings,
       can_create_tasks: user.can_create_tasks, can_assign_tasks: user.can_assign_tasks,
       can_use_veleda: user.can_use_veleda,
+      can_use_wikot: user.can_use_wikot,
       emoji: user.emoji,
       subscription_status: user.subscription_status,  // V18
     }
@@ -891,21 +896,27 @@ function isSuperAdmin(user: { role: string }) {
   return user.role === 'super_admin'
 }
 
-function canEditProcedures(user: { role: string; can_edit_procedures: number }) {
+// V19 — Permission "ombrelle" can_use_wikot : si activée, elle implique toutes
+// les autres permissions granulaires (procedures, info, chat, settings, tâches, véléda).
+function hasWikotUmbrella(user: { role: string; can_use_wikot?: number }) {
+  return user.role === 'admin' || user.can_use_wikot === 1
+}
+
+function canEditProcedures(user: { role: string; can_edit_procedures: number; can_use_wikot?: number }) {
   // super_admin exclu : il ne gère pas les procédures des hôtels
-  return user.role === 'admin' || user.can_edit_procedures === 1
+  return user.role === 'admin' || user.can_edit_procedures === 1 || user.can_use_wikot === 1
 }
 
-function canEditInfo(user: { role: string; can_edit_info?: number }) {
-  return user.role === 'admin' || user.can_edit_info === 1
+function canEditInfo(user: { role: string; can_edit_info?: number; can_use_wikot?: number }) {
+  return user.role === 'admin' || user.can_edit_info === 1 || user.can_use_wikot === 1
 }
 
-function canManageChat(user: { role: string; can_manage_chat?: number }) {
-  return user.role === 'admin' || user.can_manage_chat === 1
+function canManageChat(user: { role: string; can_manage_chat?: number; can_use_wikot?: number }) {
+  return user.role === 'admin' || user.can_manage_chat === 1 || user.can_use_wikot === 1
 }
 
-function canEditSettings(user: { role: string; can_edit_settings?: number }) {
-  return user.role === 'admin' || user.can_edit_settings === 1
+function canEditSettings(user: { role: string; can_edit_settings?: number; can_use_wikot?: number }) {
+  return user.role === 'admin' || user.can_edit_settings === 1 || user.can_use_wikot === 1
 }
 
 // ============================================
@@ -1054,9 +1065,9 @@ app.get('/api/users', authMiddleware, async (c) => {
   let users
   if (user.role === 'super_admin') {
     // PERF: LIMIT 2000 — table globale qui peut grossir avec tous les hôtels
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.emoji, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name LIMIT 2000').all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.can_use_wikot, u.emoji, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id ORDER BY u.name LIMIT 2000').all()
   } else if (user.role === 'admin') {
-    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.emoji, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name LIMIT 500').bind(user.hotel_id).all()
+    users = await c.env.DB.prepare('SELECT u.id, u.hotel_id, u.email, u.name, u.role, u.job_role, u.can_edit_procedures, u.can_edit_info, u.can_manage_chat, u.can_edit_settings, u.can_create_tasks, u.can_assign_tasks, u.can_use_veleda, u.can_use_wikot, u.emoji, u.is_active, u.last_login, u.created_at, h.name as hotel_name FROM users u LEFT JOIN hotels h ON u.hotel_id = h.id WHERE u.hotel_id = ? ORDER BY u.name LIMIT 500').bind(user.hotel_id).all()
   } else {
     return c.json({ error: 'Non autorisé' }, 403)
   }
@@ -1077,6 +1088,7 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
     can_create_tasks?: boolean | number
     can_assign_tasks?: boolean | number
     can_use_veleda?: boolean | number
+    can_use_wikot?: boolean | number
   }
 
   // Check the target user belongs to same hotel (for admin)
@@ -1095,6 +1107,24 @@ app.put('/api/users/:id/permissions', authMiddleware, async (c) => {
   if (body.can_create_tasks !== undefined)    { fields.push('can_create_tasks = ?');    values.push(body.can_create_tasks ? 1 : 0) }
   if (body.can_assign_tasks !== undefined)    { fields.push('can_assign_tasks = ?');    values.push(body.can_assign_tasks ? 1 : 0) }
   if (body.can_use_veleda !== undefined)      { fields.push('can_use_veleda = ?');      values.push(body.can_use_veleda ? 1 : 0) }
+  if (body.can_use_wikot !== undefined)       { fields.push('can_use_wikot = ?');       values.push(body.can_use_wikot ? 1 : 0) }
+
+  // V19 — Umbrella : activer can_use_wikot active aussi automatiquement TOUTES les autres
+  // permissions granulaires (procédures, info, chat, settings, tâches, véléda).
+  // Le décocher ne désactive PAS les autres (l'admin peut les régler indépendamment ensuite).
+  if (body.can_use_wikot === true || body.can_use_wikot === 1) {
+    const umbrella = ['can_edit_procedures', 'can_edit_info', 'can_manage_chat', 'can_edit_settings', 'can_create_tasks', 'can_assign_tasks', 'can_use_veleda']
+    for (const k of umbrella) {
+      if (!fields.some(f => f.startsWith(`${k} =`))) {
+        fields.push(`${k} = ?`)
+        values.push(1)
+      } else {
+        // Si le client a explicitement envoyé une autre valeur, on force quand même à 1
+        const idx = fields.findIndex(f => f.startsWith(`${k} =`))
+        values[idx] = 1
+      }
+    }
+  }
   if (fields.length === 0) return c.json({ error: 'Aucune permission à mettre à jour' }, 400)
 
   values.push(id)
@@ -1873,9 +1903,9 @@ app.get('/api/stats', authMiddleware, async (c) => {
 // ============================================
 
 // Helper : peut gérer les salons (créer/modifier/supprimer)
-function canManageChannels(user: { role: string; can_manage_chat?: number }) {
-  // Basé sur la nouvelle permission can_manage_chat
-  return user.role === 'super_admin' || user.role === 'admin' || user.can_manage_chat === 1
+function canManageChannels(user: { role: string; can_manage_chat?: number; can_use_wikot?: number }) {
+  // Basé sur la nouvelle permission can_manage_chat (V19 : can_use_wikot couvre aussi)
+  return user.role === 'super_admin' || user.role === 'admin' || user.can_manage_chat === 1 || user.can_use_wikot === 1
 }
 
 // Helper : a accès au chat (super_admin + admin + tous employees)
@@ -5658,7 +5688,7 @@ async function cleanupExpiredVeledaNotes(db: D1Database, hotelId: number) {
 // Quiconque a cette permission peut creer/modifier/deplacer/redimensionner/supprimer
 // N'IMPORTE QUELLE note (pas seulement les siennes) du tableau de SON hotel.
 function canUseVeleda(user: WikotUser): boolean {
-  return user.role === 'admin' || user.role === 'super_admin' || user.can_use_veleda === 1
+  return user.role === 'admin' || user.role === 'super_admin' || user.can_use_veleda === 1 || user.can_use_wikot === 1
 }
 
 // GET /api/veleda-notes — liste des notes actives de l'hôtel, triées par expiration croissante
@@ -6117,10 +6147,10 @@ app.delete('/api/veleda-notes/:id', authMiddleware, async (c) => {
 // ============================================
 
 function canCreateTasks(user: WikotUser): boolean {
-  return user.role === 'admin' || user.can_create_tasks === 1
+  return user.role === 'admin' || user.can_create_tasks === 1 || user.can_use_wikot === 1
 }
 function canAssignTasks(user: WikotUser): boolean {
-  return user.role === 'admin' || user.can_assign_tasks === 1
+  return user.role === 'admin' || user.can_assign_tasks === 1 || user.can_use_wikot === 1
 }
 
 // Helpers récurrence v2
@@ -6182,7 +6212,16 @@ async function materializeTasksForDate(db: D1Database, hotelId: number, dateStr:
     `SELECT template_id FROM task_instances WHERE task_date = ? AND template_id IN (${ph})`
   ).bind(dateStr, ...tplIds).all()
   const existingSet = new Set(((existing.results || []) as any[]).map((r: any) => r.template_id))
-  const toCreate = eligibleTemplates.filter(t => !existingSet.has(t.id))
+
+  // V19 : tombstones — si une instance issue d'un template a déjà été supprimée
+  // pour cette date, on NE la régénère PAS. (Permet à un employé de supprimer
+  // une occurrence isolée sans qu'elle réapparaisse au prochain refresh.)
+  const skipped = await db.prepare(
+    `SELECT template_id FROM task_skips WHERE task_date = ? AND template_id IN (${ph})`
+  ).bind(dateStr, ...tplIds).all()
+  const skippedSet = new Set(((skipped.results || []) as any[]).map((r: any) => r.template_id))
+
+  const toCreate = eligibleTemplates.filter(t => !existingSet.has(t.id) && !skippedSet.has(t.id))
   if (toCreate.length === 0) return
 
   // INSERT instances en batch — TOUTES non assignées par construction
@@ -6399,13 +6438,34 @@ app.put('/api/tasks/templates/:id', authMiddleware, async (c) => {
   return c.json({ success: true })
 })
 
-// DELETE /api/tasks/templates/:id — supprimer un modèle (les instances futures non générées disparaissent)
+// DELETE /api/tasks/templates/:id — supprimer un modèle récurrent
+// Query params :
+//   ?delete_future=1 (par défaut)  → supprime aussi les instances futures (task_date >= today) déjà générées
+//   ?delete_future=0               → garde les instances déjà générées (FK ON DELETE SET NULL)
+//   ?delete_all=1                  → supprime TOUTES les instances liées (passées + futures)
 app.delete('/api/tasks/templates/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
   const id = parseInt(c.req.param('id'))
   const tpl = await c.env.DB.prepare('SELECT id, hotel_id FROM task_templates WHERE id = ?').bind(id).first() as any
   if (!tpl || tpl.hotel_id !== user.hotel_id) return c.json({ error: 'Template introuvable' }, 404)
+
+  const deleteAll = c.req.query('delete_all') === '1'
+  const deleteFuture = deleteAll || c.req.query('delete_future') !== '0' // par défaut on supprime les futures
+
+  // Suppression cascadée des instances liées (pour que les tâches déjà
+  // générées disparaissent vraiment de l'agenda — pas juste le template).
+  if (deleteAll) {
+    await c.env.DB.prepare('DELETE FROM task_instances WHERE template_id = ?').bind(id).run()
+  } else if (deleteFuture) {
+    const today = new Date().toISOString().slice(0, 10)
+    await c.env.DB.prepare(
+      'DELETE FROM task_instances WHERE template_id = ? AND task_date >= ?'
+    ).bind(id, today).run()
+  }
+
+  // Le DELETE template laisse les instances passées orphelines (template_id = NULL via FK ON DELETE SET NULL)
+  // sauf si on a fait DELETE ALL ci-dessus.
   await c.env.DB.prepare('DELETE FROM task_templates WHERE id = ?').bind(id).run()
   return c.json({ success: true })
 })
@@ -6513,12 +6573,27 @@ app.put('/api/tasks/instances/:id', authMiddleware, async (c) => {
 })
 
 // DELETE /api/tasks/instances/:id
+// V19 : si l'instance provient d'un template récurrent, on enregistre un "tombstone"
+// dans task_skips pour qu'elle ne soit pas immédiatement re-matérialisée au prochain
+// refresh. C'est la solution à : "je supprime ma tâche, elle revient".
 app.delete('/api/tasks/instances/:id', authMiddleware, async (c) => {
   const user = c.get('user')
   if (!canCreateTasks(user)) return c.json({ error: 'Permission requise' }, 403)
   const id = parseInt(c.req.param('id'))
-  const inst = await c.env.DB.prepare('SELECT id, hotel_id FROM task_instances WHERE id = ?').bind(id).first() as any
+  const inst = await c.env.DB.prepare(
+    'SELECT id, hotel_id, template_id, task_date FROM task_instances WHERE id = ?'
+  ).bind(id).first() as any
   if (!inst || inst.hotel_id !== user.hotel_id) return c.json({ error: 'Tâche introuvable' }, 404)
+
+  // 1) Tombstone si issue d'un template (évite la re-matérialisation)
+  if (inst.template_id && inst.task_date) {
+    await c.env.DB.prepare(
+      `INSERT OR IGNORE INTO task_skips (template_id, task_date, hotel_id, created_by)
+       VALUES (?, ?, ?, ?)`
+    ).bind(inst.template_id, inst.task_date, inst.hotel_id, user.id).run()
+  }
+
+  // 2) Suppression effective (les task_assignments suivront via FK ON DELETE CASCADE)
   await c.env.DB.prepare('DELETE FROM task_instances WHERE id = ?').bind(id).run()
   return c.json({ success: true })
 })

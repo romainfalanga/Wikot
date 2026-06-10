@@ -996,14 +996,88 @@ async function toggleTemplateActive(templateId, newActive) {
   }
 }
 
+// V19 — Suppression d'un template récurrent.
+// On propose 3 options à l'utilisateur :
+//   1) "Annuler"      — ne rien faire
+//   2) "Tout supprimer" — supprime le template + TOUTES ses instances (passées + futures)
+//   3) "Futures uniquement" (par défaut) — supprime le template + les instances futures (>= aujourd'hui)
+//      (les instances passées restent dans l'historique avec template_id = NULL)
 async function deleteTaskTemplate(templateId) {
-  if (!confirm('Supprimer ce modèle récurrent ? Les tâches déjà générées resteront en place.')) return;
-  const res = await api(`/tasks/templates/${templateId}`, { method: 'DELETE' });
-  if (res) {
-    showToast('Modèle supprimé', 'success');
-    await loadTaskTemplates();
-    render();
-  }
+  const tpl = (state.tasksTemplates || []).find(t => t.id === templateId);
+  const title = tpl?.title || 'ce modèle récurrent';
+  showTemplateDeleteModal(templateId, title);
+}
+
+function showTemplateDeleteModal(templateId, title) {
+  const modal = document.createElement('div');
+  modal.className = 'fixed inset-0 z-[1000] flex items-center justify-center p-4';
+  modal.style.cssText = 'background: rgba(10,22,40,0.55); backdrop-filter: blur(2px);';
+  modal.innerHTML = `
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden" style="border: 1px solid var(--c-line);">
+      <div class="px-5 py-4" style="background: rgba(200,76,63,0.06); border-bottom: 1px solid var(--c-line);">
+        <h3 class="font-semibold text-base flex items-center gap-2" style="color: #C84C3F;">
+          <i class="fas fa-trash-alt"></i>
+          Supprimer le modèle récurrent
+        </h3>
+        <p class="text-sm mt-1" style="color: rgba(15,27,40,0.65);">${escapeHtml(title)}</p>
+      </div>
+      <div class="px-5 py-4 space-y-3 text-sm" style="color: rgba(15,27,40,0.78);">
+        <p>Comment souhaitez-vous supprimer cette tâche récurrente ?</p>
+        <div class="space-y-2">
+          <label class="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-all border" style="border-color: var(--c-line); background: var(--c-cream-deep);">
+            <input type="radio" name="delete_mode" value="future" checked class="mt-0.5">
+            <div>
+              <div class="font-semibold" style="color: var(--c-navy);">Modèle + toutes les occurrences futures</div>
+              <div class="text-xs mt-0.5" style="color: rgba(15,27,40,0.55);">À partir d'aujourd'hui. L'historique passé est conservé.</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-all border" style="border-color: var(--c-line);">
+            <input type="radio" name="delete_mode" value="all" class="mt-0.5">
+            <div>
+              <div class="font-semibold" style="color: var(--c-navy);">Tout supprimer (passé + futur)</div>
+              <div class="text-xs mt-0.5" style="color: rgba(15,27,40,0.55);">Efface aussi les occurrences déjà réalisées. Action définitive.</div>
+            </div>
+          </label>
+          <label class="flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-all border" style="border-color: var(--c-line);">
+            <input type="radio" name="delete_mode" value="template_only" class="mt-0.5">
+            <div>
+              <div class="font-semibold" style="color: var(--c-navy);">Seulement le modèle</div>
+              <div class="text-xs mt-0.5" style="color: rgba(15,27,40,0.55);">Les occurrences déjà générées (passées et futures) restent en place comme tâches ponctuelles.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+      <div class="px-5 py-4 flex justify-end gap-2" style="background: #fafaf8; border-top: 1px solid var(--c-line);">
+        <button type="button" id="tpl-del-cancel" class="px-4 py-2 rounded-lg text-sm font-semibold" style="background: #fff; color: var(--c-navy); border: 1px solid var(--c-line);">Annuler</button>
+        <button type="button" id="tpl-del-confirm" class="px-4 py-2 rounded-lg text-sm font-semibold text-white" style="background: #C84C3F;">Supprimer</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  modal.querySelector('#tpl-del-cancel').onclick = () => modal.remove();
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  modal.querySelector('#tpl-del-confirm').onclick = async () => {
+    const mode = modal.querySelector('input[name="delete_mode"]:checked')?.value || 'future';
+    modal.remove();
+    let qs = '';
+    if (mode === 'all') qs = '?delete_all=1';
+    else if (mode === 'future') qs = '?delete_future=1';
+    else if (mode === 'template_only') qs = '?delete_future=0';
+    const res = await api(`/tasks/templates/${templateId}${qs}`, { method: 'DELETE' });
+    if (res) {
+      const msg = mode === 'all'
+        ? 'Modèle et toutes ses occurrences supprimés'
+        : mode === 'future'
+          ? 'Modèle et occurrences futures supprimés'
+          : 'Modèle supprimé (occurrences conservées)';
+      showToast(msg, 'success');
+      await loadTaskTemplates();
+      // Rafraîchir aussi la vue jour/semaine pour faire disparaître les instances supprimées
+      if (state.tasksViewMode === 'week') await loadTasksForWeek(state.tasksWeekStart);
+      else await loadTasksForDate(state.tasksDate);
+      render();
+    }
+  };
 }
 
 // ===== Modal unifié de création (ponctuelle ou récurrente) =====

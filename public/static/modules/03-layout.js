@@ -302,9 +302,10 @@ function renderMainLayout() {
       { id: 'users', icon: 'fa-users', label: 'Utilisateurs' },
     ];
   } else {
-    // Employé : Wikot conditionnel (permissions d'édition) + autres items.
+    // Employé : Wikot conditionnel (permission dédiée + fallback historique) + autres items.
     // V18.12 — Un seul agent IA "Wikot" (ex-Back Wikot).
-    const canUseWikot = userCanEditProcedures() || userCanEditInfo();
+    // V19 — Bascule sur userCanUseWikotMax (qui regarde can_use_wikot puis fallback)
+    const canUseWikot = userCanUseWikotMax();
     menuItems = [
       ...(canUseWikot ? [{ id: 'wikot', icon: 'fa-pen-ruler', label: 'Wikot' }] : []),
       { id: 'procedures', icon: 'fa-sitemap', label: 'Procédures' },

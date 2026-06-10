@@ -7496,11 +7496,13 @@ app.get('*', (c) => {
           }
         } catch(e) { /* noop */ }
 
-        // V19 — Si l'utilisateur a un token en localStorage, on charge d'abord
-        // les données (procédures, catégories, users, etc.) AVANT de render(),
-        // afin que la première vue (Wikot/Procédures) ne s'affiche pas vide.
-        // Sans ça, on voyait un flash "Aucune procédure trouvée" pendant ~1s
-        // au reload, parce que loadData() n'était jamais relancé.
+        // V19.2 — Boot intelligent :
+        //  - PAS de token : render() direct (page de login).
+        //  - Avec token : on render UNE coque tout de suite (sidebar + main vide),
+        //    puis on charge les données en arrière-plan en SUSPENDANT tous les
+        //    render() intermédiaires (setSuppressRender), et on fait UN seul
+        //    render final quand tout est chargé. Évite le "battement de cils"
+        //    causé par refreshTaskBadge()/loadChatData() qui appellent render().
         var hasToken = false;
         try {
           hasToken = !!(localStorage.getItem('wikot_token') && localStorage.getItem('wikot_user'));
@@ -7513,14 +7515,19 @@ app.get('*', (c) => {
         }
 
         if (hasToken && typeof loadData === 'function') {
-          // Rend tout de suite un état "chargement" (header + skeleton) pour
-          // que l'utilisateur voie immédiatement la coque de l'app.
+          // 1) Render initial : coque avec placeholder "Chargement…" sur procédures
+          //    (state.proceduresLoaded est encore false → placeholder spinner)
           bootRender();
-          // Puis charge les données et relance render() pour remplir.
+          // 2) Suspendre tous les render() en cascade pendant le chargement
+          if (typeof setSuppressRender === 'function') setSuppressRender(true);
+          // 3) Charger toutes les données
           loadData()
             .catch(function(e) { console.warn('[boot] loadData() failed', e); })
             .finally(function() {
+              // 4) Libérer le verrou et faire UN SEUL render final
+              if (typeof setSuppressRender === 'function') setSuppressRender(false);
               bootRender();
+              // 5) Démarrer les pollings (ne déclenchent pas de render immédiat)
               try { if (typeof ensureChatGlobalPolling === 'function') ensureChatGlobalPolling(); } catch(e) {}
               try { if (typeof ensureProfilePolling === 'function') ensureProfilePolling(); } catch(e) {}
             });

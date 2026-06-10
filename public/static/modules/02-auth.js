@@ -369,8 +369,18 @@ function updateSidebarBadges() {
 // ============================================
 // RENDER ENGINE
 // ============================================
+// V19.2 — Flag de suppression temporaire des render() en cascade
+// pendant le boot. Posé à true par le bootstrap, libéré après le
+// render final. Permet d'éviter le "battement de cils" quand
+// refreshTaskBadge() / loadData() etc. déclenchent des renders
+// intermédiaires avant le render final avec les données complètes.
+let _suppressRender = false;
+function setSuppressRender(v) { _suppressRender = !!v; }
+
 function render() {
+  if (_suppressRender) return; // boot : on accumule, on rendra UNE fois
   const app = document.getElementById('app');
+  if (!app) return;
   // V18 — Si user connecté mais abonnement non actif, on affiche la page de relance paiement
   // (sauf super_admin qui n'a pas d'hôtel à payer)
   if (state.token && state.user && state.user.role !== 'super_admin'

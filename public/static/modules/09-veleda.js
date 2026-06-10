@@ -965,7 +965,7 @@ function renderVeledaEditModal() {
           ${expirySection}
 
           <label class="veleda-isboard-row ${isBoardChecked ? 'is-checked' : ''} ${isBoardLocked ? 'is-locked' : ''}"
-            ${isBoardLocked ? 'title="Cette note contient des éléments — vide-la d\\'abord pour retirer le statut de sous-tableau"' : ''}>
+            ${isBoardLocked ? 'title="Cette note contient des éléments — vide-la d\u2019abord pour retirer le statut de sous-tableau"' : ''}>
             <input type="checkbox"
               class="veleda-isboard-checkbox"
               ${isBoardChecked ? 'checked' : ''}
